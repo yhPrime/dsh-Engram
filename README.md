@@ -57,7 +57,7 @@ engine.validate()
 ## 当前状态（0.33.0）
 
 - 内核：M1–M4 完成，`core` 零 DSH 依赖，`engine` 可独立使用；包名 `dsh-engram`；
-- 外壳：`ui/` 0.4.0，live 数据源已走 `createEngine`（可写反馈、skills 走 engine），mock/live 同源；
+- 外壳：`ui/` 0.5.0「经验库控制台」——概览/经验/检索/记录/技能/类型/使用记录/设置，live 走 `createEngine`（记录/召回/反馈/沉淀/校验全接）；
 - kernel 328 项 / ui 58 项测试全绿；audit 无 FAIL；eval 过 G1。
 
 ## 约定

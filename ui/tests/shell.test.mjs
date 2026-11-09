@@ -75,7 +75,7 @@ await check('GET /health：app=exp-ui、mock、可写', async () => {
   const { status, payload } = await mockCall('/health')
   assert.equal(status, 200)
   assert.equal(payload.ok, true)
-  assert.equal(payload.data.app, 'exp-ui')
+  assert.equal(payload.data.app, '经验库')
   assert.equal(payload.data.version, pluginVersion())
   assert.equal(payload.data.source, 'mock')
   assert.equal(payload.data.readOnly, false)
@@ -85,7 +85,7 @@ await check('GET /state：15/12/6 与示例数据说明', async () => {
   const { status, payload } = await mockCall('/state')
   assert.equal(status, 200)
   const data = payload.data
-  assert.equal(data.app, 'exp-ui')
+  assert.equal(data.app, '经验库')
   assert.equal(data.source.mode, 'mock')
   assert.equal(data.source.label, '示例数据')
   assert.equal(data.source.readOnly, false)
@@ -388,5 +388,38 @@ await check('live：skills 目录里的普通文件被忽略', async () => {
   assert.equal(payload.data.total, 0)
 })
 
+
+await check('POST /record + /recall：示例数据能记录并召回', async () => {
+  const source = createMockSource()
+  const made = await call(source, '/record', { method: 'POST', body: { intent: '控制台冒烟：记录一条', action: '先写表单再提交', outcome: 'success', type: '代码 / 插件' } })
+  assert.equal(made.status, 200)
+  assert.equal(made.payload.data.action, 'added')
+  const recalled = await call(source, '/recall', { method: 'POST', body: { intent: '控制台冒烟：记录一条', limit: 5 } })
+  assert.equal(recalled.status, 200)
+  assert.ok((recalled.payload.data.candidates || recalled.payload.data.rows || []).length >= 1)
+})
+
+await check('GET /validate + /settings：结构齐全', async () => {
+  const source = createMockSource()
+  const validation = await call(source, '/validate')
+  assert.equal(validation.status, 200)
+  assert.deepEqual(validation.payload.data.problems, [])
+  const settings = await call(source, '/settings')
+  assert.equal(settings.status, 200)
+  assert.equal(settings.payload.data.source.mode, 'mock')
+  assert.equal(typeof settings.payload.data.version, 'string')
+})
+
+await check('live /record → /recall：走 kernel engine 真写真读', async () => {
+  const dir = tempDir()
+  const source = createLiveSource({ dataDir: dir })
+  const made = await call(source, '/record', { method: 'POST', body: { intent: '控制台 live 冒烟', action: '走 engine 写入', outcome: 'success', type: '代码 / 插件' } })
+  assert.equal(made.status, 200)
+  const recalled = await call(source, '/recall', { method: 'POST', body: { intent: '控制台 live 冒烟' } })
+  assert.equal(recalled.status, 200)
+  assert.ok((recalled.payload.data.candidates || []).length >= 1)
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
+

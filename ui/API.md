@@ -343,3 +343,29 @@
 - mock：`data.source.mode === 'mock'`，`notice` 以「当前是示例数据」开头；反馈写内存，进程重启即恢复。
 - live：`data.source.mode === 'live'`，`readOnly === true`；读不到文件时 `exists === false` 且 `notice` 说明原因，界面显示空态而不是报错。
 - 固化技能同样分界：mock 是内置 5 条；live 读 `<dataDir>/skills/<slug>/`，没有技能时返回空数组（界面空态）。
+
+
+## 控制台动作（0.5.0）
+
+### `POST /recall`
+body: `{ intent, context?: string[], limit?: 1..50 }`
+→ `{ mode, candidates, skill?, pendingSkills?, note? }`（live 走 engine.recall；mock 是简化召回）
+
+### `POST /record`
+body: exp_record 的字段（intent/action/outcome/type/context/note/taskId/kind/stepIndex/stepTotal/expectedG/skillId/blockedBy/blockedByList）
+→ `{ action, id, G, skill? }`；mock 只写内存示例库，live 走 engine.record
+
+### `POST /consolidate`
+body: `{ intent, context? }` → `{ action, slug?, derivedFromCount? }`；mock 返回 501 unsupported
+
+### `POST /skill-feedback`
+body: `{ slug, result: helped|hurt|neutral }` → `{ id, result, G_before?, G_after? }`
+
+### `POST /type`
+body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结果；mock 返回 501 unsupported
+
+### `GET /validate`
+→ `{ problems: [{ slug, problems: string[] }] }`
+
+### `GET /settings`
+→ `{ source, dataDir, file, exists, bytes, updatedAt, currentRoot, version }`

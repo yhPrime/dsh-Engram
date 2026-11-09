@@ -1,13 +1,8 @@
 /**
- * dsh-exp-ui — Client 半（界面外壳）。
+ * 经验库控制台（dsh-exp-ui client）
  *
- * 三处贡献：
- *   - `sidebar.panellist`  左侧栏图标「exp-ui」，点它打开主面板
- *   - `main`               经验库界面：检索、列表、类型、使用记录、详情、用后反馈
- *   - `plugins.bundle.config` 插件页卡片（数据源与规模 + 打开面板）
- *
- * 只通过 `/exp-ui/api/*` 拿数据；mock 与 live 两种数据源的返回形状一致，
- * 所以这里不分支——只读物数据里的 `source.readOnly` 决定反馈按钮是否可点。
+ * 八个页面覆盖内核全部能力：概览 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置。
+ * 只通过 `/exp-ui/api/*` 访问数据；mock 与 live 返回形状一致。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-exp-ui',
@@ -18,1585 +13,672 @@ window.__ModuleLoader__.load({
 
     const PANEL_ID = 'exp-ui'
     const PACKAGE_NAME = 'dsh-exp-ui'
-    const TITLE = 'exp-ui'
+    const TITLE = '经验库'
+    const API = '/exp-ui/api'
 
-    /**
-     * 侧栏图标用宿主自己的图标族（与「插件 / 自动化任务 / 记忆系统」那一排同一套
-     * Icon* 组件），尺寸、线宽、视觉重心才一致。拿不到就退回自绘的 16 栅格线性图标。
-     * 注意：侧栏那一格只放**图标**——行按钮、label、点击切面板都由宿主负责。
-     */
     let primitives = null
     try {
       primitives = require('@deepseek-ai/dsh-client-ui-primitives')
-    } catch (error) {
+    } catch {
       primitives = null
-      console.error('[exp-ui] primitives unavailable, using fallback icon', error)
     }
 
-    /**
-     * 悬停 / 焦点 / 窄容器这几件事用 CSS 写（内联 style 做不到）：
-     * 列表行与技能卡才有 hover；窄容器里详情抽屉变成整层 + 返回按钮。
-     */
     const STYLE_ID = 'dsh-exp-ui/styles'
     const PANEL_CSS = `
-.exp-ui-row { transition: border-color .15s ease, background-color .15s ease; }
-.exp-ui-row:hover { border-color: color-mix(in srgb, var(--dsw-alias-label-secondary) 35%, var(--dsw-alias-border-l1)); background: var(--dsw-alias-bg-layer-2); }
-.exp-ui-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-.exp-ui-chip:hover { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-label-secondary); }
-.exp-ui-chip-on:hover { opacity: .92; }
-.exp-ui-skill { transition: border-color .15s ease, background-color .15s ease; }
-.exp-ui-skill:hover { border-color: color-mix(in srgb, var(--dsw-alias-label-secondary) 30%, var(--dsw-alias-border-l1)); background: var(--dsw-alias-bg-layer-2); }
-.exp-ui-skill-head { cursor: pointer; border-radius: 6px; }
-.exp-ui-skill-head:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
-.exp-ui-skill-head:hover .exp-ui-skill-title { color: var(--dsw-alias-brand-primary); }
-.exp-ui-usage-link { cursor: pointer; }
-.exp-ui-usage-link:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.exp-ui-aside-back { display: none; }
-@container exp-ui (max-width: 900px) {
-  .exp-ui-aside { position: absolute; inset: 0; width: 100%; flex: 1 1 auto; z-index: 6; box-shadow: 0 -10px 28px rgba(0, 0, 0, .18); }
-  .exp-ui-aside-back { display: inline-flex; }
-}
-@media (prefers-reduced-motion: reduce) { .exp-ui-row, .exp-ui-skill { transition: none; } }
-.exp-ui-page { isolation: isolate; }
-.exp-ui-page::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--dsw-alias-bg-layer-1) 78%, transparent), color-mix(in srgb, var(--dsw-alias-bg-layer-1) 94%, transparent));
-  backdrop-filter: blur(22px) saturate(1.06);
-}
-.exp-ui-page > * { position: relative; z-index: 1; }
-.exp-ui-search:focus { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent); }
-.exp-ui-tab:hover { color: var(--dsw-alias-label-primary); }
+.eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; height: 100%; min-height: 560px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+.eng-rail { width: 208px; flex: 0 0 208px; display: flex; flex-direction: column; gap: 3px; padding: 16px 12px; border-right: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2)); }
+.eng-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
+.eng-brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); }
+.eng-brand-name { font-size: 14px; font-weight: 650; letter-spacing: .2px; }
+.eng-brand-sub { margin-top: 1px; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); }
+.eng-nav { display: flex; flex-direction: column; gap: 2px; }
+.eng-nav-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; text-align: left; cursor: pointer; }
+.eng-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.eng-nav-item[data-active="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }
+.eng-nav-item:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.eng-nav-count { margin-left: auto; font-size: 11px; opacity: .72; font-variant-numeric: tabular-nums; }
+.eng-rail-foot { margin-top: auto; padding: 12px 10px 2px; border-top: 1px solid var(--dsw-alias-border-l1); font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.eng-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.eng-top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 86%, transparent); backdrop-filter: blur(10px); }
+.eng-title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .1px; }
+.eng-sub { margin-top: 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.eng-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.eng-content { width: 100%; max-width: 1180px; margin: 0 auto; padding: 22px 24px 48px; }
+.eng-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.eng-cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; }
+.eng-card { border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); }
+.eng-kpi { display: flex; flex-direction: column; gap: 4px; padding: 15px 17px; }
+.eng-kpi-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); }
+.eng-kpi-value { font-size: 26px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.eng-kpi-unit { margin-left: 4px; font-size: 11px; font-weight: 400; color: var(--dsw-alias-label-secondary); }
+.eng-section { margin-top: 18px; }
+.eng-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.eng-section-title { margin: 0; font-size: 13px; font-weight: 650; }
+.eng-muted { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.eng-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; cursor: pointer; }
+.eng-btn:hover { border-color: color-mix(in srgb, var(--dsw-alias-label-secondary) 45%, var(--dsw-alias-border-l1)); background: var(--dsw-alias-interactive-bg-hover); }
+.eng-btn:disabled { opacity: .45; cursor: not-allowed; }
+.eng-btn-primary { border-color: transparent; background: var(--dsw-alias-brand-primary); color: #fff; }
+.eng-btn-primary:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, #000); }
+.eng-btn-danger { color: var(--eng-bad); }
+.eng-btn-sm { height: 26px; padding: 0 9px; font-size: 11px; }
+.eng-input, .eng-select, .eng-textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; padding: 7px 10px; }
+.eng-input:focus, .eng-select:focus, .eng-textarea:focus { outline: 2px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent); outline-offset: 0; border-color: var(--dsw-alias-brand-primary); }
+.eng-textarea { min-height: 84px; resize: vertical; line-height: 1.55; }
+.eng-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.eng-label { font-size: 11px; font-weight: 600; color: var(--dsw-alias-label-secondary); letter-spacing: .03em; }
+.eng-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+.eng-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.eng-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.eng-list { display: flex; flex-direction: column; }
+.eng-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 92px 96px; gap: 10px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); cursor: pointer; }
+.eng-row:last-child { border-bottom: 0; }
+.eng-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.eng-row[data-on="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
+.eng-row-main { min-width: 0; }
+.eng-row-intent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 560; }
+.eng-row-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.eng-mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; }
+.eng-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.eng-table th { padding: 8px 10px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-table td { padding: 8px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
+.eng-table tr:last-child td { border-bottom: 0; }
+.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.eng-banner { margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.eng-banner-bad { border-color: color-mix(in srgb, var(--eng-bad) 40%, var(--dsw-alias-border-l1)); color: var(--eng-bad); }
+.eng-detail { padding: 16px; }
+.eng-detail-title { font-size: 14px; font-weight: 650; margin: 0 0 4px; }
+.eng-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 10px; font-size: 12px; }
+.eng-kv dt { color: var(--dsw-alias-label-secondary); }
+.eng-kv dd { margin: 0; word-break: break-word; }
+.eng-pre { margin: 0; padding: 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; background: var(--dsw-alias-bg-layer-1); font-family: ui-monospace, Consolas, monospace; font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.eng-chipbar { display: flex; gap: 6px; flex-wrap: wrap; }
+.eng-chip { padding: 3px 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; cursor: pointer; }
+.eng-chip[data-on="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }
+.eng-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.eng-toolbar .eng-input { width: 220px; }
+.eng-toolbar .eng-select { width: 140px; }
+.eng-split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
+.eng-stack { display: flex; flex-direction: column; gap: 12px; }
+.eng-skill-row { padding: 13px 15px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-skill-row:last-child { border-bottom: 0; }
+.eng-skill-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.eng-skill-row[data-on="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent); }
+.eng-skill-name { font-weight: 620; }
+.eng-skill-desc { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
+.eng-nav-sep { height: 1px; margin: 10px 8px; background: var(--dsw-alias-border-l1); }
+@media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .eng-nav-item, .eng-row, .eng-skill-row { transition: none; } }
 `
-
     function ensureStyles() {
-      if (typeof document === 'undefined' || typeof document.createElement !== 'function') return
-      if (typeof document.querySelector === 'function' && document.querySelector(`style[data-exp-ui="${STYLE_ID}"]`) !== null) return
-      const style = document.createElement('style')
-      style.dataset.expUi = STYLE_ID
-      style.textContent = PANEL_CSS
-      if (document.head && typeof document.head.appendChild === 'function') document.head.appendChild(style)
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Host API                                                           */
-    /* ------------------------------------------------------------------ */
-
-    function apiUrl(path) {
-      const base = typeof document !== 'undefined' && typeof document.baseURI === 'string'
-        ? document.baseURI
-        : 'http://dsh.internal/'
-      return new URL(path.replace(/^\/+/, ''), new URL('.', base)).href
-    }
-
-    /** 调接口；失败抛带 code 的错误（后端 envelope：{ok:false,error:{code,message}}）。 */
-    async function request(path, options) {
-      const opts = options || {}
-      const init = {
-        method: opts.method || 'GET',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'same-origin',
-        cache: 'no-store',
+      try {
+        if (document.getElementById(STYLE_ID)) return
+        const node = document.createElement('style')
+        node.id = STYLE_ID
+        node.textContent = PANEL_CSS
+        document.head.appendChild(node)
+      } catch {
+        // 无 document 的测试环境：跳过样式注入
       }
-      if (opts.body !== undefined) init.body = JSON.stringify(opts.body)
-      const response = await fetch(apiUrl(`exp-ui/api/${path}`), init)
+    }
+
+    const TONES = {
+      ok: { color: 'var(--eng-ok)', bg: 'color-mix(in srgb, var(--eng-ok) 14%, transparent)' },
+      warn: { color: 'var(--eng-warn)', bg: 'color-mix(in srgb, var(--eng-warn) 14%, transparent)' },
+      bad: { color: 'var(--eng-bad)', bg: 'color-mix(in srgb, var(--eng-bad) 14%, transparent)' },
+      muted: { color: 'var(--dsw-alias-label-secondary)', bg: 'color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent)' },
+      brand: { color: 'var(--dsw-alias-brand-primary)', bg: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent)' },
+    }
+
+    const OUTCOMES = {
+      success: ['成功', 'ok'], accepted: ['通过', 'ok'], partial: ['部分', 'warn'],
+      failed: ['失败', 'bad'], corrected: ['被纠正', 'bad'], rejected: ['被拒', 'bad'],
+      aborted: ['中止', 'muted'], unknown: ['未标', 'muted'],
+    }
+    const SKILL_STATES = {
+      solid: ['已固化', 'ok'], trial: ['试用中', 'warn'], risky: ['不稳定', 'bad'],
+      blocked: ['有未解障碍', 'bad'], new: ['待验证', 'muted'],
+    }
+
+    function outcomeOf(value) {
+      return OUTCOMES[String(value || 'unknown')] || [String(value || '未标'), 'muted']
+    }
+    function skillStateOf(value) {
+      return SKILL_STATES[String(value || 'new')] || [String(value || '待验证'), 'muted']
+    }
+    function fmtNumber(value) {
+      const number = Number(value)
+      if (!Number.isFinite(number)) return '—'
+      return (Math.round(number * 100) / 100).toString()
+    }
+    function fmtBytes(value) {
+      const bytes = Number(value) || 0
+      if (bytes < 1024) return `${bytes} B`
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    }
+    function fmtTime(value) {
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return '—'
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    }
+
+    async function request(path, options = {}) {
+      const init = { method: options.method || 'GET', headers: {} }
+      if (options.body !== undefined) {
+        init.headers['content-type'] = 'application/json'
+        init.body = JSON.stringify(options.body)
+      }
+      const response = await fetch(`${API}${path}`, init)
       let payload = null
       try {
         payload = await response.json()
       } catch {
         payload = null
       }
-      if (!response.ok || payload === null || payload.ok !== true) {
-        const detail = payload && payload.error ? payload.error : {}
-        const error = new Error(String(detail.message || `http-${response.status}`))
-        error.code = String(detail.code || `http-${response.status}`)
+      if (!payload || payload.ok !== true) {
+        const error = new Error((payload && payload.error && payload.error.message) || `请求失败（HTTP ${response.status}）`)
+        error.code = payload && payload.error ? payload.error.code : 'http'
         throw error
       }
       return payload.data
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Formatting                                                         */
-    /* ------------------------------------------------------------------ */
-
-    const OUTCOMES = {
-      success: { label: '成功', tone: 'ok' },
-      accepted: { label: '通过', tone: 'ok' },
-      partial: { label: '部分', tone: 'warn' },
-      failed: { label: '失败', tone: 'bad' },
-      corrected: { label: '被纠正', tone: 'bad' },
-      rejected: { label: '被拒', tone: 'bad' },
-      aborted: { label: '中止', tone: 'muted' },
-      unknown: { label: '未标', tone: 'muted' },
+    function Badge(props) {
+      const tone = TONES[props.tone] || TONES.muted
+      return h('span', { className: 'eng-badge', style: { color: tone.color, background: tone.bg } }, props.children)
     }
-
-    const TOOLS = {
-      exp_recall: '召回',
-      exp_record: '记录',
-      exp_feedback: '反馈',
-      exp_consolidate: '沉淀',
-      exp_type: '类型管理',
+    function Button(props) {
+      const kind = props.kind === 'primary' ? 'eng-btn eng-btn-primary' : props.kind === 'danger' ? 'eng-btn eng-btn-danger' : 'eng-btn'
+      return h('button', { type: 'button', className: `${kind}${props.small ? ' eng-btn-sm' : ''}`, disabled: props.disabled, onClick: props.onClick, title: props.title }, props.children)
     }
-
-    /** 固化技能状态（规则与 exp-lib highConfidence 一致）。 */
-    const SKILL_STATUS = {
-      solid: { label: '已固化', tone: 'ok' },
-      trial: { label: '试用中', tone: 'warn' },
-      risky: { label: '不稳定', tone: 'bad' },
-      blocked: { label: '有未解障碍', tone: 'bad' },
-      new: { label: '待验证', tone: 'muted' },
+    function Field(props) {
+      return h('div', { className: 'eng-field', style: props.wide ? { gridColumn: '1 / -1' } : undefined },
+        props.label ? h('label', { className: 'eng-label' }, props.label) : null,
+        props.children,
+        props.hint ? h('span', { className: 'eng-muted' }, props.hint) : null)
     }
-
-    function skillStatusOf(value) {
-      return SKILL_STATUS[String(value || 'new')] || SKILL_STATUS.new
+    function Empty(props) {
+      return h('div', { className: 'eng-empty' }, props.children || '暂无数据')
     }
-
-    function outcomeOf(value) {
-      return OUTCOMES[String(value || 'unknown')] || { label: String(value || '未标'), tone: 'muted' }
-    }
-
-    function fmtBytes(bytes) {
-      const size = Number(bytes) || 0
-      if (size < 1024) return `${size} B`
-      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-      return `${(size / 1024 / 1024).toFixed(1)} MB`
-    }
-
-    function pad(value) {
-      return String(value).padStart(2, '0')
-    }
-
-    function fmtTime(iso) {
-      if (!iso) return '—'
-      const date = new Date(iso)
-      if (Number.isNaN(date.getTime())) return '—'
-      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-    }
-
-    function fmtShortTime(iso) {
-      if (!iso) return '—'
-      const date = new Date(iso)
-      if (Number.isNaN(date.getTime())) return '—'
-      return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-    }
-
-    function fmtNumber(value, digits) {
-      const number = Number(value)
-      if (!Number.isFinite(number)) return '—'
-      return number.toFixed(digits === undefined ? 2 : digits)
-    }
-
-    function truncate(text, max) {
-      const value = String(text || '')
-      return value.length <= max ? value : `${value.slice(0, max - 1)}…`
-    }
-
-    function errorText(reason) {
-      const code = reason && reason.code ? String(reason.code) : ''
-      const message = String((reason && reason.message) || reason)
-      return code === '' ? message : `${code}：${message}`
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Styles                                                             */
-    /* ------------------------------------------------------------------ */
-
-    const S = {
-      page: {
-        boxSizing: 'border-box',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        minHeight: 0,
-        color: 'var(--dsw-alias-label-primary)',
-        background: 'var(--dsw-alias-bg-base)',
-        fontSize: 13,
-        containerType: 'inline-size',
-        containerName: 'exp-ui',
-      },
-      header: { display: 'flex', alignItems: 'flex-start', gap: 12, padding: '20px 24px 12px' },
-      titleWrap: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: '1 1 auto' },
-      titleRow: { display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0, flexWrap: 'wrap' },
-      title: { margin: 0, fontSize: 19, fontWeight: 600, lineHeight: '26px' },
-      countBadge: {
-        fontSize: 11,
-        lineHeight: '18px',
-        padding: '0 8px',
-        borderRadius: 999,
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        fontVariantNumeric: 'tabular-nums',
-        whiteSpace: 'nowrap',
-      },
-      sourceBadge: {
-        fontSize: 11,
-        lineHeight: '18px',
-        padding: '0 8px',
-        borderRadius: 999,
-        whiteSpace: 'nowrap',
-      },
-      sub: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        minWidth: 0,
-        flexWrap: 'wrap',
-        color: 'var(--dsw-alias-label-tertiary)',
-        fontSize: 11,
-      },
-      path: {
-        fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        maxWidth: 520,
-      },
-      headerRight: { display: 'flex', alignItems: 'center', gap: 8, flex: '0 0 auto' },
-      search: {
-        width: 260,
-        padding: '6px 10px',
-        fontSize: 12,
-        color: 'var(--dsw-alias-label-primary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: 8,
-        outline: 'none',
-        fontFamily: 'inherit',
-      },
-      button: {
-        padding: '6px 12px',
-        fontSize: 12,
-        lineHeight: '16px',
-        color: 'var(--dsw-alias-label-primary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: 8,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        whiteSpace: 'nowrap',
-      },
-      primaryButton: {
-        padding: '6px 12px',
-        fontSize: 12,
-        lineHeight: '16px',
-        color: 'var(--dsw-alias-label-primary-foreground)',
-        background: 'var(--dsw-alias-button-primary-fill)',
-        border: '1px solid transparent',
-        borderRadius: 8,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        whiteSpace: 'nowrap',
-      },
-      ghostButton: {
-        padding: '4px 8px',
-        fontSize: 12,
-        lineHeight: '16px',
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'transparent',
-        border: '1px solid transparent',
-        borderRadius: 6,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-      },
-      disabledButton: {
-        padding: '6px 12px',
-        fontSize: 12,
-        lineHeight: '16px',
-        color: 'var(--dsw-alias-label-tertiary)',
-        background: 'var(--dsw-alias-bg-layer-1)',
-        border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 8,
-        cursor: 'not-allowed',
-        fontFamily: 'inherit',
-        whiteSpace: 'nowrap',
-      },
-      statRow: { display: 'flex', gap: 8, padding: '0 24px 10px', flexWrap: 'wrap' },
-      stat: {
-        display: 'inline-flex',
-        alignItems: 'baseline',
-        gap: 6,
-        minWidth: 0,
-        padding: '5px 10px',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 8,
-      },
-      statLabel: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, whiteSpace: 'nowrap' },
-      statValue: { fontSize: 15, fontWeight: 600, fontVariantNumeric: 'tabular-nums', lineHeight: '20px' },
-      statUnit: { fontSize: 11, fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)', marginLeft: 3 },
-      brandTile: {
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: 30,
-        height: 30,
-        borderRadius: 9,
-        background: 'var(--dsw-alias-bg-layer-2)',
-        border: '1px solid var(--dsw-alias-border-l1)',
-        color: 'var(--dsw-alias-brand-primary)',
-        flex: '0 0 auto',
-      },
-      tabs: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: '0 24px',
-        borderBottom: '1px solid var(--dsw-alias-border-l1)',
-      },
-      tab: {
-        padding: '7px 10px',
-        fontSize: 12,
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'transparent',
-        border: 0,
-        borderBottom: '2px solid transparent',
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-      },
-      tabOn: {
-        padding: '7px 10px',
-        fontSize: 12,
-        color: 'var(--dsw-alias-label-primary)',
-        background: 'transparent',
-        border: 0,
-        borderBottom: '2px solid var(--dsw-alias-brand-primary)',
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        fontWeight: 600,
-      },
-      banner: {
-        margin: '12px 24px 0',
-        padding: '8px 12px',
-        fontSize: 12,
-        lineHeight: 1.6,
-        borderRadius: 8,
-        border: '1px solid var(--dsw-alias-border-l2)',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        color: 'var(--dsw-alias-label-secondary)',
-      },
-      bannerWarn: {
-        borderColor: 'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 45%, transparent)',
-        background: 'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 10%, transparent)',
-        color: 'var(--dsw-alias-label-primary)',
-      },
-      bannerError: {
-        borderColor: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent)',
-        background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent)',
-        color: 'var(--dsw-alias-label-primary)',
-      },
-      body: { display: 'flex', flex: '1 1 auto', minHeight: 0 },
-      main: { display: 'flex', flexDirection: 'column', flex: '1 1 auto', minWidth: 0, minHeight: 0 },
-      filters: {
-        display: 'flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: 6,
-        padding: '10px 24px 8px',
-      },
-      chip: {
-        padding: '2px 9px',
-        fontSize: 11,
-        lineHeight: '18px',
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'transparent',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: 999,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        whiteSpace: 'nowrap',
-      },
-      chipOn: {
-        padding: '2px 9px',
-        fontSize: 11,
-        lineHeight: '18px',
-        color: 'var(--dsw-alias-label-primary-foreground)',
-        background: 'var(--dsw-alias-button-primary-fill)',
-        border: '1px solid transparent',
-        borderRadius: 999,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        whiteSpace: 'nowrap',
-      },
-      chipCount: { marginLeft: 5, opacity: 0.7, fontVariantNumeric: 'tabular-nums' },
-      spacer: { flex: '1 1 auto' },
-      select: {
-        padding: '3px 6px',
-        fontSize: 11,
-        color: 'var(--dsw-alias-label-primary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: 6,
-        fontFamily: 'inherit',
-        outline: 'none',
-      },
-      scroll: { flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '0 16px 24px 24px' },
-      row: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 5,
-        width: '100%',
-        textAlign: 'left',
-        padding: '10px 12px',
-        marginBottom: 6,
-        background: 'var(--dsw-alias-bg-layer-1)',
-        border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 10,
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        color: 'inherit',
-      },
-      rowOn: {
-        borderColor: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, var(--dsw-alias-border-l1))',
-        background: 'var(--dsw-alias-bg-layer-2)',
-      },
-      rowHead: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
-      typePill: {
-        flex: '0 0 auto',
-        maxWidth: 130,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        fontSize: 10.5,
-        lineHeight: '17px',
-        padding: '0 7px',
-        borderRadius: 5,
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent)',
-      },
-      intent: {
-        flex: '1 1 auto',
-        minWidth: 0,
-        fontSize: 13,
-        fontWeight: 600,
-        lineHeight: '19px',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-      },
-      gPill: {
-        flex: '0 0 auto',
-        fontSize: 11,
-        lineHeight: '17px',
-        padding: '0 7px',
-        borderRadius: 5,
-        fontVariantNumeric: 'tabular-nums',
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        border: '1px solid var(--dsw-alias-border-l1)',
-      },
-      rowAction: {
-        minWidth: 0,
-        color: 'var(--dsw-alias-label-secondary)',
-        fontSize: 12,
-        lineHeight: '18px',
-        fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-      },
-      meta: {
-        display: 'flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '2px 10px',
-        color: 'var(--dsw-alias-label-tertiary)',
-        fontSize: 11,
-      },
-      outcome: {
-        fontSize: 10.5,
-        lineHeight: '16px',
-        padding: '0 6px',
-        borderRadius: 4,
-        whiteSpace: 'nowrap',
-      },
-      group: {
-        marginBottom: 10,
-        border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 10,
-        overflow: 'hidden',
-        background: 'var(--dsw-alias-bg-layer-1)',
-      },
-      groupHead: {
-        display: 'flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '2px 10px',
-        padding: '8px 12px',
-        background: 'var(--dsw-alias-bg-layer-2)',
-        borderBottom: '1px solid var(--dsw-alias-border-l1)',
-      },
-      groupAction: {
-        fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)',
-        fontWeight: 600,
-        fontSize: 12,
-        minWidth: 0,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        flex: '1 1 auto',
-      },
-      badge: {
-        fontSize: 10.5,
-        lineHeight: '17px',
-        padding: '0 6px',
-        borderRadius: 4,
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'color-mix(in srgb, var(--dsw-alias-label-secondary) 10%, transparent)',
-        fontVariantNumeric: 'tabular-nums',
-        whiteSpace: 'nowrap',
-      },
-      evidence: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 4,
-        width: '100%',
-        textAlign: 'left',
-        padding: '8px 12px',
-        borderTop: '1px solid var(--dsw-alias-border-l1)',
-        background: 'transparent',
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        color: 'inherit',
-      },
-      aside: {
-        flex: '0 0 380px',
-        width: 380,
-        minWidth: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        borderLeft: '1px solid var(--dsw-alias-border-l1)',
-        background: 'var(--dsw-alias-bg-layer-1)',
-      },
-      asideHead: {
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 8,
-        padding: '14px 16px 10px',
-        borderBottom: '1px solid var(--dsw-alias-border-l1)',
-      },
-      asideBody: { flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '12px 16px 24px' },
-      section: { marginBottom: 14 },
-      sectionTitle: {
-        color: 'var(--dsw-alias-label-tertiary)',
-        fontSize: 10.5,
-        fontWeight: 600,
-        letterSpacing: '0.02em',
-        marginBottom: 5,
-      },
-      paragraph: { margin: 0, fontSize: 12.5, lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
-      kv: { display: 'grid', gridTemplateColumns: '76px minmax(0, 1fr)', gap: '3px 10px', fontSize: 12, lineHeight: 1.6 },
-      k: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap' },
-      v: { color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' },
-      mono: {
-        fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)',
-        fontSize: 11,
-        color: 'var(--dsw-alias-label-secondary)',
-        overflowWrap: 'anywhere',
-      },
-      feedbackRow: { display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' },
-      empty: {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        padding: '56px 24px',
-        color: 'var(--dsw-alias-label-secondary)',
-        textAlign: 'center',
-        fontSize: 12,
-        lineHeight: 1.7,
-      },
-      toast: {
-        position: 'absolute',
-        left: '50%',
-        bottom: 22,
-        transform: 'translateX(-50%)',
-        padding: '7px 14px',
-        fontSize: 12,
-        borderRadius: 999,
-        color: 'var(--dsw-alias-label-primary-foreground)',
-        background: 'color-mix(in srgb, var(--dsw-alias-label-primary) 88%, transparent)',
-        boxShadow: '0 4px 18px rgba(0, 0, 0, 0.18)',
-        pointerEvents: 'none',
-        maxWidth: '80%',
-        textAlign: 'center',
-      },
-      tableRow: {
-        display: 'grid',
-        gridTemplateColumns: '120px 64px minmax(0, 1fr)',
-        gap: 10,
-        alignItems: 'baseline',
-        padding: '7px 12px',
-        borderBottom: '1px solid var(--dsw-alias-border-l1)',
-        fontSize: 12,
-      },
-      typeCard: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 3,
-        padding: '10px 12px',
-        marginBottom: 6,
-        border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 10,
-        background: 'var(--dsw-alias-bg-layer-1)',
-      },
-      skillCard: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-        padding: '12px 14px',
-        marginBottom: 8,
-        border: '1px solid var(--dsw-alias-border-l1)',
-        borderRadius: 10,
-        background: 'var(--dsw-alias-bg-layer-1)',
-      },
-      skillName: { fontSize: 13.5, fontWeight: 600, lineHeight: 1.5, minWidth: 0, overflowWrap: 'anywhere', transition: 'color .15s ease' },
-      skillHead: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
-      chevron: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 13, lineHeight: 1, flex: '0 0 auto' },
-      asideBack: { display: 'none', marginRight: 2 },
-      detailNav: { display: 'inline-flex', alignItems: 'center', gap: 2 },
-      kbd: {
-        fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)',
-        fontSize: 10,
-        lineHeight: '15px',
-        color: 'var(--dsw-alias-label-tertiary)',
-        border: '1px solid var(--dsw-alias-border-l2)',
-        borderRadius: 4,
-        padding: '0 4px',
-      },
-      skillDesc: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12, lineHeight: 1.6 },
-      skillBody: {
-        margin: '2px 0 0',
-        padding: '8px 10px',
-        maxHeight: 240,
-        overflowY: 'auto',
-        borderRadius: 8,
-        background: 'var(--dsw-alias-bg-layer-2)',
-        border: '1px solid var(--dsw-alias-border-l1)',
-        color: 'var(--dsw-alias-label-secondary)',
-        fontFamily: 'var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)',
-        fontSize: 11.5,
-        lineHeight: 1.6,
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-word',
-      },
-      chipTag: {
-        fontSize: 10.5,
-        lineHeight: '17px',
-        padding: '0 6px',
-        borderRadius: 4,
-        color: 'var(--dsw-alias-label-secondary)',
-        background: 'color-mix(in srgb, var(--dsw-alias-label-secondary) 10%, transparent)',
-        whiteSpace: 'nowrap',
-      },
-    }
-
-    function toneStyle(tone) {
-      const map = {
-        ok: ['var(--dsw-alias-state-success-primary)', '12%'],
-        bad: ['var(--dsw-alias-state-error-primary)', '12%'],
-        warn: ['var(--dsw-alias-state-warn-primary)', '14%'],
-        muted: ['var(--dsw-alias-label-secondary)', '10%'],
+    function NavIcon(props) {
+      const paths = {
+        overview: 'M2 7.2 8 2l6 5.2V14H9.8v-4H6.2v4H2V7.2Z',
+        book: 'M3 2.8h7.2A2.8 2.8 0 0 1 13 5.6V13H5.4A2.4 2.4 0 0 0 3 15.4V2.8Z',
+        search: 'M7.2 12.4a5.2 5.2 0 1 1 0-10.4 5.2 5.2 0 0 1 0 10.4Zm4-1.2L15 15',
+        plus: 'M8 3v10M3 8h10',
+        spark: 'M8 1.8l1.7 4.1 4.4.4-3.4 2.9 1 4.3L8 11.4l-3.7 2.1 1-4.3L1.9 6.3l4.4-.4L8 1.8Z',
+        tag: 'M2 3h5.6l6.4 6.4-4.6 4.6L3 7.6V3Zm2.6 2.4h.01',
+        clock: 'M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12Zm0-9v3.4l2.3 1.4',
+        gear: 'M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Zm5.4-2.2c0-.5-.1-.9-.2-1.3l1.5-1.1-1.4-2.4-1.8.7c-.6-.5-1.3-.9-2-1.2L9.2 1H6.8l-.3 1.7c-.7.3-1.4.7-2 1.2l-1.8-.7L1.3 5.6l1.5 1.1c-.1.4-.2.8-.2 1.3s.1.9.2 1.3L1.3 10.4l1.4 2.4 1.8-.7c.6.5 1.3.9 2 1.2l.3 1.7h2.4l.3-1.7c.7-.3 1.4-.7 2-1.2l1.8.7 1.4-2.4-1.5-1.1c.1-.4.2-.8.2-1.3Z',
       }
-      const pair = map[tone] || map.muted
-      return {
-        color: pair[0],
-        background: `color-mix(in srgb, ${pair[0]} ${pair[1]}, transparent)`,
-      }
+      return h('svg', { width: 15, height: 15, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { flex: '0 0 auto', opacity: .9 } },
+        h('path', { d: paths[props.name] || paths.overview }))
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Main panel                                                         */
-    /* ------------------------------------------------------------------ */
-
-    function ExpUiPanel() {
-      const [state, setState] = useState(null)
-      const [list, setList] = useState(null)
-      const [usage, setUsage] = useState(null)
-      const [skills, setSkills] = useState(null)
-      const [expandedSkill, setExpandedSkill] = useState('')
-      const [tab, setTab] = useState('experiences')
-      const [queryInput, setQueryInput] = useState('')
-      const [query, setQuery] = useState('')
-      const [typeFilter, setTypeFilter] = useState('')
-      const [outcomeFilter, setOutcomeFilter] = useState('')
-      const [sort, setSort] = useState('recent')
-      const [selectedId, setSelectedId] = useState('')
-      const [cursorId, setCursorId] = useState('')
-      const [detail, setDetail] = useState(null)
-      const [error, setError] = useState('')
-      const [loading, setLoading] = useState(false)
-      const [toast, setToast] = useState('')
-      const [noticeDismissed, setNoticeDismissed] = useState(false)
-      const toastTimer = useRef(null)
-      const requestSeq = useRef(0)
-      const searchRef = useRef(null)
-
-      const notify = useCallback((text) => {
-        setToast(text)
-        if (toastTimer.current !== null) clearTimeout(toastTimer.current)
-        toastTimer.current = setTimeout(() => setToast(''), 3200)
-      }, [])
-
-      useEffect(() => () => {
-        if (toastTimer.current !== null) clearTimeout(toastTimer.current)
-      }, [])
-
-      const readOnly = Boolean(state && state.source && state.source.readOnly)
-
-      const loadState = useCallback(async () => {
-        try {
-          const data = await request('state')
-          setState(data)
-          return data
-        } catch (reason) {
-          setError(errorText(reason))
-          return null
-        }
-      }, [])
-
-      const loadList = useCallback(async () => {
-        const seq = requestSeq.current + 1
-        requestSeq.current = seq
-        setLoading(true)
-        try {
-          const params = new URLSearchParams()
-          if (query !== '') params.set('query', query)
-          if (typeFilter !== '') params.set('type', typeFilter)
-          if (outcomeFilter !== '') params.set('outcome', outcomeFilter)
-          params.set('sort', sort)
-          params.set('limit', '100')
-          const data = await request(`experiences?${params.toString()}`)
-          if (requestSeq.current !== seq) return
-          setList(data)
-          setError('')
-        } catch (reason) {
-          if (requestSeq.current !== seq) return
-          setError(errorText(reason))
-        } finally {
-          if (requestSeq.current === seq) setLoading(false)
-        }
-      }, [query, typeFilter, outcomeFilter, sort])
-
-      const loadUsage = useCallback(async () => {
-        try {
-          const data = await request('usage?limit=120')
-          setUsage(data)
-        } catch (reason) {
-          setError(errorText(reason))
-        }
-      }, [])
-
-      const loadSkills = useCallback(async () => {
-        try {
-          const data = await request('skills')
-          setSkills(data)
-        } catch (reason) {
-          setError(errorText(reason))
-        }
-      }, [])
-
-      useEffect(() => {
-        loadState()
-        loadList()
-      }, [loadState, loadList])
-
-      useEffect(() => {
-        if (tab === 'usage' && usage === null) loadUsage()
-      }, [tab, usage, loadUsage])
-
-      useEffect(() => {
-        if (tab === 'skills' && skills === null) loadSkills()
-      }, [tab, skills, loadSkills])
-
-      const loadDetail = useCallback(async (id) => {
-        if (!id) return
-        try {
-          const data = await request(`experience?id=${encodeURIComponent(id)}`)
-          setDetail(data)
-          setError('')
-        } catch (reason) {
-          setError(errorText(reason))
-          setDetail(null)
-          setSelectedId('')
-        }
-      }, [])
-
-      const closeDetail = useCallback(() => {
-        setSelectedId('')
-        setDetail(null)
-      }, [])
-
-      const select = useCallback((id) => {
-        // 再点一次当前行 = 收起详情，别让用户只能靠 Esc。
-        if (id === '' || id === selectedId) {
-          closeDetail()
-          return
-        }
-        setCursorId(id)
-        setSelectedId(id)
-        setDetail(null)
-        loadDetail(id)
-      }, [selectedId, closeDetail, loadDetail])
-
-      const switchTab = useCallback((id) => {
-        setTab(id)
-        // 详情只属于「经验」页；切走就收起，避免下一页还挂着旧内容。
-        if (id !== 'experiences') closeDetail()
-      }, [closeDetail])
-
-      // 换题型 / 换检索 / 换结果过滤：右侧那条可能已经不在列表里，收起详情。
-      useEffect(() => {
-        closeDetail()
-      }, [query, typeFilter, outcomeFilter, closeDetail])
-
-      const submitSearch = useCallback(() => {
-        setQuery(queryInput.trim())
-      }, [queryInput])
-
-      const clearSearch = useCallback(() => {
-        setQueryInput('')
-        setQuery('')
-      }, [])
-
-      const refresh = useCallback(() => {
-        loadState()
-        loadList()
-        if (tab === 'usage') loadUsage()
-        if (tab === 'skills') loadSkills()
-        if (selectedId !== '') loadDetail(selectedId)
-      }, [loadState, loadList, loadUsage, loadSkills, loadDetail, tab, selectedId])
-
-      const sendFeedback = useCallback(async (row, result) => {
-        if (readOnly) {
-          notify('exp-ui 处于只读模式：接入真实经验库之前不改数据。')
-          return
-        }
-        try {
-          const receipt = await request('feedback', { method: 'POST', body: { id: row.id, result } })
-          const label = result === 'helped' ? '有帮助' : result === 'hurt' ? '没帮上' : '中性'
-          notify(`已记「${label}」：G ${fmtNumber(receipt.G_before)} → ${fmtNumber(receipt.G_after)}`)
-          await loadState()
-          await loadList()
-          if (selectedId === row.id) await loadDetail(row.id)
-          if (tab === 'usage') await loadUsage()
-        } catch (reason) {
-          notify(`反馈没成：${errorText(reason)}`)
-        }
-      }, [readOnly, notify, loadState, loadList, loadDetail, selectedId, tab, loadUsage])
-
-      const copyId = useCallback((id) => {
-        try {
-          if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-            navigator.clipboard.writeText(id).then(() => notify(`已复制 ${id}`)).catch(() => notify('复制失败'))
-            return
-          }
-        } catch {
-          // 没有剪贴板权限就只把 id 显示出来。
-        }
-        notify(`id：${id}`)
-      }, [notify])
-
-      const typesById = useMemo(() => {
-        const map = new Map()
-        for (const type of (state && Array.isArray(state.types) ? state.types : [])) map.set(type.id, type)
-        return map
-      }, [state])
-
-      const rows = list !== null && Array.isArray(list.rows) ? list.rows : []
-      const visibleTotal = state && state.totals ? state.totals.visible : rows.length
-      const selectedRow = useMemo(() => {
-        if (detail !== null) return detail.row
-        for (const row of rows) if (row.id === selectedId) return row
-        return null
-      }, [detail, rows, selectedId])
-
-      // 键盘：/ 聚焦检索；↑↓ 移动游标；Enter 打开；Esc 收起详情。
-      useEffect(() => {
-        const onKey = (event) => {
-          const target = event && event.target
-          const tag = target && target.tagName ? String(target.tagName).toUpperCase() : ''
-          const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target && target.isContentEditable)
-          if (event.key === '/' && !typing) {
-            event.preventDefault()
-            if (searchRef.current !== null) searchRef.current.focus()
-            return
-          }
-          if (event.key === 'Escape') {
-            if (selectedId !== '') closeDetail()
-            return
-          }
-          if (typing || tab !== 'experiences' || rows.length === 0) return
-          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-            event.preventDefault()
-            const current = rows.findIndex((row) => row.id === (cursorId || selectedId))
-            const fallback = event.key === 'ArrowDown' ? 0 : rows.length - 1
-            const index = current < 0
-              ? fallback
-              : Math.max(0, Math.min(rows.length - 1, current + (event.key === 'ArrowDown' ? 1 : -1)))
-            const next = rows[index]
-            if (next !== undefined) setCursorId(next.id)
-            return
-          }
-          if (event.key === 'Enter' && cursorId !== '') {
-            event.preventDefault()
-            select(cursorId)
-          }
-        }
-        window.addEventListener('keydown', onKey)
-        return () => window.removeEventListener('keydown', onKey)
-      }, [rows, cursorId, selectedId, tab, closeDetail, select])
-
-      const outcomeOptions = ['success', 'partial', 'failed', 'corrected', 'aborted', 'unknown']
-
-      const kpis = [
-        { label: '可见经验', value: String(visibleTotal), unit: '条' },
-        { label: '固化技能', value: state ? String(state.totals.skills) : '—', unit: '个' },
-        { label: '今日调用', value: state && state.usage ? String(state.usage.today) : '—', unit: '次' },
-        { label: '库大小', value: state ? fmtBytes(state.bytes) : '—', unit: '' },
-      ]
-
-      function renderBanners() {
-        const nodes = []
-        if (error !== '') {
-          nodes.push(h('div', { key: 'err', style: { ...S.banner, ...S.bannerError } },
-            `接口出错：${error}`,
-            h('button', { type: 'button', style: { ...S.ghostButton, marginLeft: 8 }, onClick: refresh }, '重试')))
-        }
-        if (state && state.notice && !noticeDismissed) {
-          nodes.push(h('div', { key: 'notice', style: { ...S.banner, display: 'flex', alignItems: 'center', gap: 8 } },
-            h('span', { style: { ...S.badge, ...toneStyle('warn'), flex: '0 0 auto' } }, '提示'),
-            h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, state.notice),
-            h('button', {
-              type: 'button',
-              style: { ...S.ghostButton, flex: '0 0 auto' },
-              title: '本次不再显示',
-              onClick: () => setNoticeDismissed(true),
-            }, '×')))
-        }
-        if (list !== null && list.warning) {
-          nodes.push(h('div', { key: 'warn', style: { ...S.banner, ...S.bannerWarn } }, list.warning))
-        }
-        if (list !== null && (list.mode === 'advantage' || list.mode === 'evidence') && list.note) {
-          nodes.push(h('div', { key: 'note', style: S.banner },
-            h('span', { style: { marginRight: 8 } }, list.mode === 'advantage' ? '按优势排序' : '按证据排序'),
-            list.note))
-        }
-        return nodes
-      }
-
-      function renderRow(row) {
-        const outcome = outcomeOf(row.outcome)
-        const on = row.id === selectedId
-        const cursor = row.id === cursorId
-        const accent = outcome.tone === 'ok'
-          ? 'var(--dsw-alias-state-success-primary)'
-          : outcome.tone === 'bad'
-            ? 'var(--dsw-alias-state-error-primary)'
-            : outcome.tone === 'warn'
-              ? 'var(--dsw-alias-state-warn-primary)'
-              : 'var(--dsw-alias-border-l2)'
-        const base = { ...S.row, borderLeft: `3px solid ${accent}` }
-        return h('button', {
-          key: row.id,
-          type: 'button',
-          className: 'exp-ui-row',
-          'aria-pressed': on,
-          style: on
-            ? { ...base, ...S.rowOn }
-            : cursor
-              ? { ...base, borderColor: 'var(--dsw-alias-label-secondary)' }
-              : base,
-          onClick: () => select(row.id),
-        },
-        h('div', { style: S.rowHead },
-          h('span', { style: S.typePill, title: row.typeName }, row.typeName),
-          h('span', { style: S.intent, title: row.intent }, row.intent || '(无意图)'),
-          h('span', { style: S.gPill, title: '回报 G（含用后反馈）' }, `G ${fmtNumber(row.G)}`),
-          h('span', { style: S.chevron }, on ? '▾' : '›')),
-        h('div', { style: S.rowAction, title: row.action }, row.action || '(无做法)'),
-        h('div', { style: S.meta },
-          h('span', { style: { ...S.outcome, ...toneStyle(outcome.tone) } }, outcome.label),
-          h('span', null, `用过 ${row.hits} 次`),
-          row.feedback
-            ? h('span', null, `反馈 有帮助${row.feedback.helped} / 没帮上${row.feedback.hurt} / 中性${row.feedback.neutral}`)
-            : null,
-          h('span', null, `最近 ${fmtShortTime(row.lastSeenAt)}`),
-          row.stepIndex !== null ? h('span', null, `步骤 ${row.stepIndex}${row.stepTotal ? `/${row.stepTotal}` : ''}`) : null,
-          row.lifecycle && row.lifecycle.retiredAt ? h('span', { style: toneStyle('warn') }, '已退休') : null,
-          row.lifecycle && row.lifecycle.supersededBy ? h('span', { style: toneStyle('muted') }, '已被取代') : null))
-      }
-
-      function renderRecall() {
-        if (rows.length === 0) {
-          return h('div', { style: S.empty },
-            h('div', null, '没有相近的历史经验'),
-            h('div', null, '换成更具体的意图再试；真实经验库里也可以先记一条。'))
-        }
-        return rows.map((candidate, index) => h('div', { key: `${candidate.action}::${index}`, style: S.group },
-          h('div', { style: S.groupHead },
-            h('span', { style: S.badge }, `#${index + 1}`),
-            h('span', { style: S.groupAction, title: candidate.action }, candidate.action || '(无做法)'),
-            h('span', { style: S.badge }, `相似 ${fmtNumber(candidate.meanSimilarity)}`),
-            h('span', { style: S.badge }, `支持 ${candidate.support}`),
-            h('span', { style: S.badge }, `Â ${fmtNumber(candidate.advantage, 3)}`),
-            h('span', { style: S.badge }, `置信 ${fmtNumber(candidate.confidence)}`),
-            h('span', { style: S.badge }, `排名 ${fmtNumber(candidate.rankScore, 3)}`)),
-        (candidate.evidence || []).map((evidence) => {
-          const outcome = outcomeOf(evidence.outcome)
-          return h('button', {
-            key: evidence.id,
-            type: 'button',
-            className: 'exp-ui-row',
-            style: evidence.id === selectedId
-              ? { ...S.evidence, ...S.rowOn }
-              : evidence.id === cursorId
-                ? { ...S.evidence, borderColor: 'var(--dsw-alias-label-secondary)' }
-                : S.evidence,
-            onClick: () => select(evidence.id),
-          },
-          h('div', { style: S.rowHead },
-            h('span', { style: { ...S.outcome, ...toneStyle(outcome.tone), flex: '0 0 auto' } }, outcome.label),
-            h('span', { style: S.intent, title: evidence.intent }, evidence.intent || '(无意图)'),
-            h('span', { style: S.gPill }, `G ${fmtNumber(evidence.G)}`)),
-          h('div', { style: S.rowAction, title: evidence.action }, evidence.action),
-          evidence.note ? h('div', { style: { ...S.meta, overflow: 'hidden' } }, truncate(evidence.note, 160)) : null,
-          h('div', { style: S.meta },
-            h('span', null, evidence.typeName || '未分类'),
-            h('span', null, `相似 ${fmtNumber(evidence.similarity, 3)}`),
-            evidence.lifecycle && evidence.lifecycle.retiredAt ? h('span', null, '已退休') : null,
-            evidence.feedback
-              ? h('span', null, `反馈 ${evidence.feedback.helped}/${evidence.feedback.hurt}/${evidence.feedback.neutral}`)
-              : null))
-        })))
-      }
-
-      function renderFilters() {
-        const counts = list && list.counts ? list.counts : {}
-        const typeList = state && Array.isArray(state.types) ? state.types : []
-        return h('div', { style: S.filters },
-          h('button', {
-            type: 'button',
-            style: typeFilter === '' ? S.chipOn : S.chip,
-            onClick: () => setTypeFilter(''),
-          }, '全部', h('span', { style: S.chipCount }, String(list && list.mode === 'list' ? list.total : visibleTotal))),
-          typeList.map((type) => h('button', {
-            key: type.id,
-            type: 'button',
-            title: type.description || '',
-            style: typeFilter === type.id ? S.chipOn : S.chip,
-            onClick: () => setTypeFilter(typeFilter === type.id ? '' : type.id),
-          }, type.name, h('span', { style: S.chipCount }, String(counts[type.id] || type.count || 0)))),
-          h('span', { style: S.spacer }),
-          h('select', {
-            style: S.select,
-            value: outcomeFilter,
-            onChange: (event) => setOutcomeFilter(event.target.value),
-            title: '按结果过滤',
-          },
-          h('option', { value: '' }, '全部结果'),
-          outcomeOptions.map((value) => h('option', { key: value, value }, outcomeOf(value).label))),
-          h('select', {
-            style: S.select,
-            value: sort,
-            onChange: (event) => setSort(event.target.value),
-            title: '排序',
-          },
-          h('option', { value: 'recent' }, '最近用过'),
-          h('option', { value: 'g' }, '回报 G'),
-          h('option', { value: 'hits' }, '用得最多'),
-          h('option', { value: 'type' }, '按类型')),
-          h('span', { style: { ...S.meta, marginLeft: 4 } }, `${rows.length} 条`),
-          (query !== '' || typeFilter !== '' || outcomeFilter !== '')
-            ? h('button', {
-              type: 'button',
-              style: { ...S.ghostButton, marginLeft: 2 },
-              onClick: () => {
-                setQueryInput('')
-                setQuery('')
-                setTypeFilter('')
-                setOutcomeFilter('')
-                setCursorId('')
-              },
-            }, '清除筛选')
-            : null)
-      }
-
-      function renderExperiences() {
-        const recalling = list !== null && (list.mode === 'advantage' || list.mode === 'evidence')
-        return h('div', { style: S.main },
-          renderFilters(),
-          h('div', { style: S.scroll },
-            rows.length === 0 && loading ? h('div', { style: S.empty }, '读取中…') : null,
-            rows.length === 0 && !loading
-              ? (recalling
-                ? renderRecall()
-                : h('div', { style: S.empty },
-                  h('div', null, state && state.exists === false ? '还没有读到经验数据' : '这个筛选下没有经验'),
-                  h('div', null, state && state.dataDir ? `数据位置：${state.dataDir}` : ''),
-                  h('button', {
-                    type: 'button',
-                    style: S.button,
-                    onClick: () => {
-                      setQueryInput('')
-                      setQuery('')
-                      setTypeFilter('')
-                      setOutcomeFilter('')
-                      setCursorId('')
-                    },
-                  }, '清除筛选')))
-              : null,
-            rows.length > 0 && recalling ? renderRecall() : null,
-            rows.length > 0 && !recalling ? rows.map(renderRow) : null))
-      }
-
-      function renderSkillCard(skill) {
-        const status = skillStatusOf(skill.status)
-        const expanded = expandedSkill === skill.id
-        const percent = Math.round((Number(skill.ratio) || 0) * 100)
-        const toggle = () => setExpandedSkill(expanded ? '' : skill.id)
-        return h('div', { key: skill.id, className: 'exp-ui-skill', style: S.skillCard },
-          h('div', {
-            className: 'exp-ui-skill-head',
-            style: S.skillHead,
-            role: 'button',
-            tabIndex: 0,
-            'aria-expanded': expanded,
-            onClick: toggle,
-            onKeyDown: (event) => {
-              if (event && (event.key === 'Enter' || event.key === ' ')) {
-                event.preventDefault()
-                toggle()
-              }
-            },
-          },
-          h('span', { className: 'exp-ui-skill-title', style: S.skillName }, skill.name),
-          h('span', { style: { ...S.badge, ...toneStyle(status.tone) } }, status.label),
-          h('span', { style: S.chipTag }, skill.typeName || '未分类'),
-          h('span', { style: S.spacer }),
-          h('span', { style: S.chevron }, expanded ? '▾' : '▸')),
-          h('div', { style: S.skillDesc }, skill.description || '（无描述）'),
-          expanded ? h('pre', { style: S.skillBody }, skill.body || '（无正文）') : null,
-          h('div', { style: S.meta },
-            h('span', null, `用过 ${skill.uses} 次`),
-            h('span', null, `有帮助 ${skill.helped} / 没帮上 ${skill.hurt}`),
-            h('span', null, `比例 ${percent}%`),
-            h('span', null, `修订 ${skill.revisions}`),
-            h('span', null, `障碍 ${skill.obstacleCount}${skill.openObstacleCount > 0 ? `（未解 ${skill.openObstacleCount}）` : ''}`),
-            h('span', null, `来源 ${skill.derivedFrom.length} 条经验`),
-            skill.lastUsedAt ? h('span', null, `最近 ${fmtShortTime(skill.lastUsedAt)}`) : h('span', null, '还没用过'),
-            skill.pendingCommit ? h('span', { style: toneStyle('warn') }, '待提交') : null,
-            skill.context.length > 0 ? h('span', null, `情境 ${skill.context.join(' / ')}`) : null,
-            skill.triggers.length > 0 ? h('span', null, `触发 ${skill.triggers.join(' / ')}`) : null),
-          h('div', { style: S.mono }, skill.path || ''))
-      }
-
-      function renderSkills() {
-        const data = skills && Array.isArray(skills.skills) ? skills.skills : null
-        if (data === null) return h('div', { style: S.main }, h('div', { style: S.empty }, '读取中…'))
-        const summary = skills.summary || { total: data.length, solid: 0, trial: 0, risky: 0, new: 0, blocked: 0 }
-        const header = h('div', { style: { ...S.filters, color: 'var(--dsw-alias-label-tertiary)' } },
-          h('span', null, `${data.length} 个技能`),
-          summary.solid > 0 ? h('span', { style: { ...S.badge, ...toneStyle('ok') } }, `已固化 ${summary.solid}`) : null,
-          summary.trial > 0 ? h('span', { style: { ...S.badge, ...toneStyle('warn') } }, `试用中 ${summary.trial}`) : null,
-          summary.risky > 0 ? h('span', { style: { ...S.badge, ...toneStyle('bad') } }, `不稳定 ${summary.risky}`) : null,
-          summary.blocked > 0 ? h('span', { style: { ...S.badge, ...toneStyle('bad') } }, `有障碍 ${summary.blocked}`) : null,
-          h('span', { style: S.spacer }),
-          h('span', null, '同族经验 ≥3 且 ≥2 正 1 负 → exp_consolidate 写入 <dataDir>/skills/'))
-        if (data.length === 0) {
-          return h('div', { style: S.main }, header, h('div', { style: S.empty },
-            h('div', null, '还没有固化技能'),
-            h('div', null, '沉淀条件：同一类型 ≥3 条经验，其中 ≥2 条正回报且有 1 条负回报；由 exp_consolidate 写成 .exp/skills/<slug>/（SKILL.md + skill.json）。'),
-            h('div', null, state && state.source && state.source.mode === 'mock'
-              ? '示例数据里本应有 5 个技能，看到这条说明没读到。'
-              : '真实库里还没有沉淀过技能；示例数据模式下能先看界面。')))
-        }
-        return h('div', { style: S.main }, header, h('div', { style: S.scroll }, data.map(renderSkillCard)))
-      }
-
-      function renderTypes() {
-        const types = state && Array.isArray(state.types) ? state.types : []
-        return h('div', { style: S.main },
-          h('div', { style: S.scroll },
-            types.length === 0
-              ? h('div', { style: S.empty }, '还没有类型')
-              : types.map((type) => h('div', { key: type.id, style: S.typeCard },
-                h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
-                  h('span', { style: { fontSize: 13, fontWeight: 600 } }, type.name),
-                  h('span', { style: S.badge }, `${type.count} 条`),
-                  type.system ? h('span', { style: S.badge }, '系统') : null,
-                  h('span', { style: S.spacer }),
-                  h('button', {
-                    type: 'button',
-                    style: S.ghostButton,
-                    onClick: () => {
-                      setTab('experiences')
-                      setQuery('')
-                      setQueryInput('')
-                      setTypeFilter(type.id)
-                    },
-                  }, '看这些经验')),
-                h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12, lineHeight: 1.6 } },
-                  type.description || '（描述待补：类型描述决定模型「什么该写进来、什么时候该召回」）')))))
-      }
-
-      function renderUsage() {
-        const rowsUsage = usage && Array.isArray(usage.rows) ? usage.rows : null
-        if (rowsUsage === null) return h('div', { style: S.main }, h('div', { style: S.empty }, '读取中…'))
-        if (rowsUsage.length === 0) {
-          return h('div', { style: S.main }, h('div', { style: S.empty },
-            h('div', null, '还没有调用记录'),
-            h('div', null, '真实经验库每调用一次工具记一行；这里是示例数据，接入后会换成真实日志。')))
-        }
-        return h('div', { style: S.main },
-          h('div', { style: { ...S.filters, color: 'var(--dsw-alias-label-tertiary)' } },
-            h('span', null, `最近 ${rowsUsage.length} 条（新→旧）`),
-            h('span', { style: S.spacer }),
-            h('span', null, state && state.source ? `${state.source.label} · ${state.source.readOnly ? '只读' : '可反馈'}` : '')),
-          h('div', { style: S.scroll },
-            h('div', { style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 10, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-1)' } },
-              rowsUsage.map((row, index) => {
-                const targetId = Array.isArray(row.ids) && row.ids.length > 0 ? row.ids[0] : ''
-                const openTarget = targetId === ''
-                  ? undefined
-                  : () => {
-                    setTab('experiences')
-                    setCursorId(targetId)
-                    setSelectedId(targetId)
-                    setDetail(null)
-                    loadDetail(targetId)
-                  }
-                return h('div', {
-                  key: `${row.at}-${index}`,
-                  className: targetId === '' ? '' : 'exp-ui-usage-link',
-                  title: targetId === '' ? '' : `打开经验 ${targetId}`,
-                  style: index === rowsUsage.length - 1 ? { ...S.tableRow, borderBottom: '0' } : S.tableRow,
-                  onClick: openTarget,
-                },
-                h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums' } }, fmtShortTime(row.at)),
-                h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, TOOLS[row.tool] || row.tool || '—'),
-                h('span', { style: { minWidth: 0, color: 'var(--dsw-alias-label-secondary)' } },
-                  row.ok === false
-                    ? h('span', { style: { ...toneStyle('bad'), padding: '0 5px', borderRadius: 4, marginRight: 6 } }, '失败')
-                    : null,
-                  row.feedback ? h('span', { style: { marginRight: 6 } }, `反馈 ${row.feedback}`) : null,
-                  truncate(row.intent || row.action || row.error || '', 120),
-                  targetId !== '' ? h('span', { style: { ...S.chevron, marginLeft: 6 } }, '↗') : null))
-              }))))
-      }
-
-      function renderAside() {
-        if (selectedRow === null && detail === null) {
-          return h('div', { className: 'exp-ui-aside', style: S.aside },
-            h('div', { style: S.empty },
-              h('div', null, '选一条经验看详情'),
-              h('div', null, readOnly ? '当前是只读模式。' : '可以记用后反馈（有帮助 / 没帮上 / 中性）。')))
-        }
-        const row = selectedRow || {
-          id: '',
-          intent: '',
-          action: '',
-          typeName: '',
-          outcome: 'unknown',
-          G: 0,
-          note: '',
-          feedback: null,
-          lifecycle: {},
-        }
-        const outcome = outcomeOf(row.outcome)
-        const detailHistory = detail && Array.isArray(detail.history) ? detail.history : []
-        const detailFeedback = detail && Array.isArray(detail.feedbackLog) ? detail.feedbackLog : []
-        const typeMeta = typesById.get(row.typeId) || null
-        const feedbackDisabled = readOnly
-        const index = rows.findIndex((item) => item.id === row.id)
-        const previous = index > 0 ? rows[index - 1] : null
-        const following = index >= 0 && index < rows.length - 1 ? rows[index + 1] : null
-        return h('aside', { className: 'exp-ui-aside', style: S.aside },
-          h('div', { style: S.asideHead },
-            h('button', {
-              type: 'button',
-              className: 'exp-ui-aside-back',
-              style: { ...S.ghostButton, marginRight: 2 },
-              title: '返回列表（Esc）',
-              onClick: closeDetail,
-            }, '← 返回'),
-            h('div', { style: { minWidth: 0, flex: '1 1 auto' } },
-              h('div', { style: S.sectionTitle }, '经验'),
-              h('div', { style: { fontSize: 13.5, fontWeight: 600, lineHeight: 1.5, overflowWrap: 'anywhere' } }, row.intent || '(无意图)')),
-            h('div', { style: S.detailNav },
-              h('button', { type: 'button', style: S.ghostButton, disabled: previous === null, title: '上一条（↑）', onClick: () => previous !== null && select(previous.id) }, '↑'),
-              h('button', { type: 'button', style: S.ghostButton, disabled: following === null, title: '下一条（↓）', onClick: () => following !== null && select(following.id) }, '↓')),
-            h('button', {
-              type: 'button',
-              title: '关闭（Esc）',
-              style: S.ghostButton,
-              onClick: closeDetail,
-            }, '✕')),
-          h('div', { style: S.asideBody },
-            h('div', { style: S.section },
-              h('div', { style: S.sectionTitle }, '做法'),
-              h('p', { style: { ...S.paragraph, ...S.mono } }, row.action || '—')),
-            h('div', { style: S.section },
-              h('div', { style: S.sectionTitle }, '结果与回报'),
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' } },
-                h('span', { style: { ...S.outcome, ...toneStyle(outcome.tone), padding: '1px 8px' } }, outcome.label),
-                h('span', { style: S.gPill }, `G ${fmtNumber(row.G)}`),
-                h('span', { style: S.badge }, row.GSource === 'feedback' ? '含反馈修正' : '按结果')),
-              h('div', { style: S.kv },
-                h('span', { style: S.k }, '反馈'), h('span', { style: S.v }, row.feedback
-                  ? `有帮助 ${row.feedback.helped} · 没帮上 ${row.feedback.hurt} · 中性 ${row.feedback.neutral}（窗口 ${row.feedback.window}）`
-                  : '暂无'),
-                h('span', { style: S.k }, '类型'), h('span', { style: S.v }, `${row.typeName}${typeMeta && typeMeta.description ? `：${truncate(typeMeta.description, 80)}` : ''}`),
-                h('span', { style: S.k }, '来源'), h('span', { style: S.v }, row.origin),
-                h('span', { style: S.k }, '用过'), h('span', { style: S.v }, `${row.hits} 次`),
-                h('span', { style: S.k }, '首次'), h('span', { style: S.v }, fmtTime(row.createdAt)),
-                h('span', { style: S.k }, '最近'), h('span', { style: S.v }, fmtTime(row.lastSeenAt)),
-                row.taskId ? h('span', { style: S.k }, '任务') : null,
-                row.taskId ? h('span', { style: S.v }, `${row.taskId}${row.stepIndex !== null ? ` · 步骤 ${row.stepIndex}${row.stepTotal ? `/${row.stepTotal}` : ''}` : ''}`) : null,
-                row.lifecycle && row.lifecycle.retiredAt ? h('span', { style: S.k }, '退休') : null,
-                row.lifecycle && row.lifecycle.retiredAt ? h('span', { style: S.v }, `${row.lifecycle.retiredReason || 'retired'} · ${fmtTime(row.lifecycle.retiredAt)}`) : null,
-                row.lifecycle && row.lifecycle.supersededBy ? h('span', { style: S.k }, '取代') : null,
-                row.lifecycle && row.lifecycle.supersededBy ? h('span', { style: S.v }, `已被 ${row.lifecycle.supersededBy} 取代`) : null)),
-            h('div', { style: S.section },
-              h('div', { style: S.sectionTitle }, '备注'),
-              h('p', { style: S.paragraph }, row.note || '（无）')),
-            h('div', { style: S.section },
-              h('div', { style: S.sectionTitle }, '用后反馈'),
-              h('div', { style: S.feedbackRow },
-                h('button', { type: 'button', style: feedbackDisabled ? S.disabledButton : S.button, disabled: feedbackDisabled, onClick: () => sendFeedback(row, 'helped') }, '有帮助'),
-                h('button', { type: 'button', style: feedbackDisabled ? S.disabledButton : S.button, disabled: feedbackDisabled, onClick: () => sendFeedback(row, 'hurt') }, '没帮上'),
-                h('button', { type: 'button', style: feedbackDisabled ? S.disabledButton : S.button, disabled: feedbackDisabled, onClick: () => sendFeedback(row, 'neutral') }, '中性')),
-              h('div', { style: { ...S.meta, fontSize: 11 } }, feedbackDisabled
-                ? '只读模式：接入真实经验库之前不改数据。'
-                : '改的是这条的 G（EMA 0.35），不动次数与结果；示例数据只改内存，不落盘。')),
-            detailHistory.length > 0
-              ? h('div', { style: S.section },
-                h('div', { style: S.sectionTitle }, '生命周期'),
-                h('div', { style: S.kv }, detailHistory.map((event, index) => [
-                  h('span', { key: `k${index}`, style: S.k }, String(event.type || '—')),
-                  h('span', { key: `v${index}`, style: S.v }, `${fmtTime(event.at)}${event.reason ? ` · ${event.reason}` : ''}`),
-                ])))
-              : null,
-            detailFeedback.length > 0
-              ? h('div', { style: S.section },
-                h('div', { style: S.sectionTitle }, '反馈记录'),
-                h('div', { style: S.kv }, detailFeedback.map((event, index) => [
-                  h('span', { key: `k${index}`, style: S.k }, String(event.result || '—')),
-                  h('span', { key: `v${index}`, style: S.v }, fmtTime(event.at)),
-                ])))
-              : null,
-            h('div', { style: S.section },
-              h('div', { style: { ...S.sectionTitle, display: 'flex', alignItems: 'center', gap: 6 } },
-                'id',
-                h('button', {
-                  type: 'button',
-                  style: { ...S.ghostButton, padding: '0 4px' },
-                  title: '复制 id',
-                  onClick: () => copyId(row.id),
-                }, '复制')),
-              h('div', { style: S.mono }, row.id || '—'))))
-      }
-
-      const tabs = [
-        { id: 'experiences', label: '经验', count: visibleTotal },
-        { id: 'skills', label: '固化技能', count: state ? state.totals.skills : null },
-        { id: 'types', label: '类型', count: state ? state.totals.types : null },
-        { id: 'usage', label: '使用记录', count: state && state.usage ? state.usage.total : null },
-      ]
-      const sourceLabel = state && state.source ? state.source.label : ''
-      const sourceTone = state && state.source
-        ? (state.source.mode === 'mock' ? 'warn' : 'ok')
-        : 'muted'
-
-      return h('div', { className: 'exp-ui-page', style: { ...S.page, position: 'relative' } },
-        h('div', { style: S.header },
-          h('div', { style: S.titleWrap },
-            h('div', { style: S.titleRow },
-              h('span', { style: S.brandTile, 'aria-hidden': 'true' },
-                primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function'
-                  ? h(primitives.IconChecklistOutlineRegular, { size: 18 })
-                  : h('span', { style: { fontSize: 15 } }, '≡')),
-              h('h1', { style: S.title }, TITLE),
-              sourceLabel === ''
-                ? null
-                : h('span', { style: { ...S.sourceBadge, ...toneStyle(sourceTone) } }, sourceLabel),
-              state ? h('span', { style: S.countBadge }, `${visibleTotal} 条经验`) : null,
-              state ? h('span', { style: S.countBadge }, `v${state.version}`) : null,
-              state && state.source && state.source.readOnly ? h('span', { style: S.countBadge }, '只读') : null),
-            h('div', { style: S.sub },
-              h('span', { style: S.path, title: state ? state.dataDir : '' }, state ? state.dataDir : '—'),
-              state && state.updatedAt ? h('span', null, `· 更新于 ${fmtShortTime(state.updatedAt)}`) : null,
-              state && state.usage && state.usage.lastAt ? h('span', null, `· 最近调用 ${fmtShortTime(state.usage.lastAt)}`) : null)),
-          h('div', { style: S.headerRight },
-            h('input', {
-              ref: searchRef,
-              className: 'exp-ui-search',
-              style: S.search,
-              placeholder: '按意图检索（/ 聚焦）：比如「把 PPT 导出成 PDF」',
-              value: queryInput,
-              onChange: (event) => setQueryInput(event.target.value),
-              onKeyDown: (event) => {
-                if (event && event.key === 'Enter') submitSearch()
-              },
-            }),
-            h('button', { type: 'button', style: S.primaryButton, onClick: submitSearch }, '检索'),
-            query !== '' ? h('button', { type: 'button', style: S.button, onClick: clearSearch }, '清除') : null,
-            h('button', { type: 'button', style: S.button, title: '重新读取', onClick: refresh }, '刷新'),
-            h('span', { style: S.kbd, title: '按 / 聚焦检索框' }, '/'))),
-        h('div', { style: S.statRow },
-          kpis.map((kpi) => h('div', { key: kpi.label, style: S.stat },
-            h('span', { style: S.statLabel }, kpi.label),
-            h('span', { style: S.statValue }, kpi.value, h('span', { style: S.statUnit }, kpi.unit))))),
-        h('div', { style: S.tabs },
-          tabs.map((item) => h('button', {
-            key: item.id,
-            type: 'button',
-            className: 'exp-ui-tab',
-            style: tab === item.id ? S.tabOn : S.tab,
-            onClick: () => switchTab(item.id),
-          }, item.label, item.count === null ? null : h('span', { style: S.chipCount }, String(item.count))),
-          h('span', { style: S.spacer }),
-          query !== '' ? h('span', { style: { ...S.meta, paddingBottom: 6 } }, `检索：${query}`) : null)),
-        renderBanners(),
-        h('div', { style: S.body },
-          tab === 'experiences'
-            ? renderExperiences()
-            : tab === 'skills'
-              ? renderSkills()
-              : tab === 'types'
-                ? renderTypes()
-                : renderUsage(),
-          tab === 'experiences' && selectedId !== '' ? renderAside() : null),
-        toast === '' ? null : h('div', { style: S.toast }, toast))
-    }
-
-    /* ------------------------------------------------------------------ */
-    /* Plugin page card                                                   */
-    /* ------------------------------------------------------------------ */
-
-    function SettingsCard(props) {
+    function useLoad(loader) {
       const [data, setData] = useState(null)
       const [error, setError] = useState('')
-      const load = useCallback(() => {
-        request('state')
-          .then((value) => {
-            setData(value)
-            setError('')
-          })
-          .catch((reason) => setError(errorText(reason)))
-      }, [])
-      useEffect(() => {
-        load()
-      }, [load])
-      const open = () => {
+      const [loading, setLoading] = useState(false)
+      const load = useCallback(async () => {
+        setLoading(true)
+        setError('')
         try {
-          if (props && typeof props.openPanel === 'function') props.openPanel()
-        } catch {
-          // 打开失败不影响卡片。
+          setData(await loader())
+        } catch (caught) {
+          setError(caught && caught.message ? caught.message : String(caught))
+        } finally {
+          setLoading(false)
         }
-      }
-      return h('div', { style: { padding: '4px 0 0' } },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' } },
-          h('span', { style: { fontSize: 13, fontWeight: 600 } }, TITLE),
-          data ? h('span', { style: S.badge }, data.source.label) : null,
-          data ? h('span', { style: S.badge }, `${data.totals.visible} 条经验`) : null,
-          data ? h('span', { style: S.badge }, `${data.totals.skills} 个技能`) : null,
-          data ? h('span', { style: S.badge }, `${data.totals.types} 个类型`) : null,
-          data ? h('span', { style: S.badge }, fmtBytes(data.bytes)) : null,
-          h('span', { style: S.spacer }),
-          h('button', { type: 'button', style: S.button, onClick: open }, '打开面板'),
-          h('button', { type: 'button', style: S.ghostButton, onClick: load }, '刷新')),
-        h('div', { style: S.mono, marginBottom: 6 }, data ? data.dataDir || '（示例数据）' : '读取中…'),
-        error !== '' ? h('div', { style: { ...S.bannerError, padding: '6px 10px', borderRadius: 8, fontSize: 12 } }, `读取失败：${error}`) : null,
-        h('div', { style: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 11.5, lineHeight: 1.6 } },
-          data && data.source.mode === 'mock'
-            ? '示例数据：反馈只改内存，不写入真实经验库；真实数据接入后换成 live 数据源。'
-            : '真实数据（只读）：界面先跑通，写入等经验库引擎接入后再打开。'))
+      }, [loader])
+      useEffect(() => { load() }, [load])
+      return { data, error, loading, reload: load, setData }
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Plugin                                                             */
-    /* ------------------------------------------------------------------ */
+    function Banner(props) {
+      return h('div', { className: `eng-banner${props.bad ? ' eng-banner-bad' : ''}` }, props.children)
+    }
+
+    function Overview(props) {
+      const recent = useLoad(useCallback(() => request('/experiences?limit=6'), []))
+      const state = props.state || {}
+      const totals = state.totals || {}
+      const usage = state.usage || {}
+      const summary = state.skillSummary || {}
+      const kpis = [
+        ['可见经验', totals.visible, '条'],
+        ['固化技能', totals.skills, '个'],
+        ['今日调用', usage.today, '次'],
+        ['库大小', fmtBytes(state.bytes), ''],
+      ]
+      return h('div', null,
+        h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
+          h('span', { className: 'eng-kpi-label' }, label),
+          h('span', { className: 'eng-kpi-value' }, value === undefined ? '—' : String(value), h('span', { className: 'eng-kpi-unit' }, unit))))),
+        h('div', { className: 'eng-cols eng-section' },
+          h('div', { className: 'eng-card' },
+            h('div', { style: { padding: '13px 15px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+              h('h3', { className: 'eng-section-title' }, '最近经验'),
+              h(Button, { small: true, onClick: () => props.onGo('experiences') }, '全部')),
+            recent.error ? h(Banner, { bad: true }, recent.error) : null,
+            recent.data && recent.data.rows && recent.data.rows.length > 0
+              ? h('div', { className: 'eng-list' }, recent.data.rows.slice(0, 6).map((row) => {
+                const [label, tone] = outcomeOf(row.outcome)
+                return h('div', { key: row.id, className: 'eng-row', style: { gridTemplateColumns: '60px minmax(0,1fr) 70px' }, onClick: () => props.onOpen(row.id) },
+                  h(Badge, { tone }, label),
+                  h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                  h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, `G ${fmtNumber(row.G)}`))
+              }))
+              : h(Empty, null, recent.loading ? '读取中…' : '还没有经验：去「记录」写第一条。')),
+          h('div', { className: 'eng-stack' },
+            h('div', { className: 'eng-card', style: { padding: 15 } },
+              h('h3', { className: 'eng-section-title', style: { marginBottom: 10 } }, '快捷操作'),
+              h('div', { className: 'eng-actions' },
+                h(Button, { kind: 'primary', onClick: () => props.onGo('record') }, '记录经验'),
+                h(Button, { onClick: () => props.onGo('recall') }, '检索召回'),
+                h(Button, { onClick: () => props.onGo('skills') }, '沉淀技能'))),
+            h('div', { className: 'eng-card', style: { padding: 15 } },
+              h('h3', { className: 'eng-section-title', style: { marginBottom: 10 } }, '技能状态'),
+              h('div', { className: 'eng-chipbar' }, ['solid', 'trial', 'risky', 'blocked', 'new'].map((key) => {
+                const [label, tone] = skillStateOf(key)
+                return h(Badge, { key, tone }, `${label} ${summary[key] || 0}`)
+              })),
+              h('div', { className: 'eng-muted', style: { marginTop: 10 } }, state.notice || `共 ${totals.types || 0} 个类型`)))))
+    }
+
+    function Experiences(props) {
+      const [query, setQuery] = useState('')
+      const [type, setType] = useState('')
+      const [outcome, setOutcome] = useState('')
+      const [selected, setSelected] = useState(null)
+      const list = useLoad(useCallback(() => {
+        const params = new URLSearchParams({ limit: '100' })
+        if (query.trim() !== '') params.set('query', query.trim())
+        if (type !== '') params.set('type', type)
+        if (outcome !== '') params.set('outcome', outcome)
+        return request(`/experiences?${params.toString()}`)
+      }, [query, type, outcome]))
+      const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
+      const types = (props.state && props.state.types) || []
+      const rows = list.data && (list.data.rows || list.data.candidates || [])
+      const send = async (result) => {
+        if (selected === null) return
+        await request('/feedback', { method: 'POST', body: { id: selected, result } })
+        await Promise.all([list.reload(), detail.reload()])
+        props.onChanged()
+      }
+      return h('div', null,
+        list.error ? h(Banner, { bad: true }, list.error) : null,
+        h('div', { className: 'eng-toolbar' },
+          h('input', { className: 'eng-input', placeholder: '按意图筛选…', value: query, onChange: (event) => setQuery(event.target.value) }),
+          h('select', { className: 'eng-select', value: type, onChange: (event) => setType(event.target.value) },
+            h('option', { value: '' }, '全部类型'), types.map((item) => h('option', { key: item.id, value: item.id }, item.name))),
+          h('select', { className: 'eng-select', value: outcome, onChange: (event) => setOutcome(event.target.value) },
+            h('option', { value: '' }, '全部结果'), Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0]))),
+          h('span', { className: 'eng-muted' }, `${list.data ? list.data.total : '—'} 条`),
+          h(Button, { small: true, onClick: list.reload }, '刷新')),
+        h('div', { className: 'eng-split' },
+          h('div', { className: 'eng-card' },
+            rows.length === 0 ? h(Empty, null, list.loading ? '读取中…' : '没有符合条件的经验') : h('div', { className: 'eng-list' }, rows.map((row) => {
+              const [label, tone] = outcomeOf(row.outcome)
+              return h('div', { key: row.id, className: 'eng-row', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
+                h(Badge, { tone }, label),
+                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
+                h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
+            }))),
+          h('div', { className: 'eng-card' },
+            selected === null ? h(Empty, null, '选一条经验看详情') : detail.data === null ? h(Empty, null, '读取中…') : detail.error ? h(Banner, { bad: true }, detail.error) : (() => {
+              const row = detail.data.row
+              const [label, tone] = outcomeOf(row.outcome)
+              return h('div', { className: 'eng-detail' },
+                h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 } }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
+                h('h3', { className: 'eng-detail-title' }, row.intent || '（无意图）'),
+                h('dl', { className: 'eng-kv' },
+                  h('dt', null, '做法'), h('dd', null, row.action || '—'),
+                  h('dt', null, '类型'), h('dd', null, row.typeName || '—'),
+                  h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
+                  h('dt', null, '情境'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '—'),
+                  h('dt', null, '反馈'), h('dd', null, row.feedback ? `有帮助 ${row.feedback.helped || 0} / 没帮上 ${row.feedback.hurt || 0}` : '—'),
+                  h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
+                row.note ? h('div', { style: { marginTop: 12 } }, h('div', { className: 'eng-label', style: { marginBottom: 5 } }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null,
+                h('div', { className: 'eng-actions', style: { marginTop: 14 } },
+                  h(Button, { small: true, onClick: () => send('helped') }, '有帮助'),
+                  h(Button, { small: true, onClick: () => send('hurt') }, '没帮上'),
+                  h(Button, { small: true, onClick: () => send('neutral') }, '中性')))
+            }))))
+    }
+
+    function Recall() {
+      const [intent, setIntent] = useState('')
+      const [context, setContext] = useState('')
+      const [result, setResult] = useState(null)
+      const [error, setError] = useState('')
+      const [busy, setBusy] = useState(false)
+      const run = async () => {
+        setBusy(true); setError('')
+        try {
+          setResult(await request('/recall', { method: 'POST', body: { intent, context: context.trim() === '' ? [] : context.split(/[,，]/).map((item) => item.trim()).filter(Boolean), limit: 8 } }))
+        } catch (caught) {
+          setError(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const candidates = result ? (result.candidates || result.rows || []) : []
+      return h('div', null,
+        error ? h(Banner, { bad: true }, error) : null,
+        h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 14 } },
+          h('div', { className: 'eng-form-grid' },
+            h(Field, { label: '意图', wide: true, hint: '自然语言，越具体越好；回车直接检索' },
+              h('textarea', { className: 'eng-textarea', placeholder: '例如：把课件导出成 PDF，字体要嵌进去', value: intent, onChange: (event) => setIntent(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) run() } })),
+            h(Field, { label: '情境（逗号分隔，可选）' }, h('input', { className: 'eng-input', placeholder: 'windows, powerpoint', value: context, onChange: (event) => setContext(event.target.value) }))),
+          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || intent.trim() === '', onClick: run }, busy ? '检索中…' : '检索'))),
+        result === null ? null : h('div', null,
+          h('div', { className: 'eng-actions', style: { marginBottom: 12 } },
+            h(Badge, { tone: result.mode === 'skill' ? 'brand' : result.mode === 'advantage' ? 'ok' : 'muted' }, `mode=${result.mode}`),
+            h('span', { className: 'eng-muted' }, `候选 ${candidates.length} 条`),
+            result.pendingSkills ? h(Badge, { tone: 'warn' }, `待补提交 ${result.pendingSkills}`) : null),
+          result.skill ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
+            h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Badge, { tone: 'brand' }, '高确定技能'), h('span', { className: 'eng-mono' }, result.skill.id)),
+            h('h3', { className: 'eng-detail-title' }, result.skill.name),
+            h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, result.skill.description),
+            h('pre', { className: 'eng-pre' }, result.skill.body)) : null,
+          candidates.length === 0 ? h(Empty, null, result.note || '没有相近候选') : h('div', { className: 'eng-stack' }, candidates.map((item) => {
+            const [label, tone] = outcomeOf(item.outcome)
+            return h('div', { key: item.id, className: 'eng-card', style: { padding: 14 } },
+              h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(item.G)}`), item.score !== undefined ? h('span', { className: 'eng-muted' }, `score ${fmtNumber(item.score)}`) : null),
+              h('div', { className: 'eng-row-intent' }, item.intent || '（无意图）'),
+              h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—'))
+          }))))
+    }
+
+    function Record() {
+      const [form, setForm] = useState({ intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', expectedG: '', skillId: '', blockedBy: '' })
+      const [receipt, setReceipt] = useState(null)
+      const [error, setError] = useState('')
+      const [busy, setBusy] = useState(false)
+      const update = (key) => (event) => setForm({ ...form, [key]: event.target.value })
+      const submit = async () => {
+        setBusy(true); setError(''); setReceipt(null)
+        try {
+          const body = {
+            intent: form.intent, action: form.action, outcome: form.outcome, type: form.type,
+            context: form.context.trim() === '' ? [] : form.context.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+            note: form.note,
+          }
+          if (form.taskId.trim() !== '') body.taskId = form.taskId.trim()
+          if (form.kind === 'step') {
+            body.kind = 'step'
+            if (form.stepIndex !== '') body.stepIndex = Number(form.stepIndex)
+            if (form.stepTotal !== '') body.stepTotal = Number(form.stepTotal)
+          }
+          if (form.expectedG !== '') body.expectedG = Number(form.expectedG)
+          if (form.skillId.trim() !== '') body.skillId = form.skillId.trim()
+          if (form.blockedBy.trim() !== '') body.blockedBy = form.blockedBy.trim()
+          setReceipt(await request('/record', { method: 'POST', body }))
+        } catch (caught) {
+          setError(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      return h('div', { className: 'eng-card', style: { padding: 18 } },
+        error ? h(Banner, { bad: true }, error) : null,
+        receipt ? h(Banner, null, `已记录：action=${receipt.action}，id=${receipt.id}，G=${fmtNumber(receipt.G)}${receipt.skillWarning ? `；${receipt.skillWarning}` : ''}`) : null,
+        h('div', { className: 'eng-form-grid' },
+          h(Field, { label: '意图（做什么）', wide: true }, h('input', { className: 'eng-input', value: form.intent, onChange: update('intent'), placeholder: '例如：给研学课 PPT 插一页过渡页' })),
+          h(Field, { label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
+          h(Field, { label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
+          h(Field, { label: '类型' }, h('input', { className: 'eng-input', value: form.type, onChange: update('type'), placeholder: 'PPT / 课件' })),
+          h(Field, { label: '情境（逗号分隔）' }, h('input', { className: 'eng-input', value: form.context, onChange: update('context'), placeholder: 'windows, powerpoint' })),
+          h(Field, { label: '预期 G（可选）' }, h('input', { className: 'eng-input', type: 'number', step: '0.05', value: form.expectedG, onChange: update('expectedG'), placeholder: '0.8' })),
+          h(Field, { label: '任务 id（可选）' }, h('input', { className: 'eng-input', value: form.taskId, onChange: update('taskId') })),
+          h(Field, { label: '粒度' }, h('select', { className: 'eng-select', value: form.kind, onChange: update('kind') }, h('option', { value: 'task' }, '整条任务'), h('option', { value: 'step' }, '任务步骤'))),
+          h(Field, { label: '步骤序号（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepIndex, onChange: update('stepIndex') })),
+          h(Field, { label: '步骤总数（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepTotal, onChange: update('stepTotal') })),
+          h(Field, { label: '技能 id（可选）' }, h('input', { className: 'eng-input', value: form.skillId, onChange: update('skillId'), placeholder: 'skill:<slug>' })),
+          h(Field, { label: '受阻描述（可选）' }, h('input', { className: 'eng-input', value: form.blockedBy, onChange: update('blockedBy'), placeholder: '页脚错位 第 3 行' })),
+          h(Field, { label: '备注', wide: true }, h('textarea', { className: 'eng-textarea', value: form.note, onChange: update('note') }))),
+        h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || form.intent.trim() === '' || form.action.trim() === '', onClick: submit }, busy ? '提交中…' : '记录')))
+    }
+
+    function Skills(props) {
+      const skills = useLoad(useCallback(() => request('/skills'), []))
+      const validation = useLoad(useCallback(() => request('/validate'), []))
+      const [selected, setSelected] = useState(null)
+      const [intent, setIntent] = useState('')
+      const [notice, setNotice] = useState('')
+      const rows = skills.data ? skills.data.skills || [] : []
+      const current = selected === null ? null : rows.find((row) => row.id === selected) || null
+      const act = async (fn) => {
+        try {
+          setNotice(await fn())
+          await Promise.all([skills.reload(), validation.reload()])
+          props.onChanged()
+        } catch (caught) {
+          setNotice(caught.message || String(caught))
+        }
+      }
+      return h('div', null,
+        skills.error ? h(Banner, { bad: true }, skills.error) : null,
+        notice ? h(Banner, null, notice) : null,
+        h('div', { className: 'eng-split' },
+          h('div', { className: 'eng-card' },
+            rows.length === 0 ? h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀') : rows.map((row) => {
+              const [label, tone] = skillStateOf(row.status)
+              return h('div', { key: row.id, className: 'eng-skill-row', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
+                h('div', { style: { flex: 1, minWidth: 0 } },
+                  h('div', { className: 'eng-skill-name' }, row.name),
+                  h('div', { className: 'eng-skill-desc' }, row.description || '—'),
+                  h('div', { className: 'eng-actions', style: { marginTop: 6 } },
+                    h(Badge, { tone }, label),
+                    h('span', { className: 'eng-muted' }, `uses ${row.uses || 0} · helped ${row.helped || 0} · hurt ${row.hurt || 0}`),
+                    row.pendingCommit ? h(Badge, { tone: 'warn' }, '待补提交') : null)),
+                h('span', { className: 'eng-mono', style: { flex: '0 0 auto' } }, row.id))
+            })),
+          h('div', { className: 'eng-stack' },
+            h('div', { className: 'eng-card', style: { padding: 15 } },
+              h('h3', { className: 'eng-section-title', style: { marginBottom: 8 } }, '沉淀技能'),
+              h(Field, { label: '同族意图' }, h('input', { className: 'eng-input', value: intent, onChange: (event) => setIntent(event.target.value), placeholder: '例如：给 PPT 插页' })),
+              h(Button, { kind: 'primary', disabled: intent.trim() === '', onClick: () => act(async () => { const out = await request('/consolidate', { method: 'POST', body: { intent } }); return `沉淀结果：${out.action}${out.slug ? `（${out.slug}）` : ''}` }) }, '沉淀')),
+            h('div', { className: 'eng-card', style: { padding: 15 } },
+              h('h3', { className: 'eng-section-title', style: { marginBottom: 8 } }, '技能校验'),
+              validation.data && validation.data.problems && validation.data.problems.length > 0
+                ? validation.data.problems.map((item) => h('div', { key: item.slug, className: 'eng-muted', style: { marginBottom: 6 } }, `${item.slug}：${item.problems.join('；')}`))
+                : h('div', { className: 'eng-muted' }, '全部健康')),
+            current === null ? h('div', { className: 'eng-card' }, h(Empty, null, '选一个技能看正文')) : h('div', { className: 'eng-card' },
+              h('div', { className: 'eng-detail' },
+                h('h3', { className: 'eng-detail-title' }, current.name),
+                h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
+                h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上')),
+                h('pre', { className: 'eng-pre' }, current.body || '（空）'))))))
+    }
+
+    function Types(props) {
+      const types = useLoad(useCallback(() => request('/types'), []))
+      const [name, setName] = useState('')
+      const [description, setDescription] = useState('')
+      const [notice, setNotice] = useState('')
+      const op = async (body) => {
+        try {
+          setNotice(await request('/type', { method: 'POST', body }))
+          await types.reload()
+          props.onChanged()
+        } catch (caught) {
+          setNotice(caught.message || String(caught))
+        }
+      }
+      const rows = types.data ? types.data.types || [] : []
+      return h('div', null,
+        types.error ? h(Banner, { bad: true }, types.error) : null,
+        notice ? h(Banner, null, typeof notice === 'string' ? notice : `已执行：${notice.action || '类型操作'}`) : null,
+        h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14 } },
+          h('div', { className: 'eng-form-grid' },
+            h(Field, { label: '新类型名称' }, h('input', { className: 'eng-input', value: name, onChange: (event) => setName(event.target.value) })),
+            h(Field, { label: '描述（可选）' }, h('input', { className: 'eng-input', value: description, onChange: (event) => setDescription(event.target.value) }))),
+          h(Button, { kind: 'primary', disabled: name.trim() === '', onClick: () => op({ action: 'create', name: name.trim(), description: description.trim() }) }, '新建类型')),
+        h('div', { className: 'eng-card' },
+          h('table', { className: 'eng-table' },
+            h('thead', null, h('tr', null, h('th', null, '名称'), h('th', null, 'id'), h('th', null, '条数'), h('th', null, '操作'))),
+            h('tbody', null, rows.map((row) => h('tr', { key: row.id },
+              h('td', null, row.name),
+              h('td', { className: 'eng-mono' }, row.id),
+              h('td', null, String(row.count || 0)),
+              h('td', null, row.system
+                ? h('span', { className: 'eng-muted' }, '系统类型')
+                : h('div', { className: 'eng-actions' },
+                  h(Button, { small: true, onClick: () => op({ action: 'rename', id: row.id, name: `${row.name}·改` }) }, '改名'),
+                  h(Button, { small: true, onClick: () => op({ action: 'delete', id: row.id }) }, '删除')))))))))
+    }
+
+    function Usage() {
+      const usage = useLoad(useCallback(() => request('/usage?limit=200'), []))
+      const rows = usage.data ? usage.data.rows || [] : []
+      return h('div', null,
+        usage.error ? h(Banner, { bad: true }, usage.error) : null,
+        h('div', { className: 'eng-card' }, rows.length === 0 ? h(Empty, null, usage.loading ? '读取中…' : '还没有调用记录') : h('table', { className: 'eng-table' },
+          h('thead', null, h('tr', null, h('th', null, '时间'), h('th', null, '工具'), h('th', null, '意图'), h('th', null, '结果'))),
+          h('tbody', null, rows.map((row, index) => h('tr', { key: index },
+            h('td', { className: 'eng-mono' }, fmtTime(row.at)),
+            h('td', null, row.tool || '—'),
+            h('td', null, row.intent || row.action || '—'),
+            h('td', null, row.feedback || (row.ok === false ? '失败' : 'ok'))))))))
+    }
+
+    function Settings() {
+      const settings = useLoad(useCallback(() => request('/settings'), []))
+      const validation = useLoad(useCallback(() => request('/validate'), []))
+      if (settings.error) return h(Banner, { bad: true }, settings.error)
+      const data = settings.data || {}
+      return h('div', { className: 'eng-cols' },
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, '数据源'),
+          h('dl', { className: 'eng-kv' },
+            h('dt', null, '模式'), h('dd', null, data.source ? `${data.source.label}（${data.source.mode}）` : '—'),
+            h('dt', null, '数据目录'), h('dd', { className: 'eng-mono' }, data.dataDir || '—'),
+            h('dt', null, '经验库文件'), h('dd', { className: 'eng-mono' }, data.file || '—'),
+            h('dt', null, 'currentRoot'), h('dd', { className: 'eng-mono' }, data.currentRoot || '（未设置）'),
+            h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
+            h('dt', null, '版本'), h('dd', null, data.version || '—'))),
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, '技能校验'),
+          validation.data && validation.data.problems && validation.data.problems.length > 0
+            ? validation.data.problems.map((item) => h('div', { key: item.slug, className: 'eng-muted', style: { marginBottom: 6 } }, `${item.slug}：${item.problems.join('；')}`))
+            : h('div', { className: 'eng-muted' }, '全部健康')))
+    }
+
+    const NAV = [
+      ['overview', '概览', 'overview'],
+      ['experiences', '经验', 'book'],
+      ['recall', '检索', 'search'],
+      ['record', '记录', 'plus'],
+      ['skills', '技能', 'spark'],
+      ['types', '类型', 'tag'],
+      ['usage', '使用记录', 'clock'],
+      ['settings', '设置', 'gear'],
+    ]
+
+    function Console() {
+      const [tab, setTab] = useState('overview')
+      const [state, setState] = useState(null)
+      const [error, setError] = useState('')
+      const loadState = useCallback(async () => {
+        try {
+          setState(await request('/state'))
+          setError('')
+        } catch (caught) {
+          setError(caught.message || String(caught))
+        }
+      }, [])
+      useEffect(() => { loadState() }, [loadState])
+      const counts = {
+        experiences: state ? state.totals.visible : null,
+        skills: state ? state.totals.skills : null,
+        types: state ? state.totals.types : null,
+        usage: state && state.usage ? state.usage.total : null,
+      }
+      const go = (next) => setTab(next)
+      const content = (() => {
+        if (tab === 'overview') return h(Overview, { state, onGo: go, onOpen: (id) => { setTab('experiences') } })
+        if (tab === 'experiences') return h(Experiences, { state, onChanged: loadState })
+        if (tab === 'recall') return h(Recall)
+        if (tab === 'record') return h(Record)
+        if (tab === 'skills') return h(Skills, { onChanged: loadState })
+        if (tab === 'types') return h(Types, { onChanged: loadState })
+        if (tab === 'usage') return h(Usage)
+        return h(Settings)
+      })()
+      const source = state && state.source
+      const navButton = ([id, label, icon]) => h('button', {
+        key: id,
+        type: 'button',
+        className: 'eng-nav-item',
+        'data-active': tab === id ? 'true' : 'false',
+        onClick: () => setTab(id),
+      }, h(NavIcon, { name: icon }), label, counts[id] === null || counts[id] === undefined ? null : h('span', { className: 'eng-nav-count' }, String(counts[id])))
+      const brandMark = primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function'
+        ? h(primitives.IconChecklistOutlineRegular, { size: 18 })
+        : h('span', { style: { fontSize: 15 } }, '≡')
+      return h('div', { className: 'eng-app' },
+        h('aside', { className: 'eng-rail' },
+          h('div', { className: 'eng-brand' },
+            h('span', { className: 'eng-brand-mark' }, brandMark),
+            h('div', null, h('div', { className: 'eng-brand-name' }, TITLE), h('div', { className: 'eng-brand-sub' }, 'ENG RAM'))),
+          h('nav', { className: 'eng-nav' }, NAV.map(navButton)),
+          h('div', { className: 'eng-rail-foot' },
+            h('div', { className: 'eng-mono', style: { marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: state ? state.dataDir : '' }, state ? state.dataDir : '读取中…'),
+            h('div', null, source ? source.label : '—'))),
+        h('main', { className: 'eng-main' },
+          h('header', { className: 'eng-top' },
+            h('div', null, h('h1', { className: 'eng-title' }, TITLE), h('div', { className: 'eng-sub' }, '经验与技能的本地控制台')),
+            h('div', { className: 'eng-top-right' },
+              source ? h(Badge, { tone: source.mode === 'mock' ? 'warn' : 'ok' }, source.mode === 'mock' ? '示例数据' : `数据：${source.label}`) : null,
+              state ? h('span', { className: 'eng-muted' }, `v${state.version}`) : null,
+              h(Button, { small: true, onClick: loadState }, '刷新'))),
+          h('div', { className: 'eng-content' },
+            error ? h(Banner, { bad: true }, error) : null,
+            state && state.notice ? h(Banner, null, state.notice) : null,
+            content)))
+    }
 
     return {
       inject: ['slots', 'layout'],
       apply(ctx) {
         ensureStyles()
         const disposers = []
-
-        /**
-         * 侧栏那一格的内容：只有图标，没有按钮。
-         * 宿主把这段放进 `.panelGlyph`（inline-flex 居中的 span），外面是它自己的行按钮。
-         * @param {{size?: number, active?: boolean}} props - 宿主传入的尺寸与选中态。
-         */
         function PanelGlyph(props) {
           const size = props && Number(props.size) > 0 ? Number(props.size) : 16
-          if (primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function') {
-            return h(primitives.IconChecklistOutlineRegular, { size })
-          }
+          if (primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function') return h(primitives.IconChecklistOutlineRegular, { size })
           const active = Boolean(props && props.active)
-          return h('svg', {
-            width: size,
-            height: size,
-            viewBox: '0 0 16 16',
-            fill: 'none',
-            stroke: 'currentColor',
-            strokeWidth: active ? 1.3 : 1.1,
-            strokeLinecap: 'round',
-            strokeLinejoin: 'round',
-            'aria-hidden': 'true',
-            style: { display: 'block' },
-          },
-          h('rect', { x: 1.75, y: 2.5, width: 12.5, height: 11, rx: 2 }),
-          h('path', { d: 'M4.4 6.1 L5.7 7.4 L8.1 4.9' }),
-          h('path', { d: 'M9.4 6.2 H12.1' }),
-          h('path', { d: 'M4.4 9.6 L5.7 10.9 L8.1 8.4' }),
-          h('path', { d: 'M9.4 9.7 H12.1' }))
+          return h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: active ? 1.3 : 1.1, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
+            h('rect', { x: 1.75, y: 2.5, width: 12.5, height: 11, rx: 2 }),
+            h('path', { d: 'M4.4 6.1 L5.7 7.4 L8.1 4.9' }),
+            h('path', { d: 'M9.4 6.2 H12.1' }),
+            h('path', { d: 'M4.4 9.6 L5.7 10.9 L8.1 8.4' }),
+            h('path', { d: 'M9.4 9.7 H12.1' }))
         }
-
         function BundleCard() {
-          return h(SettingsCard, { openPanel: () => ctx.layout.selectPanel(PANEL_ID) })
+          return h('div', { className: 'eng-card', style: { padding: 16 } },
+            h('div', { className: 'eng-brand-name' }, TITLE),
+            h('div', { className: 'eng-muted', style: { margin: '6px 0 12px' } }, '经验与技能的本地控制台：记录、检索、沉淀、校验。'),
+            h(Button, { kind: 'primary', onClick: () => ctx.layout.selectPanel(PANEL_ID) }, '打开经验库'))
         }
-
         try {
-          disposers.push(ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-            name: 'sidebar.panellist',
-            id: PANEL_ID,
-            order: 45,
-            label: () => TITLE,
-          }, PanelGlyph)))
-        } catch (error) {
-          console.error('[exp-ui] panellist registration failed', error)
-        }
-
+          disposers.push(ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 45, label: () => TITLE }, PanelGlyph)))
+        } catch (error) { console.error('[exp-ui] panellist registration failed', error) }
         try {
-          disposers.push(ctx.slots.inject('main', () => ctx.slots.register({
-            name: 'main',
-            key: PANEL_ID,
-          }, ExpUiPanel)))
-        } catch (error) {
-          console.error('[exp-ui] main panel registration failed', error)
-        }
-
+          disposers.push(ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, Console)))
+        } catch (error) { console.error('[exp-ui] main panel registration failed', error) }
         try {
-          disposers.push(ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
-            name: 'plugins.bundle.config',
-            key: PACKAGE_NAME,
-          }, BundleCard)))
-        } catch (error) {
-          console.error('[exp-ui] bundle card registration failed', error)
-        }
-
+          disposers.push(ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE_NAME }, BundleCard)))
+        } catch (error) { console.error('[exp-ui] bundle card registration failed', error) }
         ctx.effect(() => () => {
           for (const dispose of disposers.reverse()) {
-            try {
-              dispose()
-            } catch (error) {
-              console.error('[exp-ui] dispose failed', error)
-            }
+            try { dispose() } catch (error) { console.error('[exp-ui] dispose failed', error) }
           }
         })
       },

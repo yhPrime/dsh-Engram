@@ -143,7 +143,7 @@ check('模块加载时不发请求（首屏才请求）', () => {
 const { ctx, injected, registrations } = makeCtx()
 module.apply(ctx)
 
-check('注册三处：侧栏 exp-ui、主面板、插件页卡片', () => {
+check('注册三处：侧栏经验库、主面板、插件页卡片', () => {
   assert.deepEqual(injected, ['sidebar.panellist', 'main', 'plugins.bundle.config'])
   const names = registrations.map((entry) => entry.registration.name)
   assert.deepEqual(names, ['sidebar.panellist', 'main', 'plugins.bundle.config'])
@@ -152,12 +152,12 @@ check('注册三处：侧栏 exp-ui、主面板、插件页卡片', () => {
   }
 })
 
-check('侧栏 id 与主面板 key 都是 exp-ui，label 是 exp-ui', () => {
+check('侧栏 id 与主面板 key 都是 exp-ui，label 是「经验库」', () => {
   const panellist = registrations.find((entry) => entry.registration.name === 'sidebar.panellist')
   const main = registrations.find((entry) => entry.registration.name === 'main')
   assert.equal(panellist.registration.id, 'exp-ui')
   assert.equal(main.registration.key, 'exp-ui')
-  assert.equal(panellist.registration.label(), 'exp-ui')
+  assert.equal(panellist.registration.label(), '经验库')
 })
 
 check('侧栏那格只放图标：用宿主图标族、按 size 传参、没有按钮/点击', () => {
@@ -191,9 +191,8 @@ check('插件页卡片挂在自己的包名上（dsh-exp-ui）', () => {
   const card = registrations.find((entry) => entry.registration.name === 'plugins.bundle.config')
   assert.equal(card.registration.key, 'dsh-exp-ui')
   const element = card.component()
-  assert.equal(typeof element.type, 'function')
-  const tree = element.type({ openPanel: () => {} })
-  assert.equal(typeof tree.type, 'string')
+  assert.equal(typeof element.type, 'string')
+  assert.ok(JSON.stringify(element).includes('经验库'))
 })
 
 check('主面板首屏（state=null）渲染不抛错', () => {
@@ -203,13 +202,13 @@ check('主面板首屏（state=null）渲染不抛错', () => {
   assert.ok(tree.children.length > 0)
 })
 
-check('主面板对空数据渲染也不抛错，且标题是 exp-ui', () => {
+check('主面板对空数据渲染也不抛错，且标题是「经验库」', () => {
   const panel = registrations.find((entry) => entry.registration.name === 'main').component
   const tree = panel({})
   const serialized = JSON.stringify(tree, (key, value) => (typeof value === 'function' ? '[fn]' : value))
-  assert.ok(serialized.includes('exp-ui'))
+  assert.ok(serialized.includes('经验库'))
   assert.ok(serialized.includes('经验'))
-  assert.ok(serialized.includes('固化技能'))
+  assert.ok(serialized.includes('技能'))
   assert.ok(serialized.includes('使用记录'))
 })
 
@@ -234,7 +233,7 @@ check('manifest：客户端半、图标、本地化、宿主图标族 peer 声�
   assert.ok(icon.size > 0 && icon.size < 256 * 1024)
   for (const locale of ['zh', 'en']) {
     const dict = JSON.parse(fs.readFileSync(path.join(root, 'locale', `${locale}.json`), 'utf8'))
-    assert.equal(dict.meta.title, 'exp-ui')
+    assert.equal(dict.meta.title, '经验库')
     assert.ok(dict.meta.description.length > 10)
   }
 })

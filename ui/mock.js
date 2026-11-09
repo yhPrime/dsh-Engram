@@ -10,7 +10,7 @@
  *     超长备注、任务步骤、没有反馈、没有备注、未知结果。
  */
 
-import { applyFeedbackTo, skillRowOf } from './data-source.js'
+import { applyFeedbackTo, codedError, recallOf, scoreOf, skillRowOf } from './data-source.js'
 
 /** 相对现在的时间，读起来像"最近用过"。 */
 function daysAgo(days, hour = 10, minute = 0) {
@@ -551,6 +551,46 @@ export function createMockSource() {
     },
     feedback(id, result) {
       return applyFeedbackTo(store, id, result)
+    },
+
+    record(input = {}) {
+      const outcome = String(input.outcome || 'success')
+      const at = new Date().toISOString()
+      const id = `ex_mock_${Date.now().toString(36)}`
+      const G = scoreOf(outcome)
+      store.experiences.unshift({
+        id,
+        intent: String(input.intent || ''),
+        action: String(input.action || ''),
+        typeId: String(input.type || 'ty_other'),
+        typeName: String(input.type || '未分类'),
+        outcome,
+        G,
+        GOutcome: G,
+        GSource: 'outcome',
+        ts: at,
+        lastSeenAt: at,
+        note: String(input.note || ''),
+      })
+      return { action: 'added', id, G, mode: 'mock' }
+    },
+    recall(args = {}) {
+      return recallOf(store, String(args.intent || ''), Math.max(1, Math.min(50, Math.trunc(Number(args.limit) || 8))))
+    },
+    consolidate() {
+      throw codedError('unsupported', '示例数据不支持沉淀；切到真实数据后再用。')
+    },
+    validate() {
+      return []
+    },
+    typeOp() {
+      throw codedError('unsupported', '示例数据不支持类型管理。')
+    },
+    skillFeedback(slug, result) {
+      return { id: `skill:${slug}`, result: String(result), G_before: 0, G_after: 0 }
+    },
+    settings() {
+      return { dataDir: '', file: '', currentRoot: '' }
     },
   }
 }

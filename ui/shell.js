@@ -29,7 +29,7 @@ import fs from 'node:fs'
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
 /** 外显名；与真实经验库（exp-lib）区分开。 */
-export const APP_NAME = 'exp-ui'
+export const APP_NAME = '经验库'
 
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 300
@@ -177,6 +177,66 @@ export function buildSkills(source) {
   }
 }
 
+/**
+ * 控制台动作：召回 / 记录 / 沉淀 / 类型 / 校验 / 设置。
+ * live 交给 kernel engine；mock 能做记录与简化召回，其余明确「示例模式不支持」。
+ */
+export function buildRecall(source, body = {}) {
+  const intent = String(body.intent || '').trim()
+  if (intent === '') throw codedError('intent-required', '缺少 intent')
+  const limit = Math.max(1, Math.min(50, Math.trunc(Number(body.limit) || 8)))
+  const context = Array.isArray(body.context) ? body.context.map(String) : []
+  if (typeof source.recall === 'function') return source.recall({ intent, limit, context })
+  const store = source.read().store || emptyStore()
+  return recallOf(store, intent, limit)
+}
+
+export function buildRecord(source, body = {}) {
+  if (typeof source.record !== 'function') throw codedError('read-only', '当前数据源不支持写入经验')
+  return source.record(body)
+}
+
+export function buildConsolidate(source, body = {}) {
+  const intent = String(body.intent || '').trim()
+  if (intent === '') throw codedError('intent-required', '缺少 intent')
+  if (typeof source.consolidate !== 'function') throw codedError('unsupported', '当前数据源不支持沉淀')
+  return source.consolidate({ intent, context: Array.isArray(body.context) ? body.context.map(String) : [] })
+}
+
+export function buildSkillFeedback(source, body = {}) {
+  const slug = String(body.slug || '').trim()
+  const result = String(body.result || '').trim().toLowerCase()
+  if (slug === '') throw codedError('slug-required', '缺少技能 slug')
+  if (!['helped', 'hurt', 'neutral'].includes(result)) throw codedError('bad-result', 'result 只能是 helped / hurt / neutral')
+  if (typeof source.skillFeedback !== 'function') throw codedError('unsupported', '当前数据源不支持技能反馈')
+  return source.skillFeedback(slug, result)
+}
+
+export function buildTypeOp(source, body = {}) {
+  if (typeof source.typeOp !== 'function') throw codedError('unsupported', '当前数据源不支持类型管理')
+  return source.typeOp(body)
+}
+
+export function buildValidate(source) {
+  if (typeof source.validate !== 'function') return { problems: [] }
+  return { problems: source.validate() }
+}
+
+export function buildSettings(source) {
+  const read = source.read() || {}
+  const extra = typeof source.settings === 'function' ? source.settings() : {}
+  return {
+    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    dataDir: String(read.dataDir || ''),
+    file: String(read.file || ''),
+    exists: Boolean(read.exists),
+    bytes: Number(read.bytes) || 0,
+    updatedAt: String(read.updatedAt || ''),
+    currentRoot: String(extra.currentRoot || ''),
+    version: pluginVersion(),
+  }
+}
+
 /** 统一 JSON 回执。 */
 function json(res, status, payload) {
   const body = JSON.stringify(payload)
@@ -272,6 +332,34 @@ export async function handleRequest(req, res, source) {
       }))
       return json(res, 200, { ok: true, data: { rows } })
     }
+    if (route === '/recall') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      return json(res, 200, { ok: true, data: buildRecall(active, await readBody(req)) })
+    }
+    if (route === '/record') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      return json(res, 200, { ok: true, data: buildRecord(active, await readBody(req)) })
+    }
+    if (route === '/consolidate') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      return json(res, 200, { ok: true, data: buildConsolidate(active, await readBody(req)) })
+    }
+    if (route === '/skill-feedback') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      return json(res, 200, { ok: true, data: buildSkillFeedback(active, await readBody(req)) })
+    }
+    if (route === '/type') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      return json(res, 200, { ok: true, data: buildTypeOp(active, await readBody(req)) })
+    }
+    if (route === '/validate') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      return json(res, 200, { ok: true, data: buildValidate(active) })
+    }
+    if (route === '/settings') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      return json(res, 200, { ok: true, data: buildSettings(active) })
+    }
     if (route === '/feedback') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       const body = await readBody(req)
@@ -288,8 +376,10 @@ export async function handleRequest(req, res, source) {
   } catch (error) {
     const code = error && typeof error.code === 'string' ? error.code : 'internal'
     const message = String((error && error.message) || error)
-    const status = code === 'read-only' || code === 'not-feedbackable'
-      ? 409
+    const status = code === 'unsupported'
+      ? 501
+      : code === 'read-only' || code === 'not-feedbackable'
+        ? 409
       : code === 'not-found'
         ? 404
         : code === 'internal'

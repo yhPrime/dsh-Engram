@@ -17,6 +17,7 @@ import path from 'node:path'
 
 import { codedError, emptyStore, skillRowOf } from './data-source.js'
 import { createEngine } from '../kernel/engine.js'
+import { readSettings } from '../kernel/settings.js'
 
 /** 展开 `~`，返回绝对路径；空配置返回 ''。 */
 export function resolveLiveDataDir(config = {}) {
@@ -239,6 +240,28 @@ export function createLiveSource(config = {}) {
       if (engine === null) throw codedError('read-only', '没有 dataDir，无法反馈。')
       const out = engine.feedback({ id: String(id), result: String(result) })
       return { id: String(id), result: String(result), G_before: out.G_before, G_after: out.G_after, at: new Date().toISOString() }
+    },
+
+    recall(args = {}) {
+      return engine.recall({ intent: String(args.intent || ''), limit: args.limit, context: args.context })
+    },
+    record(args = {}) {
+      return engine.record(args)
+    },
+    consolidate(args = {}) {
+      return engine.consolidate({ intent: String(args.intent || ''), context: args.context })
+    },
+    validate() {
+      return engine.validate()
+    },
+    typeOp(args = {}) {
+      return engine.types(args)
+    },
+    skillFeedback(slug, result) {
+      return engine.feedback({ id: `skill:${slug}`, result })
+    },
+    settings() {
+      return { dataDir, file, currentRoot: String(readSettings().currentRoot || '') }
     },
   }
 }
