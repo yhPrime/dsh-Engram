@@ -9,7 +9,7 @@ kernel/   内核（当前从 dsh-exp-lib-provider 0.31.9 复制）
           - store.js / kernel.js / retrieval.js / cluster.js / skills.js
           - tools.js（四个工具 + 经验沉淀）
           - index.js / plugin.js / provider.js（DSH 适配层，独立化后会瘦身）
-ui/       外壳（当前从 dsh-exp-ui 0.3.0 复制，隔壁分支 dsh-d24c6004-09a4）
+ui/       外壳（当前 dsh-exp-ui 0.4.0，已合并到主干，不再依赖隔壁分支）
           - shell.js / client.js / data-source.js / live.js / mock.js
           - API.md / README.md / tests
 ```
@@ -17,7 +17,7 @@ ui/       外壳（当前从 dsh-exp-ui 0.3.0 复制，隔壁分支 dsh-d24c6004
 ## 从哪来
 
 - `kernel/`：`C:\Users\yh\WorkDeepSeek\插件\dsh-exp-lib-provider`（master，0.31.9）
-- `ui/`：`C:\Users\yh\WorkDeepSeek\插件\.agents\worktrees\dsh-d24c6004-09a4\dsh-exp-ui`（0.3.0）
+- `ui/`：`dsh-exp-ui` 0.4.0（从隔壁分支 dsh-d24c6004-09a4 同步后并入主干；0.4.0 为视觉打磨：磨砂底、状态色边、提示可关）
 
 两边都是**复制**，不是子模块；后续在这个仓库里按独立化计划推进（core/engine 子路径 → 适配器瘦身 → 独立分发）。
 
@@ -30,4 +30,5 @@ ui/       外壳（当前从 dsh-exp-ui 0.3.0 复制，隔壁分支 dsh-d24c6004
 - 数据仍在 `<root>/.exp`（经验库 JSON + `skills/` + `.git` + `.locks`）；
 - 消费方（外壳/CLI）只经 engine 访问，不直接读写 `.exp`；
 - 只 commit，不 push、不安装，除非明确要求。
+
 

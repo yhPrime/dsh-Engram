@@ -5,7 +5,7 @@
 
 - Base URL：`/exp-ui/api`（前缀路由，挂在 DSH 的 `webServer` 上）
 - 编码：UTF-8 JSON，`content-type: application/json; charset=utf-8`，`cache-control: no-store`
-- 版本：`0.3.0`（`package.json` 的 version，`/health` 与 `/state` 会回）
+- 版本：`0.4.0`（`package.json` 的 version，`/health` 与 `/state` 会回）
 
 ## 1. 数据源
 
@@ -49,7 +49,7 @@
 ### `GET /health`
 
 ```json
-{ "ok": true, "data": { "ok": true, "app": "exp-ui", "version": "0.3.0", "source": "mock", "readOnly": false } }
+{ "ok": true, "data": { "ok": true, "app": "exp-ui", "version": "0.4.0", "source": "mock", "readOnly": false } }
 ```
 
 ### `GET /state`
@@ -82,7 +82,7 @@
   "ok": true,
   "data": {
     "app": "exp-ui",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "source": { "id": "mock", "mode": "mock", "label": "示例数据", "readOnly": false },
     "dataDir": "（exp-ui 内置示例数据）",
     "file": "",

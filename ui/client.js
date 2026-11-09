@@ -57,6 +57,19 @@ window.__ModuleLoader__.load({
   .exp-ui-aside-back { display: inline-flex; }
 }
 @media (prefers-reduced-motion: reduce) { .exp-ui-row, .exp-ui-skill { transition: none; } }
+.exp-ui-page { isolation: isolate; }
+.exp-ui-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--dsw-alias-bg-layer-1) 78%, transparent), color-mix(in srgb, var(--dsw-alias-bg-layer-1) 94%, transparent));
+  backdrop-filter: blur(22px) saturate(1.06);
+}
+.exp-ui-page > * { position: relative; z-index: 1; }
+.exp-ui-search:focus { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent); }
+.exp-ui-tab:hover { color: var(--dsw-alias-label-primary); }
 `
 
     function ensureStyles() {
@@ -314,6 +327,18 @@ window.__ModuleLoader__.load({
       statLabel: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, whiteSpace: 'nowrap' },
       statValue: { fontSize: 15, fontWeight: 600, fontVariantNumeric: 'tabular-nums', lineHeight: '20px' },
       statUnit: { fontSize: 11, fontWeight: 400, color: 'var(--dsw-alias-label-tertiary)', marginLeft: 3 },
+      brandTile: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 30,
+        height: 30,
+        borderRadius: 9,
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        color: 'var(--dsw-alias-brand-primary)',
+        flex: '0 0 auto',
+      },
       tabs: {
         display: 'flex',
         alignItems: 'center',
@@ -705,6 +730,7 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('')
       const [loading, setLoading] = useState(false)
       const [toast, setToast] = useState('')
+      const [noticeDismissed, setNoticeDismissed] = useState(false)
       const toastTimer = useRef(null)
       const requestSeq = useRef(0)
       const searchRef = useRef(null)
@@ -940,8 +966,16 @@ window.__ModuleLoader__.load({
             `接口出错：${error}`,
             h('button', { type: 'button', style: { ...S.ghostButton, marginLeft: 8 }, onClick: refresh }, '重试')))
         }
-        if (state && state.notice) {
-          nodes.push(h('div', { key: 'notice', style: S.banner }, state.notice))
+        if (state && state.notice && !noticeDismissed) {
+          nodes.push(h('div', { key: 'notice', style: { ...S.banner, display: 'flex', alignItems: 'center', gap: 8 } },
+            h('span', { style: { ...S.badge, ...toneStyle('warn'), flex: '0 0 auto' } }, '提示'),
+            h('span', { style: { flex: '1 1 auto', minWidth: 0 } }, state.notice),
+            h('button', {
+              type: 'button',
+              style: { ...S.ghostButton, flex: '0 0 auto' },
+              title: '本次不再显示',
+              onClick: () => setNoticeDismissed(true),
+            }, '×')))
         }
         if (list !== null && list.warning) {
           nodes.push(h('div', { key: 'warn', style: { ...S.banner, ...S.bannerWarn } }, list.warning))
@@ -958,16 +992,24 @@ window.__ModuleLoader__.load({
         const outcome = outcomeOf(row.outcome)
         const on = row.id === selectedId
         const cursor = row.id === cursorId
+        const accent = outcome.tone === 'ok'
+          ? 'var(--dsw-alias-state-success-primary)'
+          : outcome.tone === 'bad'
+            ? 'var(--dsw-alias-state-error-primary)'
+            : outcome.tone === 'warn'
+              ? 'var(--dsw-alias-state-warn-primary)'
+              : 'var(--dsw-alias-border-l2)'
+        const base = { ...S.row, borderLeft: `3px solid ${accent}` }
         return h('button', {
           key: row.id,
           type: 'button',
           className: 'exp-ui-row',
           'aria-pressed': on,
           style: on
-            ? { ...S.row, ...S.rowOn }
+            ? { ...base, ...S.rowOn }
             : cursor
-              ? { ...S.row, borderColor: 'var(--dsw-alias-label-secondary)' }
-              : S.row,
+              ? { ...base, borderColor: 'var(--dsw-alias-label-secondary)' }
+              : base,
           onClick: () => select(row.id),
         },
         h('div', { style: S.rowHead },
@@ -981,7 +1023,7 @@ window.__ModuleLoader__.load({
           h('span', null, `用过 ${row.hits} 次`),
           row.feedback
             ? h('span', null, `反馈 有帮助${row.feedback.helped} / 没帮上${row.feedback.hurt} / 中性${row.feedback.neutral}`)
-            : h('span', null, '反馈 —'),
+            : null,
           h('span', null, `最近 ${fmtShortTime(row.lastSeenAt)}`),
           row.stepIndex !== null ? h('span', null, `步骤 ${row.stepIndex}${row.stepTotal ? `/${row.stepTotal}` : ''}`) : null,
           row.lifecycle && row.lifecycle.retiredAt ? h('span', { style: toneStyle('warn') }, '已退休') : null,
@@ -1373,6 +1415,10 @@ window.__ModuleLoader__.load({
         h('div', { style: S.header },
           h('div', { style: S.titleWrap },
             h('div', { style: S.titleRow },
+              h('span', { style: S.brandTile, 'aria-hidden': 'true' },
+                primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function'
+                  ? h(primitives.IconChecklistOutlineRegular, { size: 18 })
+                  : h('span', { style: { fontSize: 15 } }, '≡')),
               h('h1', { style: S.title }, TITLE),
               sourceLabel === ''
                 ? null
@@ -1387,6 +1433,7 @@ window.__ModuleLoader__.load({
           h('div', { style: S.headerRight },
             h('input', {
               ref: searchRef,
+              className: 'exp-ui-search',
               style: S.search,
               placeholder: '按意图检索（/ 聚焦）：比如「把 PPT 导出成 PDF」',
               value: queryInput,
@@ -1407,6 +1454,7 @@ window.__ModuleLoader__.load({
           tabs.map((item) => h('button', {
             key: item.id,
             type: 'button',
+            className: 'exp-ui-tab',
             style: tab === item.id ? S.tabOn : S.tab,
             onClick: () => switchTab(item.id),
           }, item.label, item.count === null ? null : h('span', { style: S.chipCount }, String(item.count))),
