@@ -601,6 +601,15 @@ window.__ModuleLoader__.load({
     }
 
     const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
+    const GRAPH_THEME_ACCENTS = {
+      personal: { light: '#0e7490', dark: '#22d3ee' },
+      dream: { light: '#7c3aed', dark: '#c4b5fd' },
+      knowledge: { light: '#0f766e', dark: '#2dd4bf' },
+      emotion: { light: '#be123c', dark: '#fb7185' },
+      spacetime: { light: '#4338ca', dark: '#818cf8' },
+      collective: { light: '#b45309', dark: '#fbbf24' },
+      inspiration: { light: '#6d28d9', dark: '#a78bfa' },
+    }
     const GRAPH_PALETTES = {
       dsh: {},
       cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', ok: '#39ff88', bad: '#ff3b5c', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
@@ -695,6 +704,7 @@ window.__ModuleLoader__.load({
         glow: dark ? '#38bdf8' : '#0ea5e9',
         dust: dark ? '#94a3b8' : '#cbd5e1',
         ringFill: dark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
+        dark,
         bloom: dark ? 12 : 7,
       }
     }
@@ -714,7 +724,13 @@ window.__ModuleLoader__.load({
         if (!canvas || !graph.data) return undefined
         const ui = (settings.data && settings.data.ui) || {}
         const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
-        const palette = paletteKey === 'dsh' ? readDshGraphPalette(canvas) : GRAPH_PALETTES[paletteKey]
+        const palette = paletteKey === 'dsh'
+          ? (() => {
+              const base = readDshGraphPalette(canvas)
+              const accent = (GRAPH_THEME_ACCENTS[theme] || GRAPH_THEME_ACCENTS.personal)[base.dark ? 'dark' : 'light']
+              return { ...base, node: accent, node2: accent, highlight: accent, glow: accent, dust: accent }
+            })()
+          : { ...GRAPH_PALETTES[paletteKey], node2: GRAPH_PALETTES[paletteKey].node, highlight: GRAPH_PALETTES[paletteKey].node }
         const theme = GRAPH_THEMES.includes(ui.graphTheme) ? ui.graphTheme : 'personal'
         const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
         const bloom = ui.graphBloom !== false
@@ -994,11 +1010,7 @@ window.__ModuleLoader__.load({
             if (entry.alpha <= 0.01) { if (entry.targetAlpha === 0) store.nodes.delete(entry.node.id); continue }
             const node = entry.node
             const isSelected = store.selected !== null && store.selected === node.id
-            const color = node.kind === 'type' ? palette.node
-              : node.kind === 'skill' ? palette.node2
-                : node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected' ? (palette.bad || palette.highlight)
-                  : node.outcome === 'partial' ? palette.warn
-                    : node.outcome === 'success' || node.outcome === 'accepted' ? (palette.ok || palette.node) : palette.node2
+            const color = palette.node
             const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.09 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
             const nearFactor = Math.min(1.6, Math.max(0.35, entry.screenF))
             const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing
