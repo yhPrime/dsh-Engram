@@ -208,6 +208,27 @@ check('主面板首屏（state=null）渲染不抛错', () => {
   assert.ok(tree.children.length > 0)
 })
 
+check('详情面板：选中一条经验时真的渲染出意图/做法/收起（不是空白）', () => {
+  const pane = module.DetailPane
+  assert.equal(typeof pane, 'function', '详情面板没有导出给测试')
+  const row = { id: 'ex_1', intent: '测试意图文本', action: '测试做法文本', outcome: 'success', G: 0.8, typeName: '代码 / 插件' }
+  const element = pane({ selected: 'ex_1', detail: { data: { row }, error: '' }, send: () => {}, onClose: () => {} })
+  const serialized = JSON.stringify(element, (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(serialized.includes('测试意图文本'), '没渲染意图')
+  assert.ok(serialized.includes('测试做法文本'), '没渲染做法')
+  assert.ok(serialized.includes('收起'), '没有收起按钮')
+})
+
+check('详情面板：未选中 / 读取中 / 请求失败三种状态都有可见文案', () => {
+  const pane = module.DetailPane
+  const empty = JSON.stringify(pane({ selected: null, detail: { data: null, error: '' } }))
+  assert.ok(empty.includes('选一条经验看详情'))
+  const loading = JSON.stringify(pane({ selected: 'ex_1', detail: { data: null, error: '' } }))
+  assert.ok(loading.includes('读取中'))
+  const bad = JSON.stringify(pane({ selected: 'ex_1', detail: { data: null, error: '没有这条经验：ex_1' } }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(bad.includes('没有这条经验'), '错误没有显示出来')
+})
+
 check('主面板对空数据渲染也不抛错，且标题是「经验库」', () => {
   const panel = registrations.find((entry) => entry.registration.name === 'main').component
   const tree = panel({})

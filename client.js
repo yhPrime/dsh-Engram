@@ -5,13 +5,6 @@
  * 只通过 `/exp-ui/api/*` 访问数据；mock 与 live 返回形状一致。
  */
 
-// 诊断：这个文件一旦被宿主取到并执行，就先回打一次（不依赖 factory / apply）。
-try {
-  fetch('/exp-ui/api/health?client=1&phase=script&id=dsh-engram').catch(() => {})
-} catch {
-  // 非浏览器环境
-}
-
 window.__ModuleLoader__.load({
   id: 'dsh-engram',
   factory(require) {
@@ -36,7 +29,6 @@ window.__ModuleLoader__.load({
         // 测试环境没有 fetch
       }
     }
-    reportProbe('factory')
 
     const PANEL_CSS = `
 .eng-app, .eng-app *, .eng-app *::before, .eng-app *::after { box-sizing: border-box; }
@@ -384,26 +376,37 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
             }))),
           h('div', { className: 'eng-card eng-detail-card', ref: detailRef },
-            selected === null ? h(Empty, null, '选一条经验看详情') : detail.error ? h(Banner, { bad: true }, detail.error) : detail.data === null || !detail.data.row ? h(Empty, null, '读取中…') : (() => {
-              const row = detail.data.row
-              const [label, tone] = outcomeOf(row.outcome)
-              return h('div', { className: 'eng-detail' },
-                h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 } }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
-                h('h3', { className: 'eng-detail-title' }, row.intent || '（无意图）'),
-                h('dl', { className: 'eng-kv' },
-                  h('dt', null, '做法'), h('dd', null, row.action || '—'),
-                  h('dt', null, '类型'), h('dd', null, row.typeName || '—'),
-                  h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
-                  h('dt', null, '情境'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '—'),
-                  h('dt', null, '反馈'), h('dd', null, row.feedback ? `有帮助 ${row.feedback.helped || 0} / 没帮上 ${row.feedback.hurt || 0}` : '—'),
-                  h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
-                row.note ? h('div', { style: { marginTop: 12 } }, h('div', { className: 'eng-label', style: { marginBottom: 5 } }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null,
-                h('div', { className: 'eng-actions', style: { marginTop: 14 } },
-                  h(Button, { small: true, onClick: () => send('helped') }, '有帮助'),
-                  h(Button, { small: true, onClick: () => send('hurt') }, '没帮上'),
-                  h(Button, { small: true, onClick: () => send('neutral') }, '中性'),
-                  h(Button, { small: true, onClick: () => setSelected(null) }, '收起')))
-            }))))
+            h(DetailPane, { selected, detail, send, onClose: () => setSelected(null) }))))
+    }
+
+    /**
+     * 右侧详情面板。单独抽成组件：既让「选中 → 详情」有可渲染的单元测试，
+     * 也避免再出现「内联立即执行函数漏了调用、React 收到函数子节点渲染空白」那类事故。
+     */
+    function DetailPane(props) {
+      const { selected, detail, send, onClose } = props
+      if (selected === null) return h(Empty, null, '选一条经验看详情')
+      if (detail && detail.error) return h(Banner, { bad: true }, detail.error)
+      const data = detail ? detail.data : null
+      if (data === null || data === undefined || !data.row) return h(Empty, null, '读取中…')
+      const row = data.row
+      const [label, tone] = outcomeOf(row.outcome)
+      return h('div', { className: 'eng-detail' },
+        h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 } }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
+        h('h3', { className: 'eng-detail-title' }, row.intent || '（无意图）'),
+        h('dl', { className: 'eng-kv' },
+          h('dt', null, '做法'), h('dd', null, row.action || '—'),
+          h('dt', null, '类型'), h('dd', null, row.typeName || '—'),
+          h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
+          h('dt', null, '情境'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '—'),
+          h('dt', null, '反馈'), h('dd', null, row.feedback ? `有帮助 ${row.feedback.helped || 0} / 没帮上 ${row.feedback.hurt || 0}` : '—'),
+          h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
+        row.note ? h('div', { style: { marginTop: 12 } }, h('div', { className: 'eng-label', style: { marginBottom: 5 } }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null,
+        h('div', { className: 'eng-actions', style: { marginTop: 14 } },
+          h(Button, { small: true, onClick: () => send('helped') }, '有帮助'),
+          h(Button, { small: true, onClick: () => send('hurt') }, '没帮上'),
+          h(Button, { small: true, onClick: () => send('neutral') }, '中性'),
+          h(Button, { small: true, onClick: () => onClose() }, '收起')))
     }
 
     function Recall(props) {
@@ -1415,6 +1418,8 @@ window.__ModuleLoader__.load({
     }
 
     return {
+      // 暴露给测试：详情面板必须能单独渲染出内容，防「点击后空白」回归。
+      DetailPane,
       inject: ['slots', 'layout'],
       apply(ctx) {
         try {
