@@ -233,6 +233,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'eng-empty' }, props.children || '暂无数据')
     }
     /** 经验库自己的标记：双侧记忆弧 + 中心节点（侧栏、品牌位、卡片共用一套）。 */
+    /** 经验库标记（B：记忆螺旋）——外圈收进内圈，中心一点；侧栏、面板头、卡片共用。 */
     function EngramGlyph(props) {
       const size = props && Number(props.size) > 0 ? Number(props.size) : 16
       return h('svg', {
@@ -247,11 +248,9 @@ window.__ModuleLoader__.load({
         'aria-hidden': 'true',
         style: { display: 'block', flex: '0 0 auto' },
       },
-        h('path', { d: 'M8 3.6C5.3 3.6 3.9 5.1 3.9 8s1.4 4.4 4.1 4.4' }),
-        h('path', { d: 'M8 3.6c2.7 0 4.1 1.5 4.1 4.4s-1.4 4.4-4.1 4.4' }),
-        h('circle', { cx: 8, cy: 8, r: 1.5, fill: 'currentColor', stroke: 'none' }),
-        h('circle', { cx: 3.9, cy: 8, r: 0.85, fill: 'currentColor', stroke: 'none' }),
-        h('circle', { cx: 12.1, cy: 8, r: 0.85, fill: 'currentColor', stroke: 'none' }))
+        h('path', { d: 'M8 2.6A5.4 5.4 0 1 1 3.07 10.7' }),
+        h('path', { d: 'M8 5.2A2.8 2.8 0 1 1 5.44 9.4' }),
+        h('circle', { cx: 8, cy: 8, r: 1.05, fill: 'currentColor', stroke: 'none' }))
     }
 
     function NavIcon(props) {

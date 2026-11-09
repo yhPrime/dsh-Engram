@@ -190,7 +190,7 @@ check('标记不依赖宿主图标族：拿不到 primitives 也画得出来', (
   assert.equal(svg.props.height, 16)
   assert.equal(svg.props.viewBox, '0 0 16 16')
   assert.equal(svg.props.stroke, 'currentColor')
-  assert.ok(svg.children.length >= 4)
+  assert.ok(svg.children.length >= 3)
 })
 
 check('插件页卡片挂在自己的包名上（dsh-engram）', () => {
