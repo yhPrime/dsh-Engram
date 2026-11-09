@@ -1242,6 +1242,7 @@ window.__ModuleLoader__.load({
         try {
           const data = await request('/github', { method: 'POST', body: { action: 'device-start' } })
           setDevice({ ...data, status: 'waiting' })
+          setGhNotice(`${data.opened ? '已打开浏览器' : '请手动打开浏览器'}，${data.copied ? '验证码已复制到剪贴板' : '验证码请手动复制'}`)
         } catch (caught) {
           setGhNotice(caught.message || String(caught))
         } finally {
@@ -1421,7 +1422,9 @@ window.__ModuleLoader__.load({
                 h('a', { href: device.verificationUri || 'https://github.com/login/device', target: '_blank', rel: 'noreferrer' }, device.verificationUri || 'https://github.com/login/device'),
                 '，输入代码 ',
                 h('span', { className: 'eng-mono', style: { fontWeight: 700, letterSpacing: '.08em' } }, device.userCode || ''),
-                '，授权后这里会自动跳转（本页保持打开）。')
+                '，授权后这里会自动跳转（本页保持打开）。',
+                h('div', { className: 'eng-actions' },
+                  h(Button, { small: true, onClick: async () => { try { await navigator.clipboard.writeText(device.userCode || ''); setGhNotice('验证码已复制') } catch { setGhNotice('浏览器不讓复制，请手动选中验证码') } } }, '复制验证码')))
               : device.status === 'authorized'
                 ? '✓ 登录成功，token 已保存（不需要再贴 token）'
                 : `登录未完成：${device.status === 'expired' ? '设备码过期' : '授权被拒绝'}`),
