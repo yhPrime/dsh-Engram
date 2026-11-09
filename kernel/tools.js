@@ -40,7 +40,8 @@ function renderJson(_args, value) {
  * @param {{dataDir?: string, mergeThreshold?: number, replaceThreshold?: number}} config
  */
 export function buildTools(defineTool, config = {}) {
-  // 跟随记忆插件里的 Provider 服务设置（用户改数据目录后工具自动跟随），读不到才退回插件配置。
+  // 0.11.0：工具面统一走 settings 的 resolveEngramDataDir（dataDir → currentRoot → 默认）。
+  // @legacy-provider 上面 import 的 resolveToolDataDir 是 Provider 时代的旧解析，已不在工具里用。
   const dataDirOf = () => resolveEngramDataDir(config)
   // 用法日志（零 token）：只回答「召回到底有没有被用起来」；config.usageLog=false 可关。
   const usageOptions = { enabled: config.usageLog !== false, maxBytes: config.usageLogMaxBytes }
