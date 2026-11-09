@@ -11,8 +11,8 @@
 const DEVICE_CODE_URL = 'https://github.com/login/device/code'
 const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 
-/** 公开的 OAuth App client id（设备流不需要 client secret）。 */
-export const DEFAULT_CLIENT_ID = 'Ov23liq4i7n8UsylGRfb'
+/** 经验库自己的 OAuth App client id（设备流不需要 client secret；可用设置里的 git.oauthClientId 覆盖）。 */
+export const DEFAULT_CLIENT_ID = 'Ov23lil51OhGc9CesSML'
 export const DEFAULT_SCOPE = 'repo'
 
 const REQUEST_TIMEOUT_MS = 20000
