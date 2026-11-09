@@ -47,7 +47,7 @@ const React = {
 
 function loadPanel() {
   let moduleConfig = null
-  const source = fs.readFileSync(path.join(root, 'client.js'), 'utf8')
+  const source = fs.readFileSync(path.join(root, '..', 'client.js'), 'utf8')
   const sandbox = {
     window: {
       __ModuleLoader__: {

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(here, '..')
-const source = fs.readFileSync(path.join(root, 'client.js'), 'utf8')
+const source = fs.readFileSync(path.join(root, '..', 'client.js'), 'utf8')
 const TABS = ['overview', 'graph', 'experiences', 'recall', 'record', 'skills', 'types', 'usage', 'settings']
 
 let passed = 0

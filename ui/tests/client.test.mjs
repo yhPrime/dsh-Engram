@@ -58,7 +58,7 @@ const primitivesStub = {
  * @param {{primitives?: boolean}} [options] - primitives=false 模拟旧宿主拿不到图标族。
  */
 function loadClient(options = {}) {
-  const source = fs.readFileSync(path.join(root, 'client.js'), 'utf8')
+  const source = fs.readFileSync(path.join(root, '..', 'client.js'), 'utf8')
   const withPrimitives = options.primitives !== false
   let moduleConfig = null
   let fetchCount = 0
@@ -229,10 +229,10 @@ check('manifest：单包（dsh-engram）同时声明 bundle 与 client、图标�
   assert.equal(manifest.name, 'dsh-engram')
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(manifest.dsh.client.platform, 'web')
-  assert.equal(manifest.exports['./client'], './ui/client.js')
+  assert.equal(manifest.exports['./client'], './client.js')
   assert.equal(manifest.exports['./plugin'], './plugin.js')
   assert.equal(manifest.exports['./icon'], './icon.svg')
-  for (const file of ['index.js', 'plugin.js', 'cordis.patch.yml', 'icon.svg', 'ui/client.js', 'ui/shell.js', 'ui/mock.js', 'ui/live.js', 'ui/data-source.js', 'ui/API.md']) {
+  for (const file of ['index.js', 'plugin.js', 'cordis.patch.yml', 'icon.svg', 'client.js', 'ui/shell.js', 'ui/mock.js', 'ui/live.js', 'ui/data-source.js', 'ui/API.md']) {
     assert.ok(manifest.files.includes(file), `files 缺少 ${file}`)
   }
   assert.ok(manifest.peerDependencies['@deepseek-ai/dsh-client-ui-primitives'])

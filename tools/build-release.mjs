@@ -25,9 +25,9 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const devRoot = path.dirname(here)
 const releaseRoot = path.resolve(process.argv[2] || path.join(devRoot, '..', 'dsh-Engram'))
 
-const ROOT_FILES = ['index.js', 'plugin.js', 'cordis.patch.yml', 'icon.svg']
+const ROOT_FILES = ['index.js', 'plugin.js', 'client.js', 'cordis.patch.yml', 'icon.svg']
 const KERNEL_FILES = ['index.js', 'plugin.js', 'core.js', 'engine.js', 'settings.js', 'store.js', 'kernel.js', 'retrieval.js', 'cluster.js', 'skills.js', 'tools.js']
-const UI_FILES = ['client.js', 'shell.js', 'live.js', 'mock.js', 'data-source.js']
+const UI_FILES = ['shell.js', 'live.js', 'mock.js', 'data-source.js']
 
 function copyFile(from, to) {
   fs.mkdirSync(path.dirname(to), { recursive: true })
