@@ -34,7 +34,7 @@ check('index 暴露 createEngine / createTools（静态检查，不加载 Provid
   const text = fs.readFileSync(path.join(kernelDir, 'index.js'), 'utf8')
   assert.ok(text.includes("createEngine, createTools"), 'index 应 re-export engine')
   assert.ok(text.includes("export { buildTools }"), 'index 应继续导出 buildTools')
-  assert.ok(text.includes("defineMemorySpaceProvider"), 'index 仍是 Provider 子模块入口')
+  assert.ok(!text.includes('provider-sdk') && !text.includes('buildProvider'), 'index 不应再依赖记忆插件 Provider SDK')
 })
 
 check('plugin 只做注册：通过 createTools 建工具，不再直接 import buildTools', () => {

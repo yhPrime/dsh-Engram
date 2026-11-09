@@ -27,6 +27,7 @@ import {
 } from '../store.js'
 import { RECALL_MIN_SIMILARITY, similarityV2, stateOf } from '../retrieval.js'
 import { listSkills, validateAllSkills } from '../skills.js'
+import { resolveEngramDataDir } from '../settings.js'
 
 /** 固定体检意图：覆盖库里常见主题；不为具体条目写死 id，看的是「召不召得回」。 */
 export const AUDIT_INTENTS = [
@@ -72,7 +73,7 @@ export function migrationReport(store, dataDir) {
 }
 
 function main() {
-  const dataDir = path.resolve(process.argv[2] || resolveToolDataDir({}))
+  const dataDir = path.resolve(process.argv[2] || resolveEngramDataDir({}))
   const store = readStore(dataDir)
   const active = visibleExperiences(store)
   const fails = []

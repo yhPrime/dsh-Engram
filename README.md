@@ -1,6 +1,6 @@
 # dsh-Engram（忆痕）
 
-经验与技能引擎的独立仓库：**内核**（经验库 / JitRL 召回 / 技能沉淀 / 存储）与 **外壳 UI** 放在一起，DSH 只作为可选适配器。
+经验与技能引擎的独立仓库：**内核**（经验库 / JitRL 召回 / 技能沉淀 / 存储）与 **外壳 UI** 放在一起。**不再作为记忆插件的扩展安装**；DSH 插件只是其中一种安装形态。
 
 ## 结构
 
@@ -48,7 +48,13 @@ engine.validate()
 - 所有读写都经 engine，不要直接改 `.exp` 文件；
 - `core` 只含纯核心（零 DSH 依赖），`engine` 是门面；适配器入口 `index/plugin/provider` 依赖 DSH Provider SDK。
 
-## 当前状态（0.32.0）
+## 与记忆系统的关系
+
+- 记忆方式抄记忆系统（settings + currentRoot + 独立数据根），但**不挂 Provider、不依赖记忆插件**；
+- 数据位置由 `kernel/settings.js` 解析：config.dataDir → ENGRAM_DATA_DIR → settings.currentRoot → 默认目录；
+- 记忆插件的空间/Provider 配置与本项目无关。
+
+## 当前状态（0.33.0）
 
 - 内核：M1–M4 完成，`core` 零 DSH 依赖，`engine` 可独立使用；包名 `dsh-engram`；
 - 外壳：`ui/` 0.4.0，live 数据源已走 `createEngine`（可写反馈、skills 走 engine），mock/live 同源；

@@ -26,6 +26,7 @@ import {
   writeStore,
 } from './store.js'
 import { routeCluster } from './cluster.js'
+import { resolveEngramDataDir } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill } from './skills.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
@@ -40,7 +41,7 @@ function renderJson(_args, value) {
  */
 export function buildTools(defineTool, config = {}) {
   // 跟随记忆插件里的 Provider 服务设置（用户改数据目录后工具自动跟随），读不到才退回插件配置。
-  const dataDirOf = () => resolveToolDataDir(config)
+  const dataDirOf = () => resolveEngramDataDir(config)
   // 用法日志（零 token）：只回答「召回到底有没有被用起来」；config.usageLog=false 可关。
   const usageOptions = { enabled: config.usageLog !== false, maxBytes: config.usageLogMaxBytes }
 

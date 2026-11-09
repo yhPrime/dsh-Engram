@@ -1,5 +1,5 @@
 /**
- * 工具测试：exp_record / exp_recall 与 Provider 共用同一文件与语义。
+ * 工具测试：exp_record / exp_recall 的存储与语义（独立插件，不再接 Provider）。
  * Run: node tests/tools.test.mjs
  */
 import assert from 'node:assert/strict'
@@ -8,10 +8,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { buildTools } from '../tools.js'
-import { buildProvider } from '../provider.js'
 import { readStore, storeFile } from '../store.js'
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-provider-tools-'))
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-tools-'))
 const defineTool = (definition) => definition
 const tools = buildTools(defineTool, { dataDir: dir })
 const record = tools.find((tool) => tool.name === 'exp_record')
@@ -72,34 +71,6 @@ await check('exp_recall：返回排序、过滤旧条、带证据', () => {
   assert.equal(out.candidates[0].action, '先排版再统一调色')
   assert.ok(out.candidates[0].evidence.length >= 1)
   assert.equal(out.candidates[0].evidence[0].intent, '制作研学课六页PPT')
-})
-
-await check('exp_recall 与 Provider 读同一文件、同一语义', async () => {
-  const sdk = {
-    apiVersion: 'dsh-mnemon.memory-space-provider/v1',
-    defineMemorySpaceProviderDefinition: (definition) => definition,
-  }
-  const adapter = buildProvider(sdk, { dataDir: dir }).create({ configuration: { dataDir: dir } })
-  // Provider 的 search 是 async（契约要求 Promise），这里必须 await
-  const providerResults = (await adapter.search({}, { query: '制作研学课六页PPT', limit: 5 })).results
-  const toolOut = recall.execute({ intent: '制作研学课六页PPT', limit: 5 })
-  assert.ok(providerResults.length >= 1)
-  assert.equal(providerResults[0].id, toolOut.candidates[0].evidence[0].id)
-})
-
-await check('工具跟随配置：Provider 状态里的数据目录优先于插件配置', () => {
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-provider-state-'))
-  const stateDataDir = path.join(stateDir, 'data')
-  const stateFile = path.join(stateDir, 'memory-providers.json')
-  fs.writeFileSync(stateFile, JSON.stringify({ services: { 'exp-lib': { dataDir: stateDataDir } } }), 'utf8')
-  const followTools = buildTools(defineTool, { dataDir: dir, providerStateFile: stateFile })
-  const followRecord = followTools.find((tool) => tool.name === 'exp_record')
-  const followRecall = followTools.find((tool) => tool.name === 'exp_recall')
-  followRecord.execute({ intent: '跟随配置测试', action: '读状态文件', outcome: 'success' })
-  assert.ok(fs.existsSync(path.join(stateDataDir, 'exp-lib.json')), '应写到状态文件指定的目录')
-  const out = followRecall.execute({ intent: '跟随配置测试', limit: 3 })
-  assert.ok(out.candidates.length >= 1)
-  fs.rmSync(stateDir, { recursive: true, force: true })
 })
 
 try {

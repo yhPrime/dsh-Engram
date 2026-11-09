@@ -1,13 +1,12 @@
 {
   "name": "dsh-engram",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "description": "经验库的记忆空间 Provider（后端），同时作为 DSH 插件注册 exp_recall / exp_record / exp_feedback / exp_type 工具。",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
     "./plugin": "./plugin.js",
-    "./provider": "./provider.js",
     "./store": "./store.js",
     "./tools": "./tools.js",
     "./retrieval": "./retrieval.js",
@@ -17,7 +16,6 @@
   "files": [
     "index.js",
     "plugin.js",
-    "provider.js",
     "store.js",
     "tools.js",
     "kernel.js",
@@ -32,10 +30,11 @@
     "THIRD-PARTY-NOTICES.md",
     "skills.js",
     "core.js",
-    "engine.js"
+    "engine.js",
+    "settings.js"
   ],
   "scripts": {
-    "test": "node tests/kernel.test.mjs && node tests/recall.test.mjs && node tests/store.test.mjs && node tests/cluster.test.mjs && node tests/feedback.test.mjs && node tests/feedback-replay.test.mjs && node tests/feedback-decay.test.mjs && node tests/retire.test.mjs && node tests/feedback-ledger.test.mjs && node tests/audit-migration.test.mjs && node tests/provider.test.mjs && node tests/tools.test.mjs && node tests/plugin.test.mjs && node tests/type-tool.test.mjs && node tests/fix-residue.test.mjs && node tests/usage.test.mjs && node tests/sim-agent.test.mjs && node tests/sim-multistep.test.mjs && node tests/task-steps.test.mjs && node tests/lifecycle.test.mjs && node tests/lifecycle-evidence.test.mjs && node tests/consolidation.test.mjs && node tests/agent-workflow.test.mjs && node tests/prediction-error.test.mjs && node tests/context.test.mjs && node tests/retrieval-practice.test.mjs && node tests/agent-workday.test.mjs && node tests/skills.test.mjs && node tests/skill-tools.test.mjs && node tests/skill-consolidate.test.mjs && node tests/induction.test.mjs && node tests/induction-scale.test.mjs && node tests/patch-memory-spaces-footer.test.mjs && node tests/core-boundary.test.mjs && node tests/engine-headless.test.mjs && node tests/adapter-boundary.test.mjs",
+    "test": "node tests/kernel.test.mjs && node tests/recall.test.mjs && node tests/store.test.mjs && node tests/cluster.test.mjs && node tests/feedback.test.mjs && node tests/feedback-replay.test.mjs && node tests/feedback-decay.test.mjs && node tests/retire.test.mjs && node tests/feedback-ledger.test.mjs && node tests/audit-migration.test.mjs && node tests/tools.test.mjs && node tests/plugin.test.mjs && node tests/type-tool.test.mjs && node tests/fix-residue.test.mjs && node tests/usage.test.mjs && node tests/sim-agent.test.mjs && node tests/sim-multistep.test.mjs && node tests/task-steps.test.mjs && node tests/lifecycle.test.mjs && node tests/lifecycle-evidence.test.mjs && node tests/consolidation.test.mjs && node tests/agent-workflow.test.mjs && node tests/prediction-error.test.mjs && node tests/context.test.mjs && node tests/retrieval-practice.test.mjs && node tests/agent-workday.test.mjs && node tests/skills.test.mjs && node tests/skill-tools.test.mjs && node tests/skill-consolidate.test.mjs && node tests/induction.test.mjs && node tests/induction-scale.test.mjs && node tests/patch-memory-spaces-footer.test.mjs && node tests/core-boundary.test.mjs && node tests/engine-headless.test.mjs && node tests/adapter-boundary.test.mjs",
     "audit": "node tools/audit.mjs",
     "eval:routing": "node tools/eval-routing.mjs"
   },

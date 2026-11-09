@@ -9,7 +9,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { createTools } from './engine.js'
-import { renderHint, resolveToolDataDir } from './store.js'
+import { renderHint } from './store.js'
+import { resolveEngramDataDir } from './settings.js'
 
 export const name = 'dsh-engram'
 // Cordis 标准：等 tools / systemPrompt 服务就绪后再 apply。
@@ -18,7 +19,7 @@ export const inject = ['tools', 'systemPrompt']
 /** 启动审计：apply 是否真的跑过、工具注册到哪一步。写小文件，失败不影响加载。 */
 function audit(config, line) {
   try {
-    const dir = resolveToolDataDir(config)
+    const dir = resolveEngramDataDir(config)
     fs.mkdirSync(dir, { recursive: true })
     fs.appendFileSync(path.join(dir, 'plugin-apply.log'), `${new Date().toISOString()} ${line}\n`, 'utf8')
   } catch {
