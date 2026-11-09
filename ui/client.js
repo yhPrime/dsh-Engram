@@ -735,7 +735,7 @@ window.__ModuleLoader__.load({
       const stateRef = useRef({
         nodes: new Map(), edges: new Map(), dust: [],
         cam: { yaw: -0.42, pitch: -0.24, dist: 1420 },
-        selected: null, pulse: 0, t: 0, dragging: null, dragMoved: false,
+        selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false,
       })
       useEffect(() => {
         const canvas = canvasRef.current
@@ -929,7 +929,16 @@ window.__ModuleLoader__.load({
             if (Math.hypot(dx, dy) > 4) store.dragMoved = true
             cam.yaw = store.dragging.yaw + dx * 0.006
             cam.pitch = Math.max(-1.35, Math.min(1.35, store.dragging.pitch - dy * 0.006))
+            return
           }
+          if (event.target !== canvas) { store.hovered = null; return }
+          const hit = pick(event.clientX, event.clientY)
+          store.hovered = hit === null ? null : hit.node.id
+          canvas.style.cursor = hit === null ? 'grab' : 'pointer'
+        }
+        const onPointerLeave = () => {
+          store.hovered = null
+          canvas.style.cursor = 'grab'
         }
         const onPointerUp = (event) => {
           if (store.dragging && !store.dragMoved) {
@@ -943,10 +952,18 @@ window.__ModuleLoader__.load({
         }
         const onWheel = (event) => {
           event.preventDefault()
+          store.userZoom = true
           cam.dist = Math.min(3200, Math.max(520, cam.dist * (event.deltaY > 0 ? 1.08 : 0.92)))
         }
         resize()
         sync(graph.data)
+        const fitCamera = () => {
+          if (store.userZoom) return
+          let bound = 1
+          for (const entry of store.nodes.values()) bound = Math.max(bound, Math.hypot(entry.x, entry.y, entry.z))
+          cam.dist = Math.max(900, Math.min(2800, bound * 2.9))
+        }
+        fitCamera()
         const refreshPalette = () => {
           if (paletteKey !== 'dsh') return
           palette = readDshGraphPalette(canvas)
@@ -959,10 +976,12 @@ window.__ModuleLoader__.load({
         } catch {
           themeObserver = null
         }
-        window.addEventListener('resize', resize)
+        const onResize = () => { resize(); fitCamera() }
+        window.addEventListener('resize', onResize)
         window.addEventListener('pointermove', onPointerMove)
         window.addEventListener('pointerup', onPointerUp)
         canvas.addEventListener('pointerdown', onPointerDown)
+        canvas.addEventListener('pointerleave', onPointerLeave)
         canvas.addEventListener('wheel', onWheel, { passive: false })
         canvas.style.cursor = 'grab'
         let frameCount = 0
@@ -1000,6 +1019,15 @@ window.__ModuleLoader__.load({
             entry.screenF = projected.f
             entry.depth = projected.depth
           }
+          const focusId = store.selected !== null ? store.selected : store.hovered
+          const neighbors = new Set()
+          if (focusId !== null) {
+            neighbors.add(focusId)
+            for (const edgeState of store.edges.values()) {
+              if (edgeState.edge.source === focusId) neighbors.add(edgeState.edge.target)
+              if (edgeState.edge.target === focusId) neighbors.add(edgeState.edge.source)
+            }
+          }
           const edgeList = [...store.edges.entries()].sort((left, right) => left[1].currentStrength - right[1].currentStrength)
           for (const [key, edgeState] of edgeList) {
             edgeState.currentStrength += (edgeState.targetStrength - edgeState.currentStrength) * Math.min(1, dt * 3)
@@ -1010,8 +1038,9 @@ window.__ModuleLoader__.load({
             if (strength < 0.02 && edgeState.targetStrength === 0) { store.edges.delete(key); continue }
             if (strength < 0.02 || from.alpha < 0.1 || to.alpha < 0.1) continue
             const near = (from.screenF + to.screenF) * 0.5
-            const bright = store.selected !== null && (edgeState.edge.source === store.selected || edgeState.edge.target === store.selected)
-            ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1))
+            const bright = focusId !== null && (edgeState.edge.source === focusId || edgeState.edge.target === focusId)
+            const relatedEdge = focusId === null || bright
+            ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : 0.1)
             const gradient = ctx.createLinearGradient(from.screenX, from.screenY, to.screenX, to.screenY)
             gradient.addColorStop(0, palette.nodeLight || palette.node)
             gradient.addColorStop(1, palette.edge || palette.node)
@@ -1045,7 +1074,16 @@ window.__ModuleLoader__.load({
             const color = palette.node
             const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.09 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
             const nearFactor = Math.min(1.6, Math.max(0.35, entry.screenF))
-            const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing
+            let energy = 1
+            if (node.kind === 'experience' && node.lastSeenAt) {
+              const stamp = Date.parse(String(node.lastSeenAt))
+              if (Number.isFinite(stamp)) {
+                const days = Math.max(0, (Date.now() - stamp) / 86400000)
+                energy = 0.45 + 0.55 * Math.exp(-days / 120)
+              }
+            }
+            const related = focusId === null || neighbors.has(node.id)
+            const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing * energy * (related ? 1 : 0.3)
             const screenRadius = Math.max(0.4, entry.r * entry.screenF * (0.85 + entry.currentWeight * 0.3))
             const paint = (offsetX, offsetY, alphaMultiplier) => {
               ctx.save()
@@ -1096,11 +1134,12 @@ window.__ModuleLoader__.load({
         raf = requestAnimationFrame(draw)
         return () => {
           cancelAnimationFrame(raf)
-          window.removeEventListener('resize', resize)
+          window.removeEventListener('resize', onResize)
           window.removeEventListener('pointermove', onPointerMove)
           window.removeEventListener('pointerup', onPointerUp)
           if (themeObserver !== null) themeObserver.disconnect()
           canvas.removeEventListener('pointerdown', onPointerDown)
+          canvas.removeEventListener('pointerleave', onPointerLeave)
           canvas.removeEventListener('wheel', onWheel)
         }
       }, [graph.data, settings.data])
