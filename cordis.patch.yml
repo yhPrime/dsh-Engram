@@ -1,9 +1,8 @@
+# dsh-engram 单一插件：一个入口同时挂工具面（kernel）与控制台 API（ui）。
 - insert:
     - id: engram
       name: dsh-engram/plugin
       config:
         hint: true
-    - id: engram-ui
-      name: dsh-engram/ui
-      config:
+        # 控制台数据源：live = 真实经验库（默认）；mock = 内置示例数据（仅演示）
         source: live

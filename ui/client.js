@@ -1,11 +1,11 @@
 /**
- * 经验库控制台（dsh-exp-ui client）
+ * 经验库控制台（dsh-engram client 半）
  *
  * 八个页面覆盖内核全部能力：概览 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置。
  * 只通过 `/exp-ui/api/*` 访问数据；mock 与 live 返回形状一致。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-engram-ui',
+  id: 'dsh-engram',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -15,13 +15,6 @@ window.__ModuleLoader__.load({
     const PACKAGE_NAME = 'dsh-engram'
     const TITLE = '经验库'
     const API = '/exp-ui/api'
-
-    let primitives = null
-    try {
-      primitives = require('@deepseek-ai/dsh-client-ui-primitives')
-    } catch {
-      primitives = null
-    }
 
     const STYLE_ID = 'dsh-engram/styles'
     const PANEL_CSS = `
@@ -108,10 +101,11 @@ window.__ModuleLoader__.load({
 .eng-skill-name { font-weight: 620; }
 .eng-skill-desc { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
 .eng-nav-sep { height: 1px; margin: 10px 8px; background: var(--dsw-alias-border-l1); }
-@container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
+.eng-split[data-open="true"] .eng-stack > .eng-detail-card { order: -1; }
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: transparent; }
 .eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
@@ -212,6 +206,28 @@ window.__ModuleLoader__.load({
     function Empty(props) {
       return h('div', { className: 'eng-empty' }, props.children || '暂无数据')
     }
+    /** 经验库自己的标记：双侧记忆弧 + 中心节点（侧栏、品牌位、卡片共用一套）。 */
+    function EngramGlyph(props) {
+      const size = props && Number(props.size) > 0 ? Number(props.size) : 16
+      return h('svg', {
+        width: size,
+        height: size,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.25,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        style: { display: 'block', flex: '0 0 auto' },
+      },
+        h('path', { d: 'M8 3.6C5.3 3.6 3.9 5.1 3.9 8s1.4 4.4 4.1 4.4' }),
+        h('path', { d: 'M8 3.6c2.7 0 4.1 1.5 4.1 4.4s-1.4 4.4-4.1 4.4' }),
+        h('circle', { cx: 8, cy: 8, r: 1.5, fill: 'currentColor', stroke: 'none' }),
+        h('circle', { cx: 3.9, cy: 8, r: 0.85, fill: 'currentColor', stroke: 'none' }),
+        h('circle', { cx: 12.1, cy: 8, r: 0.85, fill: 'currentColor', stroke: 'none' }))
+    }
+
     function NavIcon(props) {
       const paths = {
         overview: 'M2 7.2 8 2l6 5.2V14H9.8v-4H6.2v4H2V7.2Z',
@@ -303,6 +319,7 @@ window.__ModuleLoader__.load({
       const [type, setType] = useState('')
       const [outcome, setOutcome] = useState('')
       const [selected, setSelected] = useState(null)
+      const detailRef = useRef(null)
       const list = useLoad(useCallback(() => {
         const params = new URLSearchParams({ limit: '100' })
         if (type !== '') params.set('type', type)
@@ -310,6 +327,12 @@ window.__ModuleLoader__.load({
         return request(`/experiences?${params.toString()}`)
       }, [type, outcome]))
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
+      // 窄面板下列表与详情会被压成一列：选中后把详情卡片滚进视野，否则看起来「点了没反应」。
+      useEffect(() => {
+        const node = detailRef.current
+        if (selected === null || node === null || typeof node.scrollIntoView !== 'function') return
+        node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }, [selected, detail.data])
       const types = (props.state && props.state.types) || []
       const rows = (list.data && (list.data.rows || list.data.candidates)) || []
       const send = async (result) => {
@@ -329,7 +352,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'eng-muted' }, `${list.data ? list.data.total : '—'} 条`),
           h(Button, { small: true, disabled: searchDraft.trim() === '', onClick: () => props.onSearch(searchDraft.trim()) }, '检索'),
           h(Button, { small: true, onClick: list.reload }, '刷新')),
-        h('div', { className: 'eng-split' },
+        h('div', { className: 'eng-split', 'data-open': selected === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
             rows.length === 0 ? h(Empty, null, list.loading ? '读取中…' : '没有符合条件的经验') : h('div', { className: 'eng-list' }, rows.map((row) => {
               const [label, tone] = outcomeOf(row.outcome)
@@ -339,8 +362,8 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
             }))),
-          h('div', { className: 'eng-card' },
-            selected === null ? h(Empty, null, '选一条经验看详情') : detail.data === null ? h(Empty, null, '读取中…') : detail.error ? h(Banner, { bad: true }, detail.error) : (() => {
+          h('div', { className: 'eng-card eng-detail-card', ref: detailRef },
+            selected === null ? h(Empty, null, '选一条经验看详情') : detail.error ? h(Banner, { bad: true }, detail.error) : detail.data === null || !detail.data.row ? h(Empty, null, '读取中…') : (() => {
               const row = detail.data.row
               const [label, tone] = outcomeOf(row.outcome)
               return h('div', { className: 'eng-detail' },
@@ -357,7 +380,8 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-actions', style: { marginTop: 14 } },
                   h(Button, { small: true, onClick: () => send('helped') }, '有帮助'),
                   h(Button, { small: true, onClick: () => send('hurt') }, '没帮上'),
-                  h(Button, { small: true, onClick: () => send('neutral') }, '中性')))
+                  h(Button, { small: true, onClick: () => send('neutral') }, '中性'),
+                  h(Button, { small: true, onClick: () => setSelected(null) }, '收起')))
             }))))
     }
 
@@ -501,7 +525,7 @@ window.__ModuleLoader__.load({
       return h('div', null,
         skills.error ? h(Banner, { bad: true }, skills.error) : null,
         notice ? h(Banner, null, notice) : null,
-        h('div', { className: 'eng-split' },
+        h('div', { className: 'eng-split', 'data-open': current === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
             rows.length === 0 ? h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀') : rows.map((row) => {
               const [label, tone] = skillStateOf(row.status)
@@ -526,7 +550,7 @@ window.__ModuleLoader__.load({
               validation.data && validation.data.problems && validation.data.problems.length > 0
                 ? validation.data.problems.map((item) => h('div', { key: item.slug, className: 'eng-muted', style: { marginBottom: 6 } }, `${item.slug}：${item.problems.join('；')}`))
                 : h('div', { className: 'eng-muted' }, '全部健康')),
-            current === null ? h('div', { className: 'eng-card' }, h(Empty, null, '选一个技能看正文')) : h('div', { className: 'eng-card' },
+            current === null ? h('div', { className: 'eng-card eng-detail-card' }, h(Empty, null, '选一个技能看正文')) : h('div', { className: 'eng-card eng-detail-card' },
               h('div', { className: 'eng-detail' },
                 h('h3', { className: 'eng-detail-title' }, current.name),
                 h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
@@ -1346,9 +1370,7 @@ window.__ModuleLoader__.load({
         'data-active': tab === id ? 'true' : 'false',
         onClick: () => setTab(id),
       }, h(NavIcon, { name: icon }), label, counts[id] === null || counts[id] === undefined ? null : h('span', { className: 'eng-nav-count' }, String(counts[id])))
-      const brandMark = primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function'
-        ? h(primitives.IconChecklistOutlineRegular, { size: 18 })
-        : h('span', { style: { fontSize: 15 } }, '≡')
+      const brandMark = h(EngramGlyph, { size: 18 })
       return h('div', { className: 'eng-app', ref: rootRef, style: fitHeight === null ? undefined : { height: `${fitHeight}px` } },
         h('aside', { className: 'eng-rail' },
           h('div', { className: 'eng-brand' },
@@ -1377,15 +1399,7 @@ window.__ModuleLoader__.load({
         ensureStyles()
         const disposers = []
         function PanelGlyph(props) {
-          const size = props && Number(props.size) > 0 ? Number(props.size) : 16
-          if (primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function') return h(primitives.IconChecklistOutlineRegular, { size })
-          const active = Boolean(props && props.active)
-          return h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: active ? 1.3 : 1.1, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
-            h('rect', { x: 1.75, y: 2.5, width: 12.5, height: 11, rx: 2 }),
-            h('path', { d: 'M4.4 6.1 L5.7 7.4 L8.1 4.9' }),
-            h('path', { d: 'M9.4 6.2 H12.1' }),
-            h('path', { d: 'M4.4 9.6 L5.7 10.9 L8.1 8.4' }),
-            h('path', { d: 'M9.4 9.7 H12.1' }))
+          return h(EngramGlyph, { size: props && Number(props.size) > 0 ? Number(props.size) : 16 })
         }
         function BundleCard() {
           return h('div', { className: 'eng-card', style: { padding: 16 } },

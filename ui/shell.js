@@ -28,7 +28,7 @@ import {
 } from './data-source.js'
 import fs from 'node:fs'
 
-import { readEngineConfig, readSettings, readUiConfig, setCurrentRoot, writeEngineConfig, writeUiConfig } from './settings.js'
+import { readEngineConfig, readSettings, readUiConfig, setCurrentRoot, writeEngineConfig, writeUiConfig } from '../kernel/settings.js'
 
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
@@ -89,15 +89,21 @@ function sanitizeSettings(input, fields) {
 }
 
 let cachedVersion = ''
-/** 插件版本：读 package.json，读不到用 0.0.0。 */
+/** 插件版本：读包根 package.json（老布局回退到 ui/package.json），读不到用 0.0.0。 */
 export function pluginVersion() {
   if (cachedVersion !== '') return cachedVersion
-  try {
-    const raw = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
-    cachedVersion = typeof raw.version === 'string' ? raw.version : '0.0.0'
-  } catch {
-    cachedVersion = '0.0.0'
+  for (const url of [new URL('../package.json', import.meta.url), new URL('./package.json', import.meta.url)]) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(url, 'utf8'))
+      if (typeof raw.version === 'string' && raw.version !== '') {
+        cachedVersion = raw.version
+        return cachedVersion
+      }
+    } catch {
+      // 试下一个位置
+    }
   }
+  cachedVersion = '0.0.0'
   return cachedVersion
 }
 
