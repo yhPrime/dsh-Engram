@@ -683,7 +683,11 @@ window.__ModuleLoader__.load({
       const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const canvasRef = useRef(null)
-      const stateRef = useRef({ nodes: new Map(), edges: new Map(), dust: [], selected: null, pulse: 0, t: 0 })
+      const stateRef = useRef({
+        nodes: new Map(), edges: new Map(), dust: [],
+        cam: { yaw: -0.42, pitch: -0.24, dist: 1420 },
+        selected: null, pulse: 0, t: 0, dragging: null, dragMoved: false,
+      })
       useEffect(() => {
         const canvas = canvasRef.current
         if (!canvas || !graph.data) return undefined
@@ -691,18 +695,29 @@ window.__ModuleLoader__.load({
         const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'cyberpunk'
         const palette = GRAPH_PALETTES[paletteKey]
         const theme = GRAPH_THEMES.includes(ui.graphTheme) ? ui.graphTheme : 'personal'
-        const swirl = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
+        const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
         const dustCount = Math.max(0, Math.min(240, Number(ui.graphDust) || 70))
         const ctx = canvas.getContext('2d')
         if (!ctx) return undefined
         const store = stateRef.current
+        const cam = store.cam
+        const FOCAL = 1100
         let width = 0
         let height = 0
         let dpr = 1
         let raf = 0
         let last = performance.now()
+        const hash = (text) => {
+          let value = 2166136261
+          for (let index = 0; index < String(text).length; index += 1) {
+            value ^= String(text).charCodeAt(index)
+            value = Math.imul(value, 16777619) >>> 0
+          }
+          return value >>> 0
+        }
+        const rand = (text) => (hash(text) % 100000) / 100000
         const resize = () => {
           const rect = canvas.getBoundingClientRect()
           width = Math.max(320, rect.width)
@@ -712,43 +727,99 @@ window.__ModuleLoader__.load({
           canvas.height = Math.round(height * dpr)
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         }
-        /** 连续尺寸：权重 → 半径，不做「大/小」两档 */
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
-          if (node.kind === 'type') return 8 + Math.pow(w, 0.85) * 17
-          if (node.kind === 'skill') return 4.5 + Math.pow(w, 0.9) * 8
-          return 2.2 + Math.pow(w, 0.9) * 7
+          if (node.kind === 'type') return 7 + Math.pow(w, 0.85) * 15
+          if (node.kind === 'skill') return 4 + Math.pow(w, 0.9) * 7
+          return 2 + Math.pow(w, 0.9) * 6
         }
-        const seedPosition = (node, index) => {
-          const cx = width / 2
-          const cy = height / 2
-          const base = node.kind === 'type' ? 70 : node.kind === 'skill' ? 210 : 140
-          const radius = base * (0.45 + Math.random() * 0.75)
-          const angle = Math.random() * Math.PI * 2
-          return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius }
+        const project = (entry, time) => {
+          const wx = entry.x + Math.sin(time / 3200 + entry.phase) * 7
+          const wy = entry.y + Math.cos(time / 4100 + entry.phase) * 5
+          const wz = entry.z + Math.sin(time / 2700 + entry.phase * 1.3) * 7
+          const cy = Math.cos(cam.yaw)
+          const sy = Math.sin(cam.yaw)
+          const cp = Math.cos(cam.pitch)
+          const sp = Math.sin(cam.pitch)
+          const x1 = wx * cy - wz * sy
+          const z1 = wx * sy + wz * cy
+          const y1 = wy * cp - z1 * sp
+          const z2 = wy * sp + z1 * cp
+          const depth = cam.dist + z2
+          const f = FOCAL / Math.max(180, depth)
+          return { x: width / 2 + x1 * f, y: height / 2 + y1 * f, f, depth }
+        }
+        const layout = (data) => {
+          const types = data.nodes.filter((node) => node.kind === 'type')
+          const experiences = data.nodes.filter((node) => node.kind === 'experience')
+          const skills = data.nodes.filter((node) => node.kind === 'skill')
+          const centers = new Map()
+          const total = Math.max(1, types.length)
+          types.forEach((node, index) => {
+            const y = total === 1 ? 0 : 1 - (index / (total - 1)) * 2
+            const ring = Math.sqrt(Math.max(0, 1 - y * y))
+            const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(node.id) * 0.5
+            const radius = 240 + rand(`${node.id}r`) * 150
+            centers.set(node.id, { x: Math.cos(phi) * ring * radius, y: y * radius * 0.78, z: Math.sin(phi) * ring * radius })
+          })
+          const positions = new Map()
+          for (const node of types) positions.set(node.id, centers.get(node.id))
+          const expByType = new Map()
+          for (const node of experiences) {
+            const key = `type:${node.typeId}`
+            if (!expByType.has(key)) expByType.set(key, [])
+            expByType.get(key).push(node)
+          }
+          for (const [key, list] of expByType) {
+            const center = centers.get(key) || { x: 0, y: 0, z: 0 }
+            for (const node of list) {
+              const a = rand(`${node.id}a`) * Math.PI * 2
+              const b = Math.acos(2 * rand(`${node.id}b`) - 1)
+              const rr = 26 + Math.pow(rand(`${node.id}r`), 0.65) * 145
+              positions.set(node.id, {
+                x: center.x + Math.sin(b) * Math.cos(a) * rr,
+                y: center.y + Math.cos(b) * rr * 0.72,
+                z: center.z + Math.sin(b) * Math.sin(a) * rr,
+              })
+            }
+          }
+          for (const node of skills) {
+            const derived = data.edges.filter((edge) => edge.target === node.id && edge.kind === 'derived').map((edge) => positions.get(edge.source)).filter(Boolean)
+            let base = { x: 0, y: 0, z: 0 }
+            if (derived.length > 0) {
+              base = derived.reduce((sum, item) => ({ x: sum.x + item.x / derived.length, y: sum.y + item.y / derived.length, z: sum.z + item.z / derived.length }), { x: 0, y: 0, z: 0 })
+            } else {
+              const a = rand(`${node.id}a`) * Math.PI * 2
+              const b = Math.acos(2 * rand(`${node.id}b`) - 1)
+              const rr = 300 + rand(`${node.id}r`) * 90
+              base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
+            }
+            const a = rand(`${node.id}a`) * Math.PI * 2
+            positions.set(node.id, { x: base.x + Math.cos(a) * 46, y: base.y + (rand(`${node.id}y`) - 0.5) * 60, z: base.z + Math.sin(a) * 46 })
+          }
+          return positions
         }
         const sync = (data) => {
+          const positions = layout(data)
           const seen = new Set()
-          let index = 0
           for (const node of data.nodes) {
             if (node.kind === 'root') continue
             seen.add(node.id)
+            const shape = positions.get(node.id) || { x: 0, y: 0, z: 0 }
             const existing = store.nodes.get(node.id)
             if (existing) {
               existing.node = node
               existing.targetWeight = Number(node.weight) || 0.3
               existing.targetAlpha = 1
             } else {
-              const seed = seedPosition(node, index)
               store.nodes.set(node.id, {
-                node, x: seed.x, y: seed.y, vx: 0, vy: 0, fx: 0, fy: 0,
+                node, x: shape.x, y: shape.y, z: shape.z,
                 r: 0, alpha: 0, targetAlpha: 1,
                 currentWeight: 0.08, targetWeight: Number(node.weight) || 0.3,
-                phase: Math.random() * Math.PI * 2, speed: 0.25 + Math.random() * 0.6,
-                z: 0.45 + Math.random() * 0.55,
+                phase: rand(`${node.id}p`) * Math.PI * 2, drift: 0.7 + rand(`${node.id}d`) * 0.8,
+                screenX: 0, screenY: 0, screenF: 1, depth: 1,
               })
             }
-            index += 1
           }
           for (const [id, entry] of store.nodes) if (!seen.has(id)) entry.targetAlpha = 0
           const seenEdges = new Set()
@@ -776,121 +847,74 @@ window.__ModuleLoader__.load({
           }
           store.dust.length = Math.min(store.dust.length, dustCount)
         }
-        const physics = (dt) => {
-          const cx = width / 2
-          const cy = height / 2
-          const step = Math.max(0.25, Math.min(2.2, dt * 60))
-          const scale = Math.min(width, height) / 680
-          const list = []
-          for (const entry of store.nodes.values()) if (entry.targetAlpha > 0 || entry.alpha > 0.01) list.push(entry)
-          for (const entry of list) {
-            entry.currentWeight += (entry.targetWeight - entry.currentWeight) * Math.min(1, dt * 4)
-            entry.alpha += (entry.targetAlpha - entry.alpha) * Math.min(1, dt * 4)
-            entry.fx = 0
-            entry.fy = 0
-            const pull = 0.0012 + entry.currentWeight * 0.0026
-            entry.fx += (cx - entry.x) * pull
-            entry.fy += (cy - entry.y) * pull
-            if (swirl !== 0) {
-              const dx = entry.x - cx
-              const dy = entry.y - cy
-              const length = Math.hypot(dx, dy) || 1
-              entry.fx += (-dy / length) * swirl * 3
-              entry.fy += (dx / length) * swirl * 3
-            }
-            entry.fx += (Math.random() - 0.5) * 0.05
-            entry.fy += (Math.random() - 0.5) * 0.05
-          }
-          for (let i = 0; i < list.length; i += 1) {
-            for (let j = i + 1; j < list.length; j += 1) {
-              const a = list[i]
-              const b = list[j]
-              let dx = b.x - a.x
-              let dy = b.y - a.y
-              let distance = Math.hypot(dx, dy)
-              if (distance < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; distance = 0.5 }
-              const minDistance = radiusOf(a.node, a.currentWeight) + radiusOf(b.node, b.currentWeight) + 18 * scale
-              let force = (620 * scale * (0.7 + a.currentWeight + b.currentWeight)) / Math.max(900, distance * distance)
-              if (distance < minDistance) force += (minDistance - distance) * 0.06
-              force = Math.min(2.4, force)
-              const nx = dx / distance
-              const ny = dy / distance
-              a.fx -= nx * force
-              a.fy -= ny * force
-              b.fx += nx * force
-              b.fy += ny * force
+        const pick = (clientX, clientY) => {
+          const rect = canvas.getBoundingClientRect()
+          const x = clientX - rect.left
+          const y = clientY - rect.top
+          let best = null
+          let bestDistance = 26
+          for (const [, entry] of store.nodes) {
+            if (entry.alpha < 0.15) continue
+            const distance = Math.hypot(entry.screenX - x, entry.screenY - y)
+            if (distance < Math.max(bestDistance, entry.r + 6) && distance < bestDistance + entry.r) {
+              best = entry
+              bestDistance = distance
             }
           }
-          for (const edgeState of store.edges.values()) {
-            const from = store.nodes.get(edgeState.edge.source)
-            const to = store.nodes.get(edgeState.edge.target)
-            if (!from || !to) continue
-            const strength = edgeState.currentStrength
-            if (strength < 0.02) continue
-            const dx = to.x - from.x
-            const dy = to.y - from.y
-            const distance = Math.hypot(dx, dy) || 1
-            const target = (edgeState.edge.kind === 'derived' ? 130 : edgeState.edge.kind === 'root' ? 150 : 105) * scale
-            const force = (distance - target) * 0.006 * strength
-            const nx = dx / distance
-            const ny = dy / distance
-            from.fx += nx * force
-            from.fy += ny * force
-            to.fx -= nx * force
-            to.fy -= ny * force
-          }
-          const damping = Math.pow(0.9, step)
-          for (const entry of list) {
-            entry.vx = (entry.vx + entry.fx * step) * damping
-            entry.vy = (entry.vy + entry.fy * step) * damping
-            const maxSpeed = 3.2 * scale
-            const speed = Math.hypot(entry.vx, entry.vy)
-            if (speed > maxSpeed) { entry.vx = (entry.vx / speed) * maxSpeed; entry.vy = (entry.vy / speed) * maxSpeed }
-            entry.x += entry.vx * step
-            entry.y += entry.vy * step
-            const margin = 24
-            if (entry.x < margin) { entry.x = margin; entry.vx = Math.abs(entry.vx) * 0.4 }
-            if (entry.x > width - margin) { entry.x = width - margin; entry.vx = -Math.abs(entry.vx) * 0.4 }
-            if (entry.y < margin) { entry.y = margin; entry.vy = Math.abs(entry.vy) * 0.4 }
-            if (entry.y > height - margin) { entry.y = height - margin; entry.vy = -Math.abs(entry.vy) * 0.4 }
-            entry.screenX = entry.x
-            entry.screenY = entry.y
+          return best
+        }
+        const onPointerDown = (event) => {
+          store.dragging = { x: event.clientX, y: event.clientY, yaw: cam.yaw, pitch: cam.pitch }
+          store.dragMoved = false
+          canvas.style.cursor = 'grabbing'
+        }
+        const onPointerMove = (event) => {
+          if (store.dragging) {
+            const dx = event.clientX - store.dragging.x
+            const dy = event.clientY - store.dragging.y
+            if (Math.hypot(dx, dy) > 4) store.dragMoved = true
+            cam.yaw = store.dragging.yaw + dx * 0.006
+            cam.pitch = Math.max(-1.35, Math.min(1.35, store.dragging.pitch - dy * 0.006))
           }
         }
-        const onPointer = (event) => {
-          const rect = canvas.getBoundingClientRect()
-          const x = event.clientX - rect.left
-          const y = event.clientY - rect.top
-          let best = null
-          let bestDistance = 30
-          for (const [, entry] of store.nodes) {
-            const distance = Math.hypot(entry.screenX - x, entry.screenY - y)
-            if (distance < bestDistance) { best = entry; bestDistance = distance }
+        const onPointerUp = (event) => {
+          if (store.dragging && !store.dragMoved) {
+            const hit = pick(event.clientX, event.clientY)
+            store.selected = hit === null ? null : hit.node.id
+            store.pulse = 0
           }
-          store.selected = best === null ? null : best.node.id
-          store.pulse = 0
+          store.dragging = null
+          canvas.style.cursor = 'grab'
+        }
+        const onWheel = (event) => {
+          event.preventDefault()
+          cam.dist = Math.min(3200, Math.max(520, cam.dist * (event.deltaY > 0 ? 1.08 : 0.92)))
         }
         resize()
         sync(graph.data)
         window.addEventListener('resize', resize)
-        canvas.addEventListener('pointerdown', onPointer)
+        window.addEventListener('pointermove', onPointerMove)
+        window.addEventListener('pointerup', onPointerUp)
+        canvas.addEventListener('pointerdown', onPointerDown)
+        canvas.addEventListener('wheel', onWheel, { passive: false })
+        canvas.style.cursor = 'grab'
         const draw = (now) => {
           const dt = Math.min(0.05, (now - last) / 1000)
           last = now
           store.t += dt
           store.pulse += dt * 1.4
+          if (rotation !== 0 && store.dragging === null) cam.yaw += rotation * dt
           const cx = width / 2
           const cy = height / 2
-          physics(dt)
           ctx.clearRect(0, 0, width, height)
           const background = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) * 0.72)
           background.addColorStop(0, palette.bgInner)
           background.addColorStop(1, palette.bg)
           ctx.fillStyle = background
           ctx.fillRect(0, 0, width, height)
-          const vignette = ctx.createRadialGradient(cx, cy, Math.min(width, height) * 0.2, cx, cy, Math.max(width, height) * 0.78)
+          const vignette = ctx.createRadialGradient(cx, cy, Math.min(width, height) * 0.22, cx, cy, Math.max(width, height) * 0.8)
           vignette.addColorStop(0, 'rgba(0,0,0,0)')
-          vignette.addColorStop(1, 'rgba(0,0,0,.55)')
+          vignette.addColorStop(1, 'rgba(0,0,0,.52)')
           ctx.fillStyle = vignette
           ctx.fillRect(0, 0, width, height)
           for (const particle of store.dust) {
@@ -907,9 +931,15 @@ window.__ModuleLoader__.load({
             ctx.fill()
           }
           for (const entry of store.nodes.values()) {
-            entry.r += (radiusOf(entry.node, entry.currentWeight) * (0.7 + entry.z * 0.3) - entry.r) * Math.min(1, dt * 6)
+            entry.currentWeight += (entry.targetWeight - entry.currentWeight) * Math.min(1, dt * 4)
+            entry.alpha += (entry.targetAlpha - entry.alpha) * Math.min(1, dt * 4)
+            entry.r += (radiusOf(entry.node, entry.currentWeight) - entry.r) * Math.min(1, dt * 6)
+            const projected = project(entry, store.t)
+            entry.screenX = projected.x
+            entry.screenY = projected.y
+            entry.screenF = projected.f
+            entry.depth = projected.depth
           }
-          // 分层连线：弱关联先画、强关联后画，避免糊成一团
           const edgeList = [...store.edges.entries()].sort((left, right) => left[1].currentStrength - right[1].currentStrength)
           for (const [key, edgeState] of edgeList) {
             edgeState.currentStrength += (edgeState.targetStrength - edgeState.currentStrength) * Math.min(1, dt * 3)
@@ -918,38 +948,36 @@ window.__ModuleLoader__.load({
             if (!from || !to) continue
             const strength = edgeState.currentStrength
             if (strength < 0.02 && edgeState.targetStrength === 0) { store.edges.delete(key); continue }
-            if (strength < 0.015) continue
-            const mx = (from.x + to.x) / 2 - ((to.y - from.y) / (Math.hypot(to.x - from.x, to.y - from.y) || 1)) * (edgeState.edge.kind === 'derived' ? 22 : 10)
-            const my = (from.y + to.y) / 2 + ((to.x - from.x) / (Math.hypot(to.x - from.x, to.y - from.y) || 1)) * (edgeState.edge.kind === 'derived' ? 22 : 10)
+            if (strength < 0.02 || from.alpha < 0.1 || to.alpha < 0.1) continue
+            const near = (from.screenF + to.screenF) * 0.5
             const bright = store.selected !== null && (edgeState.edge.source === store.selected || edgeState.edge.target === store.selected)
-            ctx.globalAlpha = Math.min(1, (0.04 + strength * 0.55) * (bright ? 1.8 : 1))
-            const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y)
+            ctx.globalAlpha = Math.min(1, (0.035 + strength * 0.5) * near * (bright ? 1.9 : 1))
+            const gradient = ctx.createLinearGradient(from.screenX, from.screenY, to.screenX, to.screenY)
             gradient.addColorStop(0, edgeState.edge.kind === 'derived' ? palette.node2 : palette.node)
             gradient.addColorStop(1, palette.edge)
             ctx.strokeStyle = gradient
-            ctx.lineWidth = 0.25 + strength * (bright ? 3.2 : 2.4)
-            ctx.shadowBlur = bloom ? 4 + strength * 10 : 0
+            ctx.lineWidth = (0.25 + strength * (bright ? 3.2 : 2.4)) * near
+            ctx.shadowBlur = bloom ? (4 + strength * 10) * near : 0
             ctx.shadowColor = edgeState.edge.kind === 'derived' ? palette.node2 : palette.glow
             ctx.beginPath()
-            ctx.moveTo(from.x, from.y)
-            ctx.quadraticCurveTo(mx, my, to.x, to.y)
+            ctx.moveTo(from.screenX, from.screenY)
+            ctx.lineTo(to.screenX, to.screenY)
             ctx.stroke()
             if (strength > 0.12) {
               for (let index = 0; index < edgeState.particles.length; index += 1) {
                 edgeState.particles[index] = (edgeState.particles[index] + dt * (0.06 + strength * 0.5)) % 1
                 const progress = edgeState.particles[index]
-                const px = (1 - progress) * (1 - progress) * from.x + 2 * (1 - progress) * progress * mx + progress * progress * to.x
-                const py = (1 - progress) * (1 - progress) * from.y + 2 * (1 - progress) * progress * my + progress * progress * to.y
-                ctx.globalAlpha = 0.25 + strength * 0.55
+                const px = from.screenX + (to.screenX - from.screenX) * progress
+                const py = from.screenY + (to.screenY - from.screenY) * progress
+                ctx.globalAlpha = (0.2 + strength * 0.55) * near
                 ctx.fillStyle = palette.highlight
                 ctx.beginPath()
-                ctx.arc(px, py, 0.7 + strength * 1.4, 0, Math.PI * 2)
+                ctx.arc(px, py, (0.6 + strength * 1.3) * near, 0, Math.PI * 2)
                 ctx.fill()
               }
             }
           }
-          // 节点按景深排序：远处先画（更淡更小），近处后画
-          const ordered = [...store.nodes.values()].sort((left, right) => left.z - right.z)
+          const ordered = [...store.nodes.values()].sort((left, right) => right.depth - left.depth)
           for (const entry of ordered) {
             if (entry.alpha <= 0.01) { if (entry.targetAlpha === 0) store.nodes.delete(entry.node.id); continue }
             const node = entry.node
@@ -958,26 +986,28 @@ window.__ModuleLoader__.load({
               : node.kind === 'skill' ? palette.node2
                 : node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected' ? palette.highlight
                   : node.outcome === 'partial' ? palette.warn : palette.node
-            const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.07 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
-            const alphaBase = entry.alpha * (0.4 + entry.z * 0.6) * breathing
+            const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.09 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
+            const nearFactor = Math.min(1.6, Math.max(0.35, entry.screenF))
+            const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing
+            const screenRadius = Math.max(0.4, entry.r * entry.screenF * (0.85 + entry.currentWeight * 0.3))
             const paint = (offsetX, offsetY, alphaMultiplier) => {
               ctx.save()
-              ctx.translate(entry.x + offsetX, entry.y + offsetY)
+              ctx.translate(entry.screenX + offsetX, entry.screenY + offsetY)
               ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
-              ctx.shadowBlur = bloom ? palette.bloom * (0.25 + entry.currentWeight) : 0
+              ctx.shadowBlur = bloom ? palette.bloom * (0.2 + entry.currentWeight) * nearFactor : 0
               ctx.shadowColor = color
               ctx.fillStyle = color
               ctx.strokeStyle = palette.highlight
-              ctx.lineWidth = isSelected ? 1.8 : 0.6
+              ctx.lineWidth = isSelected ? 1.6 : 0.6
               ctx.scale(breathing, breathing)
-              drawGraphShape(ctx, entry.r, theme)
+              drawGraphShape(ctx, screenRadius, theme)
               ctx.restore()
             }
             paint(0, 0, 1)
             if (glitch && (node.recent || isSelected)) {
               ctx.save()
               ctx.globalCompositeOperation = 'lighter'
-              paint(1.5, 0, 0.18)
+              paint(1.4, 0, 0.16)
               ctx.restore()
             }
             if (isSelected) {
@@ -987,7 +1017,7 @@ window.__ModuleLoader__.load({
               ctx.strokeStyle = palette.highlight
               ctx.lineWidth = 1.2
               ctx.beginPath()
-              ctx.arc(entry.x, entry.y, entry.r + 8 + phase * 52, 0, Math.PI * 2)
+              ctx.arc(entry.screenX, entry.screenY, screenRadius + 8 + phase * 52, 0, Math.PI * 2)
               ctx.stroke()
               ctx.restore()
             }
@@ -1000,10 +1030,13 @@ window.__ModuleLoader__.load({
         return () => {
           cancelAnimationFrame(raf)
           window.removeEventListener('resize', resize)
-          canvas.removeEventListener('pointerdown', onPointer)
+          window.removeEventListener('pointermove', onPointerMove)
+          window.removeEventListener('pointerup', onPointerUp)
+          canvas.removeEventListener('pointerdown', onPointerDown)
+          canvas.removeEventListener('wheel', onWheel)
         }
       }, [graph.data, settings.data])
-      return h('div', { className: 'eng-graph-canvas-wrap' }, h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '记忆关系网络' }))
+      return h('div', { className: 'eng-graph-canvas-wrap' }, h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '3D 记忆海' }))
     }
 
     function Settings(props) {
