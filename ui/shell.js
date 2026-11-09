@@ -51,7 +51,7 @@ export function pluginVersion() {
 const sources = new Map()
 
 export function sourceKeyOf(config = {}) {
-  const mode = String(config.source || 'mock').toLowerCase() === 'live' ? 'live' : 'mock'
+  const mode = String(config.source || 'live').toLowerCase() === 'mock' ? 'mock' : 'live'
   return `${mode}|${mode === 'live' ? String(config.dataDir || '') : ''}`
 }
 
@@ -60,7 +60,7 @@ export function createSource(config = {}) {
   const key = sourceKeyOf(config)
   const existing = sources.get(key)
   if (existing !== undefined) return existing
-  const mode = String(config.source || 'mock').toLowerCase() === 'live' ? 'live' : 'mock'
+  const mode = String(config.source || 'live').toLowerCase() === 'mock' ? 'mock' : 'live'
   const source = mode === 'live' ? createLiveSource(config) : createMockSource()
   sources.set(key, source)
   return source
@@ -146,7 +146,11 @@ export function buildExperiences(source, params) {
     notice: String(read.notice || ''),
   }
   if (query !== '') {
-    const limit = numberParam(params.get('limit'), 20, 50)
+    const limit = numberParam(params.get('limit'), 8, 50)
+    if (typeof source.recall === 'function') {
+      const recalled = source.recall({ intent: query, limit })
+      return { ...meta, ...recalled, query }
+    }
     return { ...meta, ...recallOf(store, query, limit) }
   }
   return { ...meta, ...listOf(store, params) }

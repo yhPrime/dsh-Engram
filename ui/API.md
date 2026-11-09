@@ -345,6 +345,12 @@
 - 固化技能同样分界：mock 是内置 5 条；live 读 `<dataDir>/skills/<slug>/`，没有技能时返回空数组（界面空态）。
 
 
+## 数据源默认值（0.6.0）
+
+不传 `source` 时默认 `live`：读 `dataDir`（插件配置 / ENGRAM_DATA_DIR / settings.currentRoot / 默认 `$DSH_HOME/engram/data`）。只有显式 `source: "mock"` 才用内置示例数据（仅测试）。
+
+`GET /experiences?query=...` 在 live 下走 `engine.recall`（返回 candidates/evidence），不再用界面里的简化排序。
+
 ## 控制台动作（0.5.0）
 
 ### `POST /recall`

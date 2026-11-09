@@ -420,6 +420,26 @@ await check('live /record → /recall：走 kernel engine 真写真读', async (
   assert.ok((recalled.payload.data.candidates || []).length >= 1)
 })
 
+
+await check('默认数据源是 live；只有显式 mock 才用示例数据', async () => {
+  const { createSource } = await import('../shell.js')
+  const live = createSource({ dataDir: tempDir() })
+  assert.equal(live.mode, 'live')
+  const mock = createSource({ source: 'mock' })
+  assert.equal(mock.mode, 'mock')
+})
+
+await check('live 的 /experiences?query= 走 engine.recall（候选带 evidence）', async () => {
+  const dir = tempDir()
+  const source = createLiveSource({ dataDir: dir })
+  source.record({ intent: '导出课件 PDF', action: '先嵌字体再导出', outcome: 'success', type: '环境 / 部署' })
+  source.record({ intent: '导出课件 PDF', action: '直接导出不管字体', outcome: 'failed', type: '环境 / 部署' })
+  const { status, payload } = await call(source, '/experiences?query=' + encodeURIComponent('导出课件 PDF'))
+  assert.equal(status, 200)
+  assert.notEqual(payload.data.mode, 'list')
+  assert.ok((payload.data.candidates || []).some((item) => Array.isArray(item.evidence)), JSON.stringify(payload.data).slice(0, 200))
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
 

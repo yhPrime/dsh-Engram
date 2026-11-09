@@ -25,8 +25,8 @@ window.__ModuleLoader__.load({
 
     const STYLE_ID = 'dsh-exp-ui/styles'
     const PANEL_CSS = `
-.eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; height: 100%; min-height: 560px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
-.eng-rail { width: 208px; flex: 0 0 208px; display: flex; flex-direction: column; gap: 3px; padding: 16px 12px; border-right: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2)); }
+.eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; container-type: inline-size; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+.eng-rail { width: 208px; flex: 0 0 208px; display: flex; flex-direction: column; gap: 3px; padding: 16px 12px; overflow-y: auto; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2)); }
 .eng-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
 .eng-brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); }
 .eng-brand-name { font-size: 14px; font-weight: 650; letter-spacing: .2px; }
@@ -38,12 +38,12 @@ window.__ModuleLoader__.load({
 .eng-nav-item:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .eng-nav-count { margin-left: auto; font-size: 11px; opacity: .72; font-variant-numeric: tabular-nums; }
 .eng-rail-foot { margin-top: auto; padding: 12px 10px 2px; border-top: 1px solid var(--dsw-alias-border-l1); font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
-.eng-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.eng-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .eng-top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 86%, transparent); backdrop-filter: blur(10px); }
 .eng-title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .1px; }
 .eng-sub { margin-top: 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .eng-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.eng-content { width: 100%; max-width: 1180px; margin: 0 auto; padding: 22px 24px 48px; }
+.eng-content { flex: 1 1 auto; width: 100%; max-width: 1180px; min-height: 0; margin: 0 auto; padding: 22px 24px 48px; overflow-y: auto; overflow-x: hidden; }
 .eng-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .eng-cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; }
 .eng-card { border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); }
@@ -98,7 +98,7 @@ window.__ModuleLoader__.load({
 .eng-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .eng-toolbar .eng-input { width: 220px; }
 .eng-toolbar .eng-select { width: 140px; }
-.eng-split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 1fr); gap: 14px; align-items: start; }
+.eng-split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 14px; align-items: start; }
 .eng-stack { display: flex; flex-direction: column; gap: 12px; }
 .eng-skill-row { padding: 13px 15px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-skill-row:last-child { border-bottom: 0; }
@@ -107,6 +107,8 @@ window.__ModuleLoader__.load({
 .eng-skill-name { font-weight: 620; }
 .eng-skill-desc { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
 .eng-nav-sep { height: 1px; margin: 10px 8px; background: var(--dsw-alias-border-l1); }
+@container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { .eng-nav-item, .eng-row, .eng-skill-row { transition: none; } }
@@ -288,17 +290,16 @@ window.__ModuleLoader__.load({
     }
 
     function Experiences(props) {
-      const [query, setQuery] = useState('')
+      const [searchDraft, setSearchDraft] = useState('')
       const [type, setType] = useState('')
       const [outcome, setOutcome] = useState('')
       const [selected, setSelected] = useState(null)
       const list = useLoad(useCallback(() => {
         const params = new URLSearchParams({ limit: '100' })
-        if (query.trim() !== '') params.set('query', query.trim())
         if (type !== '') params.set('type', type)
         if (outcome !== '') params.set('outcome', outcome)
         return request(`/experiences?${params.toString()}`)
-      }, [query, type, outcome]))
+      }, [type, outcome]))
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
       const types = (props.state && props.state.types) || []
       const rows = (list.data && (list.data.rows || list.data.candidates)) || []
@@ -311,12 +312,13 @@ window.__ModuleLoader__.load({
       return h('div', null,
         list.error ? h(Banner, { bad: true }, list.error) : null,
         h('div', { className: 'eng-toolbar' },
-          h('input', { className: 'eng-input', placeholder: '按意图筛选…', value: query, onChange: (event) => setQuery(event.target.value) }),
+          h('input', { className: 'eng-input', placeholder: '按意图检索（回车跳到检索页）…', value: searchDraft, onChange: (event) => setSearchDraft(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && searchDraft.trim() !== '') props.onSearch(searchDraft.trim()) } }),
           h('select', { className: 'eng-select', value: type, onChange: (event) => setType(event.target.value) },
             h('option', { value: '' }, '全部类型'), types.map((item) => h('option', { key: item.id, value: item.id }, item.name))),
           h('select', { className: 'eng-select', value: outcome, onChange: (event) => setOutcome(event.target.value) },
             h('option', { value: '' }, '全部结果'), Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0]))),
           h('span', { className: 'eng-muted' }, `${list.data ? list.data.total : '—'} 条`),
+          h(Button, { small: true, disabled: searchDraft.trim() === '', onClick: () => props.onSearch(searchDraft.trim()) }, '检索'),
           h(Button, { small: true, onClick: list.reload }, '刷新')),
         h('div', { className: 'eng-split' },
           h('div', { className: 'eng-card' },
@@ -350,8 +352,8 @@ window.__ModuleLoader__.load({
             }))))
     }
 
-    function Recall() {
-      const [intent, setIntent] = useState('')
+    function Recall(props) {
+      const [intent, setIntent] = useState((props && props.seed) || '')
       const [context, setContext] = useState('')
       const [result, setResult] = useState(null)
       const [error, setError] = useState('')
@@ -366,32 +368,55 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
+      const feedback = async (id, value) => {
+        try {
+          await request('/feedback', { method: 'POST', body: { id, result: value } })
+          await run()
+        } catch (caught) {
+          setError(caught.message || String(caught))
+        }
+      }
       const candidates = result ? (result.candidates || result.rows || []) : []
+      const engineShape = candidates.some((item) => Array.isArray(item.evidence))
       return h('div', null,
         error ? h(Banner, { bad: true }, error) : null,
         h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 14 } },
           h('div', { className: 'eng-form-grid' },
-            h(Field, { label: '意图', wide: true, hint: '自然语言，越具体越好；回车直接检索' },
+            h(Field, { label: '意图', wide: true, hint: '走内核 JitRL 召回（技能模式优先返回技能正文）' },
               h('textarea', { className: 'eng-textarea', placeholder: '例如：把课件导出成 PDF，字体要嵌进去', value: intent, onChange: (event) => setIntent(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) run() } })),
             h(Field, { label: '情境（逗号分隔，可选）' }, h('input', { className: 'eng-input', placeholder: 'windows, powerpoint', value: context, onChange: (event) => setContext(event.target.value) }))),
           h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || intent.trim() === '', onClick: run }, busy ? '检索中…' : '检索'))),
         result === null ? null : h('div', null,
           h('div', { className: 'eng-actions', style: { marginBottom: 12 } },
             h(Badge, { tone: result.mode === 'skill' ? 'brand' : result.mode === 'advantage' ? 'ok' : 'muted' }, `mode=${result.mode}`),
-            h('span', { className: 'eng-muted' }, `候选 ${candidates.length} 条`),
+            h('span', { className: 'eng-muted' }, `候选 ${candidates.length} 组`),
             result.pendingSkills ? h(Badge, { tone: 'warn' }, `待补提交 ${result.pendingSkills}`) : null),
+          result.brief ? h(Banner, null, result.brief) : null,
           result.skill ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
             h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Badge, { tone: 'brand' }, '高确定技能'), h('span', { className: 'eng-mono' }, result.skill.id)),
             h('h3', { className: 'eng-detail-title' }, result.skill.name),
             h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, result.skill.description),
             h('pre', { className: 'eng-pre' }, result.skill.body)) : null,
-          candidates.length === 0 ? h(Empty, null, result.note || '没有相近候选') : h('div', { className: 'eng-stack' }, candidates.map((item) => {
-            const [label, tone] = outcomeOf(item.outcome)
-            return h('div', { key: item.id, className: 'eng-card', style: { padding: 14 } },
-              h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(item.G)}`), item.score !== undefined ? h('span', { className: 'eng-muted' }, `score ${fmtNumber(item.score)}`) : null),
-              h('div', { className: 'eng-row-intent' }, item.intent || '（无意图）'),
-              h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—'))
-          }))))
+          candidates.length === 0 ? h(Empty, null, result.note || '没有相近候选') : h('div', { className: 'eng-stack' }, candidates.map((item, index) => engineShape
+            ? h('div', { key: item.action || index, className: 'eng-card', style: { padding: 14 } },
+                h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
+                  h('strong', null, item.action || '（无做法）'),
+                  h('span', { className: 'eng-mono' }, `Â ${fmtNumber(item.advantage)}`),
+                  h('span', { className: 'eng-muted' }, `Q ${fmtNumber(item.Q)} · V ${fmtNumber(item.V)} · support ${item.support || 0}`)),
+                h('div', { className: 'eng-stack' }, (item.evidence || []).map((evidence) => {
+                  const [label, tone] = outcomeOf(evidence.outcome)
+                  return h('div', { key: evidence.id, className: 'eng-row', style: { gridTemplateColumns: '60px 70px minmax(0,1fr) auto', cursor: 'default' } },
+                    h(Badge, { tone }, label),
+                    h('span', { className: 'eng-mono' }, `G ${fmtNumber(evidence.G)}`),
+                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-sub' }, `${evidence.id} · sim ${fmtNumber(evidence.similarity)}`), evidence.note ? h('div', { className: 'eng-row-sub' }, evidence.note) : null),
+                    h('div', { className: 'eng-actions' },
+                      h(Button, { small: true, onClick: () => feedback(evidence.id, 'helped') }, '有帮助'),
+                      h(Button, { small: true, onClick: () => feedback(evidence.id, 'hurt') }, '没帮上')))
+                })))
+            : h('div', { key: item.id, className: 'eng-card', style: { padding: 14 } },
+                h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone: outcomeOf(item.outcome)[1] }, outcomeOf(item.outcome)[0]), h('span', { className: 'eng-mono' }, `G ${fmtNumber(item.G)}`)),
+                h('div', { className: 'eng-row-intent' }, item.intent || '（无意图）'),
+                h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—'))))))
     }
 
     function Record() {
@@ -619,6 +644,7 @@ window.__ModuleLoader__.load({
 
     function Console() {
       const [tab, setTab] = useState('overview')
+      const [recallSeed, setRecallSeed] = useState('')
       const [state, setState] = useState(null)
       const [error, setError] = useState('')
       const loadState = useCallback(async () => {
@@ -639,8 +665,8 @@ window.__ModuleLoader__.load({
       const go = (next) => setTab(next)
       const content = (() => {
         if (tab === 'overview') return h(Overview, { state, onGo: go, onOpen: (id) => { setTab('experiences') } })
-        if (tab === 'experiences') return h(Experiences, { state, onChanged: loadState })
-        if (tab === 'recall') return h(Recall)
+        if (tab === 'experiences') return h(Experiences, { state, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
+        if (tab === 'recall') return h(Recall, { seed: recallSeed })
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
         if (tab === 'types') return h(Types, { onChanged: loadState })
