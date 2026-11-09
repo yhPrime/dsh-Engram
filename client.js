@@ -1008,8 +1008,8 @@ window.__ModuleLoader__.load({
               ctx.translate(entry.screenX + offsetX, entry.screenY + offsetY)
               ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
               const isType = node.kind === 'type'
-              ctx.shadowBlur = bloom ? (3 + palette.bloom * 0.28 * entry.currentWeight) * nearFactor : 0
-              ctx.shadowColor = color
+              ctx.shadowBlur = 0
+              ctx.shadowColor = 'transparent'
               ctx.fillStyle = isType ? (palette.ringFill || 'rgba(255,255,255,.6)') : color
               ctx.strokeStyle = isType ? color : palette.highlight
               ctx.lineWidth = isType ? 1.7 : isSelected ? 1.6 : 0.6
