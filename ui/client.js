@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
 
     const STYLE_ID = 'dsh-exp-ui/styles'
     const PANEL_CSS = `
-.eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; container-type: inline-size; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+.eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; width: 100%; max-width: 100%; box-sizing: border-box; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; container-type: inline-size; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
 .eng-rail { width: 208px; flex: 0 0 208px; display: flex; flex-direction: column; gap: 3px; padding: 16px 12px; overflow-y: auto; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2)); }
 .eng-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
 .eng-brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); }
@@ -39,14 +39,14 @@ window.__ModuleLoader__.load({
 .eng-nav-count { margin-left: auto; font-size: 11px; opacity: .72; font-variant-numeric: tabular-nums; }
 .eng-rail-foot { margin-top: auto; padding: 12px 10px 2px; border-top: 1px solid var(--dsw-alias-border-l1); font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
 .eng-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.eng-top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 86%, transparent); backdrop-filter: blur(10px); }
+.eng-top { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 86%, transparent); backdrop-filter: blur(10px); }
 .eng-title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .1px; }
 .eng-sub { margin-top: 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .eng-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.eng-content { flex: 1 1 auto; width: 100%; max-width: 1180px; min-height: 0; margin: 0 auto; padding: 22px 24px 48px; overflow-y: auto; overflow-x: hidden; }
-.eng-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.eng-cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; }
-.eng-card { border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); }
+.eng-content { flex: 1 1 auto; width: 100%; max-width: 1180px; min-height: 0; margin: 0 auto; padding: clamp(12px, 2.4vw, 24px); overflow-y: auto; overflow-x: auto; }
+.eng-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.eng-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.eng-card { min-width: 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); }
 .eng-kpi { display: flex; flex-direction: column; gap: 4px; padding: 15px 17px; }
 .eng-kpi-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); }
 .eng-kpi-value { font-size: 26px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
@@ -96,9 +96,9 @@ window.__ModuleLoader__.load({
 .eng-chip { padding: 3px 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; cursor: pointer; }
 .eng-chip[data-on="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }
 .eng-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.eng-toolbar .eng-input { width: 220px; }
-.eng-toolbar .eng-select { width: 140px; }
-.eng-split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.eng-toolbar .eng-input { width: min(220px, 100%); }
+.eng-toolbar .eng-select { width: min(140px, 100%); }
+.eng-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
 .eng-stack { display: flex; flex-direction: column; gap: 12px; }
 .eng-skill-row { padding: 13px 15px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-skill-row:last-child { border-bottom: 0; }
@@ -645,6 +645,8 @@ window.__ModuleLoader__.load({
     function Console() {
       const [tab, setTab] = useState('overview')
       const [recallSeed, setRecallSeed] = useState('')
+      const rootRef = useRef(null)
+      const [fitHeight, setFitHeight] = useState(null)
       const [state, setState] = useState(null)
       const [error, setError] = useState('')
       const loadState = useCallback(async () => {
@@ -656,6 +658,28 @@ window.__ModuleLoader__.load({
         }
       }, [])
       useEffect(() => { loadState() }, [loadState])
+      useEffect(() => {
+        const measure = () => {
+          const node = rootRef.current
+          if (node === null || typeof window === 'undefined') return
+          const top = node.getBoundingClientRect().top
+          const available = Math.max(320, Math.round(window.innerHeight - top - 6))
+          setFitHeight(available)
+        }
+        measure()
+        window.addEventListener('resize', measure)
+        let observer = null
+        try {
+          observer = new ResizeObserver(measure)
+          if (rootRef.current !== null && rootRef.current.parentElement !== null) observer.observe(rootRef.current.parentElement)
+        } catch {
+          observer = null
+        }
+        return () => {
+          window.removeEventListener('resize', measure)
+          if (observer !== null) observer.disconnect()
+        }
+      }, [])
       const counts = {
         experiences: state ? state.totals.visible : null,
         skills: state ? state.totals.skills : null,
@@ -684,7 +708,7 @@ window.__ModuleLoader__.load({
       const brandMark = primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function'
         ? h(primitives.IconChecklistOutlineRegular, { size: 18 })
         : h('span', { style: { fontSize: 15 } }, '≡')
-      return h('div', { className: 'eng-app' },
+      return h('div', { className: 'eng-app', ref: rootRef, style: fitHeight === null ? undefined : { height: `${fitHeight}px` } },
         h('aside', { className: 'eng-rail' },
           h('div', { className: 'eng-brand' },
             h('span', { className: 'eng-brand-mark' }, brandMark),
