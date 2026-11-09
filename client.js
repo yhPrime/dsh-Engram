@@ -4,6 +4,14 @@
  * 八个页面覆盖内核全部能力：概览 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置。
  * 只通过 `/exp-ui/api/*` 访问数据；mock 与 live 返回形状一致。
  */
+
+// 诊断：这个文件一旦被宿主取到并执行，就先回打一次（不依赖 factory / apply）。
+try {
+  fetch('/exp-ui/api/health?client=1&phase=script&id=dsh-engram').catch(() => {})
+} catch {
+  // 非浏览器环境
+}
+
 window.__ModuleLoader__.load({
   id: 'dsh-engram',
   factory(require) {
@@ -17,6 +25,19 @@ window.__ModuleLoader__.load({
     const API = '/exp-ui/api'
 
     const STYLE_ID = 'dsh-engram/styles'
+
+    /** 诊断回打：不同阶段各打一次，host 的 /health 会按顺序记下来。 */
+    function reportProbe(phase, extra = {}) {
+      try {
+        const query = new URLSearchParams({ client: '1', phase, id: PACKAGE_NAME })
+        for (const [key, value] of Object.entries(extra)) query.set(key, String(value))
+        fetch(`${API}/health?${query.toString()}`).catch(() => {})
+      } catch {
+        // 测试环境没有 fetch
+      }
+    }
+    reportProbe('factory')
+
     const PANEL_CSS = `
 .eng-app, .eng-app *, .eng-app *::before, .eng-app *::after { box-sizing: border-box; }
 .eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; width: 100%; max-width: 100%; box-sizing: border-box; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; container-type: inline-size; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
@@ -1396,7 +1417,12 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'layout'],
       apply(ctx) {
-        ensureStyles()
+        try {
+          ensureStyles()
+        } catch (error) {
+          reportProbe('apply-throw', { errors: `styles:${error && error.message ? error.message : String(error)}` })
+          throw error
+        }
         const disposers = []
         const failures = []
         function PanelGlyph(props) {
@@ -1417,23 +1443,16 @@ window.__ModuleLoader__.load({
         try {
           disposers.push(ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE_NAME }, BundleCard)))
         } catch (error) { failures.push(`card:${error && error.message ? error.message : String(error)}`); console.error('[engram] bundle card registration failed', error) }
-        ctx.effect(() => () => {
-          for (const dispose of disposers.reverse()) {
-            try { dispose() } catch (error) { console.error('[engram] dispose failed', error) }
-          }
-        })
-        // 诊断回打：host 的 /health 会记下这次调用，用来确认「客户端半到底有没有加载」。
         try {
-          const query = new URLSearchParams({
-            client: '1',
-            id: PACKAGE_NAME,
-            panels: String(disposers.length),
-            errors: failures.join('|').slice(0, 300),
+          ctx.effect(() => () => {
+            for (const dispose of disposers.reverse()) {
+              try { dispose() } catch (error) { console.error('[engram] dispose failed', error) }
+            }
           })
-          fetch(`${API}/health?${query.toString()}`).catch(() => {})
-        } catch {
-          // 没有 fetch（测试环境）就跳过
+        } catch (error) {
+          failures.push(`effect:${error && error.message ? error.message : String(error)}`)
         }
+        reportProbe('apply', { panels: disposers.length, errors: failures.join('|').slice(0, 300) })
       },
     }
   },
