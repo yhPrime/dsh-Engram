@@ -7,20 +7,41 @@
 - `main` 只放稳定发布，实验改动不进来；
 - 每次发布打 `vX.Y.Z` tag。
 
-## 包结构（标准 DSH 插件）
+## 包结构（标准 DSH 插件，0.11.0 起为单插件单入口）
 
 | 文件 | 作用 |
 |---|---|
-| `package.json` | 插件清单；`dsh.bundle.patch` + `dsh.client` |
-| `plugin.js` | 工具面 + 每轮提示段 |
-| `ui.js` | UI Host 半（`/exp-ui/api`） |
-| `client.js` | 经验库控制台客户端 |
-| `cordis.patch.yml` | 挂载 `dsh-engram/plugin` 与 `dsh-engram/ui` |
-| `engine.js` / `core.js` | 独立使用入口 |
-| `icon.svg` / `locale/` | 面板图标与文案 |
+| `package.json` | 插件清单；`dsh.bundle.patch` + `dsh.client`；`exports` 含 `./package.json` 与 `./client` |
+| `plugin.js` | **唯一入口**：同一个 `apply` 挂工具面（kernel）+ 控制台 API（`/exp-ui/api`） |
+| `client.js` | 经验库控制台客户端（DSH 模块加载器 bundle 形态） |
+| `cordis.patch.yml` | 只插一条 `dsh-engram`（裸包名）条目 |
+| `kernel/` | 引擎：存储、检索、簇路由、沉淀、反馈、技能 |
+| `ui/` | 控制台：`shell.js`（API）、`live.js` / `mock.js`（数据源）、`locale/` |
+| `icon.svg` | 插件图标（自有标记） |
+
+## 借鉴与致谢
+
+本插件的很多设计来自公开项目与 DSH 生态，明确记录：
+
+| 来源 | 借了什么 | 体现 |
+|---|---|---|
+| [asdfd3/3d-memory-sea](https://github.com/asdfd3/3d-memory-sea) | 星海式关系图：球面簇布局、真三维透视投影、轨道旋转/滚轮推拉、深度遮挡、流光与景深 | 关系图页（0.9.0 起） |
+| [Yuuyuko-uu/dsh-xingxi](https://github.com/Yuuyuko-uu/dsh-xingxi) | 悬停只亮邻居其余压暗、越新越亮、镜头自动适配 | 关系图交互（0.10.0 起） |
+| [DeepSeek Harness](https://github.com/deepseek-ai) | 插件双半结构、`dsh.client` bundle 约定、`sidebar.panellist` 图标契约 | `plugin.js` / `client.js` 结构 |
+| [omdsh-dev/dsh-mnemon](https://github.com/omdsh-dev/dsh-mnemon) | 本插件 0.1–0.10 是它的记忆空间 Provider；类型/簇/技能分层从这套思路长出来 | kernel 数据模型（0.11.0 起解耦） |
+| 前身 `dsh-exp-lib-provider`（同作者） | `exp-lib.json` 格式、反馈学习率、退休/取代语义 | `kernel/store.js`，源码用 `@legacy-provider` 标注 |
+
+关系图配色不借预设主题：默认读 DSH 运行时主题 token。
 
 ## 当前发布
 
+- **v0.11.0（单插件）**
+  - 合并为一个插件：`dsh-engram` 一个包、一个 cordis 入口（裸包名），工具面与控制台 API 在同一个 `apply` 里
+  - 客户端入口 `client.js` 移到包根；`exports` 补 `./package.json`（DSH 客户端加载器要解析包清单）
+  - 自有图标：插件 `icon.svg`（双侧记忆弧）+ 侧栏同款 16 栅格自绘标记
+  - 控制台经验页详情修复（原为漏调用的内联 IIFE，渲染空白），抽成 `DetailPane` 并加渲染回归
+  - 与 dsh-mnemon 彻底解耦；数据在 `.exp/exp-lib.json`，不再经记忆空间
+  - 测试：内核 38 套件 + 外壳 7 套件全绿
 - **v0.10.1**（内核 0.33.3 / 外壳 0.10.1）
   - 借鉴 dsh-xingxi：悬停只亮相连节点、其余压暗；越新的经验越亮（旧星渐暗不消失）；镜头按网络范围自动适配
   - 颜色仍是 DSH 主题渐变，节点无外发光
