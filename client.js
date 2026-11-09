@@ -1260,7 +1260,9 @@ window.__ModuleLoader__.load({
             setDevice((previous) => (previous === null ? previous : { ...previous, status: data.status }))
             setGhNotice(data.status === 'expired' ? '设备码过期了，重新点一次登录' : '授权被拒绝')
           } else {
-            setGhNotice(`还没收到授权（${data.status}），在 GitHub 页面点绿色按钮后稍等一下`)
+            const waitSeconds = Math.ceil((Number(data.waitMs) || 0) / 1000)
+            const label = data.status === 'slow-down' ? 'GitHub 要求放慢轮询' : '还没收到授权'
+            setGhNotice(waitSeconds > 0 ? `${label}，${waitSeconds} 秒后可再检查` : `${label}，稍等再点，或等自动轮询`)
           }
         } catch (caught) {
           const message = caught.message || String(caught)
@@ -1299,6 +1301,11 @@ window.__ModuleLoader__.load({
             if (data.status === 'expired' || data.status === 'denied') {
               setDevice((previous) => (previous === null ? previous : { ...previous, status: data.status }))
               setGhNotice(data.status === 'expired' ? '设备码过期了，重新点一次登录' : '授权被拒绝')
+            } else if (data.status === 'slow-down') {
+              setDevice((previous) => (previous === null ? previous : { ...previous, interval: data.interval || previous.interval }))
+              setGhNotice('GitHub 要求放慢轮询，已自动延长检查间隔')
+            } else if (data.waitMs) {
+              setGhNotice(`等待授权中：还差 ${Math.ceil((Number(data.waitMs) || 0) / 1000)} 秒才查下一次`)
             }
           } catch (caught) {
             if (cancelled) return

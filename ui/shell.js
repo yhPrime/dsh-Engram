@@ -578,7 +578,12 @@ export async function handleRequest(req, res, source) {
       // 设备码登录：不需要用户先贴 token。
       if (action === 'device-start') {
         const flow = await startDeviceFlow({ clientId: readGitConfig().oauthClientId })
-        deviceSession = { deviceCode: flow.deviceCode, expiresAt: Date.now() + flow.expiresIn * 1000, interval: flow.interval }
+        deviceSession = {
+          deviceCode: flow.deviceCode,
+          expiresAt: Date.now() + flow.expiresIn * 1000,
+          interval: flow.interval,
+          nextPollAt: Date.now() + flow.interval * 1000,
+        }
         // 自动打开浏览器 + 自动复制验证码（都尽力而为，失败不阻断）。
         // 自动化验证时传 noOpen:true，避免抢用户的浏览器和剪贴板。
         const quiet = body && body.noOpen === true
@@ -602,7 +607,25 @@ export async function handleRequest(req, res, source) {
           deviceSession = null
           return json(res, 200, { ok: true, data: { status: 'expired' } })
         }
-        const polled = await pollDeviceFlow({ deviceCode: deviceSession.deviceCode, clientId: readGitConfig().oauthClientId })
+        // 节奏由 host 掌握：客户端点得再快，也不会提前打 GitHub（否则必吃 slow_down）
+        if (Date.now() < deviceSession.nextPollAt) {
+          return json(res, 200, {
+            ok: true,
+            data: {
+              status: 'pending',
+              interval: deviceSession.interval,
+              waitMs: Math.max(0, deviceSession.nextPollAt - Date.now()),
+            },
+          })
+        }
+        let polled
+        try {
+          polled = await pollDeviceFlow({ deviceCode: deviceSession.deviceCode, clientId: readGitConfig().oauthClientId })
+        } catch (error) {
+          if (deviceSession !== null) deviceSession.nextPollAt = Date.now() + deviceSession.interval * 1000
+          throw error
+        }
+        if (deviceSession !== null) deviceSession.nextPollAt = Date.now() + deviceSession.interval * 1000
         if (polled.status === 'authorized') {
           writeGitConfig({ token: polled.token })
           deviceSession = null
@@ -616,7 +639,10 @@ export async function handleRequest(req, res, source) {
           return json(res, 200, { ok: true, data: { status: 'authorized', user } })
         }
         if (polled.status === 'expired' || polled.status === 'denied') deviceSession = null
-        if (polled.status === 'slow-down' && deviceSession !== null) deviceSession.interval += 5
+        if (polled.status === 'slow-down' && deviceSession !== null) {
+          deviceSession.interval += 5
+          deviceSession.nextPollAt = Date.now() + deviceSession.interval * 1000
+        }
         return json(res, 200, { ok: true, data: { status: polled.status, interval: deviceSession === null ? 0 : deviceSession.interval } })
       }
       if (action === 'device-cancel') {
