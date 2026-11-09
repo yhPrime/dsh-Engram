@@ -301,7 +301,7 @@ window.__ModuleLoader__.load({
       }, [query, type, outcome]))
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
       const types = (props.state && props.state.types) || []
-      const rows = list.data && (list.data.rows || list.data.candidates || [])
+      const rows = (list.data && (list.data.rows || list.data.candidates)) || []
       const send = async (result) => {
         if (selected === null) return
         await request('/feedback', { method: 'POST', body: { id: selected, result } })
@@ -599,6 +599,24 @@ window.__ModuleLoader__.load({
       ['settings', '设置', 'gear'],
     ]
 
+    const PageBoundary = React.Component
+      ? class PageBoundary extends React.Component {
+          constructor(props) {
+            super(props)
+            this.state = { error: null }
+          }
+          static getDerivedStateFromError(error) {
+            return { error }
+          }
+          render() {
+            if (this.state.error !== null) {
+              return h('div', { className: 'eng-banner eng-banner-bad' }, `页面渲染出错：${this.state.error && this.state.error.message ? this.state.error.message : String(this.state.error)}`)
+            }
+            return this.props.children
+          }
+        }
+      : (props) => props.children
+
     function Console() {
       const [tab, setTab] = useState('overview')
       const [state, setState] = useState(null)
@@ -659,7 +677,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-content' },
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
-            content)))
+            h(PageBoundary, { key: tab }, content))))
     }
 
     return {
