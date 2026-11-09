@@ -61,6 +61,12 @@ export const SETTINGS_SPEC = {
   ui: [
     { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示' },
     { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根' },
+    { key: 'graphTheme', label: '关系图主题', type: 'enum', values: ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration'], labels: { personal: '个人记忆碎片', dream: '梦境记忆轨迹', knowledge: '知识概念关联', emotion: '情绪记忆链路', spacetime: '时空记忆时间线', collective: '集体共享记忆', inspiration: '灵感思绪蛛网' } },
+    { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' } },
+    { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭' },
+    { key: 'graphBloom', label: '泛光 bloom', type: 'boolean' },
+    { key: 'graphGlitch', label: '色散/毛刺', type: 'boolean' },
+    { key: 'graphDust', label: '浮尘数量', type: 'number', hint: '0~240' },
   ],
 }
 
@@ -310,8 +316,8 @@ export function buildGraph(source) {
   const edges = []
   const knownTypes = new Set()
   for (const type of types) {
-    nodes.push({ id: `type:${type.id}`, kind: 'type', label: type.name, count: type.count || 0, system: type.system === true })
-    edges.push({ source: 'root', target: `type:${type.id}`, kind: 'root' })
+    nodes.push({ id: `type:${type.id}`, kind: 'type', label: type.name, count: type.count || 0, weight: Math.min(1, 0.35 + (type.count || 0) / 12), system: type.system === true })
+    edges.push({ source: 'root', target: `type:${type.id}`, kind: 'root', strength: 0.3 + Math.min(0.4, (type.count || 0) / 30) })
     knownTypes.add(type.id)
   }
   const expIds = new Set()
@@ -322,17 +328,18 @@ export function buildGraph(source) {
       edges.push({ source: 'root', target: `type:${typeId}`, kind: 'root' })
       knownTypes.add(typeId)
     }
-    nodes.push({ id: `exp:${row.id}`, kind: 'experience', label: row.intent || row.action || row.id, action: row.action || '', outcome: row.outcome, G: row.G, typeId })
-    edges.push({ source: `type:${typeId}`, target: `exp:${row.id}`, kind: 'type' })
+    const lastSeen = Date.parse(String(row.lastSeenAt || row.ts || '')) || 0
+    nodes.push({ id: `exp:${row.id}`, kind: 'experience', label: row.intent || row.action || row.id, action: row.action || '', outcome: row.outcome, G: row.G, typeId, weight: Math.min(1, 0.3 + Math.abs(Number(row.G) || 0) * 0.35), recent: lastSeen > 0 && Date.now() - lastSeen < 7 * 24 * 3600 * 1000 })
+    edges.push({ source: `type:${typeId}`, target: `exp:${row.id}`, kind: 'type', strength: 0.25 + Math.min(0.5, Math.abs(Number(row.G) || 0) * 0.25) })
     expIds.add(row.id)
   }
   for (const skill of skills) {
     const id = String(skill.id || '')
-    nodes.push({ id: `skill:${id}`, kind: 'skill', label: skill.name, status: skill.status, uses: skill.uses || 0, helped: skill.helped || 0, hurt: skill.hurt || 0 })
+    nodes.push({ id: `skill:${id}`, kind: 'skill', label: skill.name, status: skill.status, uses: skill.uses || 0, helped: skill.helped || 0, hurt: skill.hurt || 0, weight: Math.min(1, 0.45 + (skill.uses || 0) / 12) })
     const derived = Array.isArray(skill.derivedFrom) ? skill.derivedFrom : []
     const linked = derived.filter((experienceId) => expIds.has(String(experienceId)))
-    for (const experienceId of linked) edges.push({ source: `exp:${experienceId}`, target: `skill:${id}`, kind: 'derived' })
-    if (linked.length === 0) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived' })
+    for (const experienceId of linked) edges.push({ source: `exp:${experienceId}`, target: `skill:${id}`, kind: 'derived', strength: 0.5 + Math.min(0.45, (skill.uses || 0) / 12) })
+    if (linked.length === 0) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
   }
   return {
     notice: String(read.notice || ''),
