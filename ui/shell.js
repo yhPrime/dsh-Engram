@@ -31,6 +31,7 @@ import fs from 'node:fs'
 import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
+import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
@@ -73,7 +74,7 @@ export const SETTINGS_SPEC = {
   git: [
     { key: 'repoUrl', label: '远端仓库', type: 'string', hint: 'https://… 或 git@host:path 或本机绝对路径', tip: '经验库会以这个仓库为备份目标。https 推公开/私有仓库都行；地址里不要写账号密码，token 填在下面。' },
     { key: 'branch', label: '分支', type: 'string', hint: '默认 main', tip: '推送到哪个分支；不存在会自动建。' },
-    { key: 'token', label: '访问 token', type: 'string', hint: '可选，仅 https 用；保存在本机 settings.json', tip: '给 https 远端用（GitHub 的 Personal Access Token）。它只存在本机 ~/.dsh/engram/settings.json，不会写进仓库；推送时通过 http.extraHeader 传入，失败信息里会打码。' },
+    { key: 'token', label: '访问 token（可选）', type: 'string', hint: '设备登录成功后自动填；也可手动贴 PAT', tip: '优先用上面的「用 GitHub 登录」（设备码，免 token）。这里只作后备：手动贴 GitHub PAT（classic 勾 repo），或设备登录后自动写入。它只存在本机 ~/.dsh/engram/settings.json，推送时走 http.extraHeader，错误信息里打码。' },
     { key: 'authorName', label: '提交作者名', type: 'string', hint: '留空用全局 git 身份', tip: '写进 commit 的作者名；留空就用你机器上的 git 全局配置。' },
     { key: 'authorEmail', label: '提交作者邮箱', type: 'string', hint: '留空用全局 git 身份', tip: '写进 commit 的邮箱；留空用全局 git 配置。' },
     { key: 'autoBackupMinutes', label: '自动备份间隔（分钟）', type: 'number', hint: '0 = 关闭；最小 15', tip: '开启后插件会按这个间隔自动 commit + push（没有改动就跳过）。0 表示只手动推送；最小 15 分钟，避免频繁推。' },
@@ -119,6 +120,9 @@ export function pluginVersion() {
 
 /** 客户端半最近一次回打（诊断用；每次插件重载清空）。 */
 let clientProbes = []
+
+/** 设备码登录的临时会话（只存在内存，不落盘；成功换到 token 才写 settings）。 */
+let deviceSession = null
 
 /** 同一 config 复用同一个 data source（mock 的反馈状态才不会每请求丢一次）。 */
 const sources = new Map()
@@ -535,6 +539,46 @@ export async function handleRequest(req, res, source) {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       const body = await readBody(req)
       const action = String((body && body.action) || 'login').trim().toLowerCase()
+      // 设备码登录：不需要用户先贴 token。
+      if (action === 'device-start') {
+        const flow = await startDeviceFlow({ clientId: readGitConfig().oauthClientId })
+        deviceSession = { deviceCode: flow.deviceCode, expiresAt: Date.now() + flow.expiresIn * 1000, interval: flow.interval }
+        return json(res, 200, {
+          ok: true,
+          data: {
+            userCode: flow.userCode,
+            verificationUri: flow.verificationUri,
+            expiresIn: flow.expiresIn,
+            interval: flow.interval,
+          },
+        })
+      }
+      if (action === 'device-poll') {
+        if (deviceSession === null) return fail(res, 400, 'github', '没有正在进行的登录：先点「用 GitHub 登录」')
+        if (Date.now() > deviceSession.expiresAt) {
+          deviceSession = null
+          return json(res, 200, { ok: true, data: { status: 'expired' } })
+        }
+        const polled = await pollDeviceFlow({ deviceCode: deviceSession.deviceCode, clientId: readGitConfig().oauthClientId })
+        if (polled.status === 'authorized') {
+          writeGitConfig({ token: polled.token })
+          deviceSession = null
+          let user = null
+          try {
+            user = await githubLogin(polled.token)
+          } catch {
+            user = null
+          }
+          return json(res, 200, { ok: true, data: { status: 'authorized', user } })
+        }
+        if (polled.status === 'expired' || polled.status === 'denied') deviceSession = null
+        if (polled.status === 'slow-down' && deviceSession !== null) deviceSession.interval += 5
+        return json(res, 200, { ok: true, data: { status: polled.status, interval: deviceSession === null ? 0 : deviceSession.interval } })
+      }
+      if (action === 'device-cancel') {
+        deviceSession = null
+        return json(res, 200, { ok: true, data: { status: 'cancelled' } })
+      }
       // 允许临时传 token（第一次登录），传了就顺手存下来，后面不用再贴。
       const provided = String((body && body.token) || '').trim()
       if (provided !== '') writeGitConfig({ token: provided })

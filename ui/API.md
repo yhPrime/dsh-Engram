@@ -413,9 +413,12 @@ body: `{ action: "init" | "push" | "pull" | "status", message? }`
 - 错误码：`bad-action`（未知动作）。
 
 ### `POST /github`
-body: `{ action: "login" | "repos" | "create" | "select", token?, name?, private?, repoUrl?, message? }`
+body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "device-poll" | "device-cancel", token?, name?, private?, repoUrl?, message? }`
 
-- `login` → `{ ok, login, name, avatarUrl }`（验证 token 是否有效）。
+- `device-start` → `{ userCode, verificationUri, expiresIn, interval }`：GitHub OAuth 设备码登录（免 token），用户去 `verificationUri` 输入 `userCode` 授权。
+- `device-poll` → `{ status: "pending" | "slow-down" | "authorized" | "expired" | "denied", interval?, user? }`；`authorized` 时 token 已写入设置，无需再传。
+- `device-cancel` → 清掉服务端临时会话。
+- `login` → `{ ok, login, name, avatarUrl }`（验证已保存/临时传入的 token）。
 - `repos` → `{ ok, total, repos: [{ fullName, name, private, defaultBranch, cloneUrl, sshUrl, htmlUrl, updatedAt, description }] }`（owner + collaborator，按最近推送排序，最多 100）。
 - `create` → `{ ok, action:"create", repo, init, sync }`：在 GitHub 建空仓库（`auto_init:false`），把 `repoUrl` 存进设置，然后 `git init` + 提交推送。
 - `select` → `{ ok, action:"select", repoUrl, init, sync }`：选中已有仓库，保存地址后初始化并推送。

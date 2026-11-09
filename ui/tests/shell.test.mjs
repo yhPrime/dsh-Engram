@@ -540,7 +540,11 @@ await check('GET /sync：未初始化也返回完整状态；未知动作 400', 
   assert.equal(bad.payload.error.code, 'bad-action')
 })
 
-await check('POST /github：没 token 时 400 + 可操作提示；未知动作 400', async () => {
+await check('POST /github：设备码没开始时轮询 400（不用 token）；没 token 登录 400；未知动作 400', async () => {
+  const deviceSource = createLiveSource({ dataDir: tempDir() })
+  const noSession = await call(deviceSource, '/github', { method: 'POST', body: { action: 'device-poll' } })
+  assert.equal(noSession.status, 400)
+  assert.match(noSession.payload.error.message, /没有正在进行的登录/)
   const source = createLiveSource({ dataDir: tempDir() })
   const noToken = await call(source, '/github', { method: 'POST', body: { action: 'login' } })
   assert.equal(noToken.status, 400)
