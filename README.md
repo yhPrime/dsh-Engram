@@ -5,7 +5,7 @@
 ## 结构
 
 ```
-kernel/   内核
+kernel/   内核（dsh-engram 0.32.0）
           - core.js   稳定 core 入口（kernel/retrieval/cluster/store/skills/tools）
           - engine.js createEngine({ dataDir }) 门面（独立宿主用这个）
           - store/kernel/retrieval/cluster/skills/tools
@@ -33,7 +33,7 @@ ui/       外壳（当前 dsh-exp-ui 0.4.0，已合并到主干，不再依赖�
 import { createEngine } from './kernel/engine.js'
 
 // 发布后（包名待定，先用子路径）
-import { createEngine } from 'dsh-exp-lib-provider/engine'
+import { createEngine } from 'dsh-engram/engine'
 
 const engine = createEngine({ dataDir: 'D:/proj/.exp' })
 engine.record({ intent, action, outcome, type, context, expectedG, skillId, blockedBy })
@@ -47,6 +47,12 @@ engine.validate()
 - 只要一个 `dataDir`，不需要 DSH 运行时、不注册 Provider；
 - 所有读写都经 engine，不要直接改 `.exp` 文件；
 - `core` 只含纯核心（零 DSH 依赖），`engine` 是门面；适配器入口 `index/plugin/provider` 依赖 DSH Provider SDK。
+
+## 当前状态（0.32.0）
+
+- 内核：M1–M4 完成，`core` 零 DSH 依赖，`engine` 可独立使用；包名 `dsh-engram`；
+- 外壳：`ui/` 0.4.0，live 数据源已走 `createEngine`（可写反馈、skills 走 engine），mock/live 同源；
+- kernel 328 项 / ui 58 项测试全绿；audit 无 FAIL；eval 过 G1。
 
 ## 约定
 

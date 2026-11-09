@@ -1,6 +1,6 @@
 # exp-ui 接口文档（v1）
 
-> 外显名 **exp-ui**，是经验库的**界面外壳**，与真实经验库（`exp-lib` / `dsh-exp-lib-provider`）分开命名。
+> 外显名 **exp-ui**，是经验库的**界面外壳**，与真实经验库（`exp-lib` / `dsh-engram`）分开命名。
 > 本包不带工具、不写真实数据：默认用内置示例数据把界面跑通；真实经验库接入时只换数据源，接口与返回形状不变。
 
 - Base URL：`/exp-ui/api`（前缀路由，挂在 DSH 的 `webServer` 上）
@@ -317,7 +317,7 @@
 
 ## 4. 接入真实经验库（后续步骤）
 
-1. 确认真实库文件：`<dataDir>/exp-lib.json`（`{ version, types[], experiences[] }`，与 `dsh-exp-lib-provider` 同结构）。
+1. 确认真实库文件：`<dataDir>/exp-lib.json`（`{ version, types[], experiences[] }`，与 `dsh-engram` 同结构）。
 2. 把插件行 config 改为：
 
 ```yaml

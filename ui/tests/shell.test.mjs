@@ -230,7 +230,7 @@ await check('参数是垃圾值时仍 200（limit=abc / offset=-1 / type 未知�
   assert.equal(payload.data.rows.length, 0)
 })
 
-await check('live：读真实库文件（只读），列表能出来', async () => {
+await check('live：读真实库文件并可反馈（走 engine）', async () => {
   const dir = tempDir()
   fs.writeFileSync(path.join(dir, 'exp-lib.json'), JSON.stringify({
     version: 1,
@@ -250,7 +250,7 @@ await check('live：读真实库文件（只读），列表能出来', async () 
   const source = createLiveSource({ dataDir: dir })
   const state = await call(source, '/state')
   assert.equal(state.payload.data.source.mode, 'live')
-  assert.equal(state.payload.data.source.readOnly, true)
+  assert.equal(state.payload.data.source.readOnly, false)
   assert.equal(state.payload.data.exists, true)
   assert.equal(state.payload.data.totals.visible, 1)
 
@@ -258,9 +258,9 @@ await check('live：读真实库文件（只读），列表能出来', async () 
   assert.equal(list.payload.data.rows.length, 1)
   assert.equal(list.payload.data.rows[0].intent, '真实的一条经验')
 
-  const feedback = await call(source, '/feedback', { method: 'POST', body: { id: 'ex_real_1', result: 'helped' } })
-  assert.equal(feedback.status, 409)
-  assert.equal(feedback.payload.error.code, 'read-only')
+  const feedback = await call(source, '/feedback', { method: 'POST', body: { id: 'ex_real_1', result: 'hurt' } })
+  assert.equal(feedback.status, 200)
+  assert.ok(feedback.payload.data.G_after < feedback.payload.data.G_before)
 })
 
 await check('live：文件不存在时 200 + 空库 + 说明，不报错', async () => {

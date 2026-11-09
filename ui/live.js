@@ -16,6 +16,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { codedError, emptyStore, skillRowOf } from './data-source.js'
+import { createEngine } from '../kernel/engine.js'
 
 /** 展开 `~`，返回绝对路径；空配置返回 ''。 */
 export function resolveLiveDataDir(config = {}) {
@@ -117,19 +118,55 @@ export function readSkills(dataDir) {
   return rows.sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)) || a.name.localeCompare(b.name, 'zh'))
 }
 
+/** 把 engine.listSkills() 的条目映射成界面 skillRow。 */
+function skillRowFromEngine(skill) {
+  const meta = skill.meta || {}
+  const confidence = meta.confidence && typeof meta.confidence === 'object' ? meta.confidence : {}
+  const obstacles = meta.obstacles && typeof meta.obstacles === 'object' ? meta.obstacles : {}
+  const obstacleValues = Object.values(obstacles)
+  let updatedAt = ''
+  try {
+    updatedAt = fs.statSync(path.join(skill.dir, 'SKILL.md')).mtime.toISOString()
+  } catch {
+    // 文件被移走：updatedAt 留空
+  }
+  return skillRowOf({
+    id: skill.slug,
+    name: skill.name,
+    description: skill.description,
+    body: skill.body,
+    typeName: meta.typeName || '',
+    context: meta.context,
+    triggers: meta.triggers,
+    uses: confidence.uses,
+    helped: confidence.helped,
+    hurt: confidence.hurt,
+    obstacleCount: obstacleValues.length,
+    openObstacles: obstacleValues.filter((entry) => entry && (Number(entry.streak) || 0) >= 3).length,
+    resolvedCount: Array.isArray(meta.resolved) ? meta.resolved.length : 0,
+    revisions: meta.revisions,
+    derivedFrom: meta.derivedFrom,
+    pendingCommit: meta.pendingCommit === true,
+    lastUsedAt: confidence.lastUsedAt || '',
+    updatedAt,
+    path: skill.dir,
+  })
+}
+
 /**
- * live data source。
+ * live data source（走 kernel engine，只经 engine 读写；可反馈）。
  * @param {{dataDir?: string}} config - 插件行 config。
  */
 export function createLiveSource(config = {}) {
   const dataDir = resolveLiveDataDir(config)
   const file = dataDir === '' ? '' : path.join(dataDir, 'exp-lib.json')
+  const engine = dataDir === '' ? null : createEngine({ dataDir })
 
   return {
     id: 'live',
     mode: 'live',
     label: '真实数据',
-    readOnly: true,
+    readOnly: false,
 
     read() {
       if (file === '') {
@@ -144,16 +181,17 @@ export function createLiveSource(config = {}) {
         }
       }
       try {
-        const stat = fs.statSync(file)
-        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+        const snapshot = engine.snapshot()
         return {
-          store: normalizeStore(parsed),
+          store: normalizeStore(snapshot.store),
           dataDir,
           file,
-          exists: true,
-          bytes: stat.size,
-          updatedAt: stat.mtime.toISOString(),
-          notice: '',
+          exists: snapshot.exists,
+          bytes: snapshot.bytes,
+          updatedAt: snapshot.updatedAt,
+          notice: snapshot.corrupt
+            ? `经验库文件读不了：${snapshot.parseError}；已按空库显示。`
+            : (snapshot.exists ? '' : `没有找到经验库文件：${file}（先跑一次 exp_record，或确认 dataDir 配置）`),
         }
       } catch (error) {
         const missing = Boolean(error && error.code === 'ENOENT')
@@ -193,11 +231,14 @@ export function createLiveSource(config = {}) {
     },
 
     skills() {
-      return readSkills(dataDir)
+      if (engine === null) return []
+      return engine.listSkills().map(skillRowFromEngine).sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)) || a.name.localeCompare(b.name, 'zh'))
     },
 
-    feedback() {
-      throw codedError('read-only', 'exp-ui 处于只读模式：接入真实经验库之前不改真实数据。')
+    feedback(id, result) {
+      if (engine === null) throw codedError('read-only', '没有 dataDir，无法反馈。')
+      const out = engine.feedback({ id: String(id), result: String(result) })
+      return { id: String(id), result: String(result), G_before: out.G_before, G_after: out.G_after, at: new Date().toISOString() }
     },
   }
 }
