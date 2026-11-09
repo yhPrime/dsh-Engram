@@ -1398,6 +1398,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ensureStyles()
         const disposers = []
+        const failures = []
         function PanelGlyph(props) {
           return h(EngramGlyph, { size: props && Number(props.size) > 0 ? Number(props.size) : 16 })
         }
@@ -1409,18 +1410,30 @@ window.__ModuleLoader__.load({
         }
         try {
           disposers.push(ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 45, label: () => TITLE }, PanelGlyph)))
-        } catch (error) { console.error('[engram] panellist registration failed', error) }
+        } catch (error) { failures.push(`panellist:${error && error.message ? error.message : String(error)}`); console.error('[engram] panellist registration failed', error) }
         try {
           disposers.push(ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, Console)))
-        } catch (error) { console.error('[engram] main panel registration failed', error) }
+        } catch (error) { failures.push(`main:${error && error.message ? error.message : String(error)}`); console.error('[engram] main panel registration failed', error) }
         try {
           disposers.push(ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE_NAME }, BundleCard)))
-        } catch (error) { console.error('[engram] bundle card registration failed', error) }
+        } catch (error) { failures.push(`card:${error && error.message ? error.message : String(error)}`); console.error('[engram] bundle card registration failed', error) }
         ctx.effect(() => () => {
           for (const dispose of disposers.reverse()) {
             try { dispose() } catch (error) { console.error('[engram] dispose failed', error) }
           }
         })
+        // 诊断回打：host 的 /health 会记下这次调用，用来确认「客户端半到底有没有加载」。
+        try {
+          const query = new URLSearchParams({
+            client: '1',
+            id: PACKAGE_NAME,
+            panels: String(disposers.length),
+            errors: failures.join('|').slice(0, 300),
+          })
+          fetch(`${API}/health?${query.toString()}`).catch(() => {})
+        } catch {
+          // 没有 fetch（测试环境）就跳过
+        }
       },
     }
   },

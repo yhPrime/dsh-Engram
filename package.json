@@ -7,7 +7,7 @@
   "exports": {
     ".": "./index.js",
     "./plugin": "./plugin.js",
-    "./client": "./ui/client.js",
+    "./client": "./client.js",
     "./icon": "./icon.svg",
     "./engine": "./kernel/engine.js",
     "./core": "./kernel/core.js",
@@ -30,7 +30,7 @@
     "kernel/*.js",
     "kernel/LICENSE",
     "kernel/THIRD-PARTY-NOTICES.md",
-    "ui/client.js",
+    "client.js",
     "ui/shell.js",
     "ui/live.js",
     "ui/mock.js",
