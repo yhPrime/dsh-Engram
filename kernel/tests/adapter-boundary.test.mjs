@@ -53,6 +53,13 @@ check('engine 不反向依赖适配器', () => {
   }
 })
 
+check('发布面：exports 有 ./core ./engine，files 收录两者', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(kernelDir, 'package.json'), 'utf8'))
+  assert.equal(pkg.exports['./core'], './core.js')
+  assert.equal(pkg.exports['./engine'], './engine.js')
+  for (const file of ['core.js', 'engine.js']) assert.ok(pkg.files.includes(file), `files 缺少 ${file}`)
+})
+
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)
