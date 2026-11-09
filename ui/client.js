@@ -609,7 +609,7 @@ window.__ModuleLoader__.load({
       steampunk: { bg: '#0a0604', bgInner: '#1a0f08', node: '#d9a441', node2: '#b85c2a', edge: '#8a4b22', highlight: '#ffb35c', warn: '#e8c07a', glow: '#ffb35c', dust: '#e0b07a', bloom: 14 },
       qingmo: { bg: '#060909', bgInner: '#0c1614', node: '#8fd6c9', node2: '#c85a4a', edge: '#5f9e93', highlight: '#c85a4a', warn: '#d9c7a7', glow: '#a7e8dd', dust: '#cfe8e0', bloom: 12 },
       minimal: { bg: '#020305', bgInner: '#0a1017', node: '#bfe9ff', node2: '#9fb3c8', edge: '#5c7c99', highlight: '#dff4ff', warn: '#d5dee8', glow: '#a8d8ff', dust: '#9fb3c8', bloom: 6 },
-      lava: { bg: '#080302', bgInner: '#1c0805', node: '#ff7a18', node2: '#ff2d2d', edge: '#8a2b12', highlight: '#ffc27a', warn: '#ffb347', glow: '#ff9a3c', dust: '#ffc27a', bloom: 24 },
+      lava: { bg: '#080302', bgInner: '#1c0805', node: '#ff7a18', node2: '#ff2d2d', edge: '#8a2b12', highlight: '#ffc27a', warn: '#ffb347', glow: '#ff9a3c', dust: '#ffc27a', bloom: 24, ringFill: 'rgba(8,3,2,.55)' },
     }
 
     function drawGraphShape(ctx, radius, theme) {
@@ -677,23 +677,25 @@ window.__ModuleLoader__.load({
       const local = getComputedStyle(canvas)
       const root = getComputedStyle(document.documentElement)
       const read = (name, fallback) => (local.getPropertyValue(name) || root.getPropertyValue(name) || '').trim() || fallback
-      const bg = read('--dsw-alias-bg-layer-1', '#0b0e14')
+      const bg = read('--dsw-alias-bg-layer-1', '#ffffff')
       const bgInner = read('--dsw-alias-bg-layer-2', bg)
-      const brand = read('--dsw-alias-brand-primary', '#4f7cff')
-      const secondary = read('--dsw-alias-label-secondary', '#8b93a7')
+      const rgb = bg.match(/\d+(\.\d+)?/g) || ['255', '255', '255']
+      const luminance = (Number(rgb[0]) * 0.299 + Number(rgb[1]) * 0.587 + Number(rgb[2]) * 0.114) / 255
+      const dark = luminance < 0.45
       return {
-        bg: bgInner === bg ? bg : bgInner,
+        bg: bgInner,
         bgInner: bg,
-        node: brand,
-        node2: secondary,
-        ok: read('--dsw-alias-success-primary', '#0f9d8a'),
-        bad: read('--dsw-alias-error-primary', '#d1435b'),
-        edge: read('--dsw-alias-border-l1', '#3a4150'),
-        highlight: brand,
-        warn: read('--dsw-alias-warning-primary', '#c08312'),
-        glow: brand,
-        dust: secondary,
-        bloom: 10,
+        node: dark ? '#38bdf8' : '#0369a1',
+        node2: dark ? '#e879f9' : '#9333ea',
+        ok: dark ? '#34d399' : '#0d9488',
+        warn: dark ? '#fbbf24' : '#b45309',
+        bad: dark ? '#fb7185' : '#dc2626',
+        edge: dark ? '#64748b' : '#94a3b8',
+        highlight: dark ? '#e879f9' : '#9333ea',
+        glow: dark ? '#38bdf8' : '#0ea5e9',
+        dust: dark ? '#94a3b8' : '#cbd5e1',
+        ringFill: dark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
+        bloom: dark ? 12 : 7,
       }
     }
 
@@ -748,9 +750,9 @@ window.__ModuleLoader__.load({
         }
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
-          if (node.kind === 'type') return 5 + Math.pow(w, 0.85) * 10
-          if (node.kind === 'skill') return 3 + Math.pow(w, 0.9) * 4.5
-          return 1.2 + Math.pow(w, 0.9) * 3.6
+          if (node.kind === 'type') return 4 + Math.pow(w, 0.85) * 7
+          if (node.kind === 'skill') return 4.5 + Math.pow(w, 0.9) * 5.5
+          return 1.1 + Math.pow(w, 0.9) * 3.2
         }
         const project = (entry, time) => {
           const wx = entry.x + Math.sin(time / 3200 + entry.phase) * 7
@@ -1005,13 +1007,21 @@ window.__ModuleLoader__.load({
               ctx.save()
               ctx.translate(entry.screenX + offsetX, entry.screenY + offsetY)
               ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
-              ctx.shadowBlur = bloom ? (4 + palette.bloom * 0.35 * entry.currentWeight) * nearFactor : 0
+              const isType = node.kind === 'type'
+              ctx.shadowBlur = bloom ? (3 + palette.bloom * 0.28 * entry.currentWeight) * nearFactor : 0
               ctx.shadowColor = color
-              ctx.fillStyle = color
-              ctx.strokeStyle = palette.highlight
-              ctx.lineWidth = isSelected ? 1.6 : 0.6
+              ctx.fillStyle = isType ? (palette.ringFill || 'rgba(255,255,255,.6)') : color
+              ctx.strokeStyle = isType ? color : palette.highlight
+              ctx.lineWidth = isType ? 1.7 : isSelected ? 1.6 : 0.6
               ctx.scale(breathing, breathing)
               drawGraphShape(ctx, screenRadius, theme)
+              if (node.kind === 'skill') {
+                ctx.beginPath()
+                ctx.arc(0, 0, screenRadius * 1.9, 0, Math.PI * 2)
+                ctx.strokeStyle = color
+                ctx.lineWidth = 0.9
+                ctx.stroke()
+              }
               ctx.restore()
             }
             paint(0, 0, 1)
