@@ -682,18 +682,18 @@ window.__ModuleLoader__.load({
       const rgb = bg.match(/\d+(\.\d+)?/g) || ['255', '255', '255']
       const luminance = (Number(rgb[0]) * 0.299 + Number(rgb[1]) * 0.587 + Number(rgb[2]) * 0.114) / 255
       const dark = luminance < 0.45
+      // 完全跟着 DSH 主题 token：品牌色、深标签、描边、弱化文字
+      const brand = read('--dsw-alias-brand-primary', dark ? '#38bdf8' : '#0369a1')
+      const deep = read('--dsw-alias-label-deep-diving', brand)
       return {
         bg: bgInner,
         bgInner: bg,
-        node: dark ? '#38bdf8' : '#0369a1',
-        node2: dark ? '#e879f9' : '#9333ea',
-        ok: dark ? '#34d399' : '#0d9488',
-        warn: dark ? '#fbbf24' : '#b45309',
-        bad: dark ? '#fb7185' : '#dc2626',
-        edge: dark ? '#64748b' : '#94a3b8',
-        highlight: dark ? '#e879f9' : '#9333ea',
-        glow: dark ? '#38bdf8' : '#0ea5e9',
-        dust: dark ? '#94a3b8' : '#cbd5e1',
+        node: brand,
+        node2: deep,
+        edge: read('--dsw-alias-border-l3', dark ? '#64748b' : '#94a3b8'),
+        highlight: brand,
+        glow: brand,
+        dust: read('--dsw-alias-label-dimmed', dark ? '#94a3b8' : '#cbd5e1'),
         ringFill: dark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
         dark,
         bloom: dark ? 12 : 7,
@@ -935,7 +935,10 @@ window.__ModuleLoader__.load({
         canvas.addEventListener('pointerdown', onPointerDown)
         canvas.addEventListener('wheel', onWheel, { passive: false })
         canvas.style.cursor = 'grab'
+        let frameCount = 0
         const draw = (now) => {
+          frameCount += 1
+          if (frameCount % 30 === 0 && paletteKey === 'dsh') palette = readDshGraphPalette(canvas)
           const dt = Math.min(0.05, (now - last) / 1000)
           last = now
           store.t += dt

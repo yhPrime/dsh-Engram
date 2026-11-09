@@ -21,7 +21,10 @@
 
 ## 当前发布
 
-- **v0.9.6**（内核 0.33.3 / 外壳 0.9.6）
+- **v0.9.7**（内核 0.33.3 / 外壳 0.9.7）
+  - 关系图颜色直接读取 DSH 主题 token（`--dsw-alias-brand-primary` / `label-deep-diving` / `border-l3` / `label-dimmed`），任何 DSH 主题（含昔涟粉）都跟随
+  - 每 30 帧刷新一次主题色，切换 DSH 主题不用重开面板
+- v0.9.6（内核 0.33.3 / 外壳 0.9.6）
   - 修复关系图 `Cannot access 'theme' before initialization` 崩溃
   - 节点颜色统一跟随 DSH 明/暗主题（亮色蓝、暗色青），切换 DSH 主题实时更新；图内 7 主题只改外形，不再改颜色
 - v0.9.5（内核 0.33.3 / 外壳 0.9.5）
