@@ -93,7 +93,9 @@ window.__ModuleLoader__.load({
 .eng-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
 .eng-tip:hover, .eng-tip:focus-visible { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); outline: none; }
 .eng-tip-bubble { display: none; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 30; width: max-content; max-width: 300px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 96%, transparent); color: var(--dsw-alias-label-primary); font-size: 11px; line-height: 1.55; box-shadow: 0 8px 24px rgba(0,0,0,.18); pointer-events: none; }
-.eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
+.eng-git-repo { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-git-repo:last-child { border-bottom: 0; }.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .eng-banner { margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .eng-banner-bad { border-color: color-mix(in srgb, var(--eng-bad) 40%, var(--dsw-alias-border-l1)); color: var(--eng-bad); }
 .eng-detail { padding: 16px; }
@@ -1228,6 +1230,37 @@ window.__ModuleLoader__.load({
       const [gitDraft, setGitDraft] = useState({})
       const [syncNotice, setSyncNotice] = useState('')
       const sync = useLoad(useCallback(() => request('/sync'), []))
+      const [ghUser, setGhUser] = useState(null)
+      const [ghRepos, setGhRepos] = useState(null)
+      const [ghNotice, setGhNotice] = useState('')
+      const [ghBusy, setGhBusy] = useState(false)
+      const [newRepoName, setNewRepoName] = useState('')
+      const [newRepoPrivate, setNewRepoPrivate] = useState(true)
+      const ghRun = async (action, body, label) => {
+        setGhBusy(true); setGhNotice('')
+        try {
+          const data = await request('/github', { method: 'POST', body: { action, ...body } })
+          if (action === 'login') {
+            setGhUser(data)
+            setGhNotice(`已登录：${data.login}`)
+          } else if (action === 'repos') {
+            setGhRepos(Array.isArray(data.repos) ? data.repos : [])
+            setGhNotice(`读到 ${data.repos ? data.repos.length : 0} 个仓库`)
+          } else {
+            const sync = data.sync || null
+            const init = data.init || null
+            await Promise.all([sync.reload(), settings.reload()])
+            if (sync && sync.ok) setGhNotice(`${label}：已提交并推送${sync.commit ? `（${sync.commit}）` : ''}`)
+            else if (sync) setGhNotice(`${label}：${sync.reason || '推送未完成'}`)
+            else setGhNotice(`${label}：${init && init.reason ? init.reason : '完成'}`)
+            if (action === 'create') setNewRepoName('')
+          }
+        } catch (caught) {
+          setGhNotice(caught.message || String(caught))
+        } finally {
+          setGhBusy(false)
+        }
+      }
       useEffect(() => {
         if (!settings.data) return
         setRootInput(settings.data.currentRoot || settings.data.dataDir || '')
@@ -1324,6 +1357,25 @@ window.__ModuleLoader__.load({
             h(Button, { disabled: busy, onClick: () => syncAction('pull', '拉取') }, '拉取')),
           syncNotice ? h(Banner, null, syncNotice) : null,
           sync.error ? h(Banner, { bad: true }, sync.error) : null,
+          h('div', { className: 'eng-label', style: { margin: '14px 0 8px' } }, 'GitHub 账号'),
+          h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
+            h(Button, { disabled: busy || ghBusy, onClick: () => ghRun('login', {}, '登录') }, ghUser ? `已登录：${ghUser.login}` : '登录 GitHub'),
+            h(Button, { disabled: busy || ghBusy, onClick: () => ghRun('repos', {}, '读取仓库') }, '加载我的仓库')),
+          ghNotice ? h(Banner, null, ghNotice) : null,
+          ghRepos === null ? null : h('div', { className: 'eng-git-repos' },
+            ghRepos.length === 0
+              ? h('div', { className: 'eng-muted', style: { padding: '10px 12px' } }, '这个账号还没有仓库，用下面的「新建仓库并推送」。')
+              : ghRepos.map((repo) => h('div', { key: repo.fullName, className: 'eng-git-repo' },
+                h('div', { className: 'eng-row-main' },
+                  h('div', { className: 'eng-row-intent' }, repo.fullName),
+                  h('div', { className: 'eng-row-sub' }, `${repo.private ? '私有' : '公开'} · ${repo.defaultBranch || 'main'} · ${fmtTime(repo.updatedAt)}`)),
+                h(Button, { small: true, disabled: busy || ghBusy, onClick: () => ghRun('select', { repoUrl: repo.cloneUrl }, `选中 ${repo.fullName}`) }, '用这个')))),
+          h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
+            h('input', { className: 'eng-input', style: { flex: '1 1 200px' }, placeholder: '新仓库名，例如 engram-backup', value: newRepoName, onChange: (event) => setNewRepoName(event.target.value) }),
+            h('label', { className: 'eng-actions', style: { fontWeight: 400 } },
+              h('input', { type: 'checkbox', checked: newRepoPrivate, onChange: (event) => setNewRepoPrivate(event.target.checked) }),
+              h('span', { className: 'eng-muted' }, newRepoPrivate ? '私有' : '公开')),
+            h(Button, { kind: 'primary', disabled: busy || ghBusy || newRepoName.trim() === '', onClick: () => ghRun('create', { name: newRepoName.trim(), private: newRepoPrivate }, '新建并推送') }, '新建仓库并推送')),
           h('dl', { className: 'eng-kv' },
             h('dt', null, '仓库'), h('dd', null, sync.data ? (sync.data.isRepo ? '已初始化' : '未初始化（点「初始化仓库」）') : '读取中…'),
             h('dt', null, '分支'), h('dd', { className: 'eng-mono' }, sync.data && sync.data.branch ? sync.data.branch : (sync.data && sync.data.targetBranch) || '—'),

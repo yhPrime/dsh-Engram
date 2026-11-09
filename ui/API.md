@@ -412,6 +412,17 @@ body: `{ action: "init" | "push" | "pull" | "status", message? }`
 - 返回 `{ ok, action, committed?, pushed?, commit?, reason? }`；失败不抛 500，用 `ok:false + reason` 表达。
 - 错误码：`bad-action`（未知动作）。
 
+### `POST /github`
+body: `{ action: "login" | "repos" | "create" | "select", token?, name?, private?, repoUrl?, message? }`
+
+- `login` → `{ ok, login, name, avatarUrl }`（验证 token 是否有效）。
+- `repos` → `{ ok, total, repos: [{ fullName, name, private, defaultBranch, cloneUrl, sshUrl, htmlUrl, updatedAt, description }] }`（owner + collaborator，按最近推送排序，最多 100）。
+- `create` → `{ ok, action:"create", repo, init, sync }`：在 GitHub 建空仓库（`auto_init:false`），把 `repoUrl` 存进设置，然后 `git init` + 提交推送。
+- `select` → `{ ok, action:"select", repoUrl, init, sync }`：选中已有仓库，保存地址后初始化并推送。
+
+`token` 可以随请求临时传入（第一次登录时），传了就顺手写进设置的 `git.token`，之后不用再贴。
+错误码：`bad-action`（未知动作）、`repo-required`（select 缺 repoUrl）、`github`（GitHub 返回的错误 / 没 token / 仓库名校验）。
+
 > Git 备份配置在 `~/.dsh/engram/settings.json` 的 `git` 键：`repoUrl` / `branch` / `token` / `authorName` / `authorEmail` / `autoBackupMinutes`。
 > `token` 只用于 https 的 `http.extraHeader`，不会写进仓库、也不会出现在错误信息里（已打码）。
 

@@ -540,6 +540,18 @@ await check('GET /sync：未初始化也返回完整状态；未知动作 400', 
   assert.equal(bad.payload.error.code, 'bad-action')
 })
 
+await check('POST /github：没 token 时 400 + 可操作提示；未知动作 400', async () => {
+  const source = createLiveSource({ dataDir: tempDir() })
+  const noToken = await call(source, '/github', { method: 'POST', body: { action: 'login' } })
+  assert.equal(noToken.status, 400)
+  assert.equal(noToken.payload.ok, false)
+  assert.equal(noToken.payload.error.code, 'github')
+  assert.match(noToken.payload.error.message, /先填访问 token/)
+  const bad = await call(source, '/github', { method: 'POST', body: { action: 'nope' } })
+  assert.equal(bad.status, 400)
+  assert.equal(bad.payload.error.code, 'bad-action')
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
 

@@ -30,6 +30,7 @@ import fs from 'node:fs'
 
 import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
+import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
@@ -529,6 +530,37 @@ export async function handleRequest(req, res, source) {
       if (action === 'init') return json(res, 200, { ok: true, data: await gitInit(dataDir, config) })
       if (action === 'pull') return json(res, 200, { ok: true, data: await gitPull(dataDir, config) })
       return json(res, 200, { ok: true, data: await gitPush(dataDir, config, { message: body && body.message }) })
+    }
+    if (route === '/github') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const action = String((body && body.action) || 'login').trim().toLowerCase()
+      // 允许临时传 token（第一次登录），传了就顺手存下来，后面不用再贴。
+      const provided = String((body && body.token) || '').trim()
+      if (provided !== '') writeGitConfig({ token: provided })
+      const git = readGitConfig()
+      const token = provided !== '' ? provided : git.token
+      if (!['login', 'repos', 'create', 'select'].includes(action)) return fail(res, 400, 'bad-action', `未知动作：${action}`)
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      if (action === 'login') return json(res, 200, { ok: true, data: await githubLogin(token) })
+      if (action === 'repos') return json(res, 200, { ok: true, data: await githubRepos(token) })
+      if (action === 'create') {
+        const created = await githubCreateRepo(token, { name: body && body.name, private: body ? body.private !== false : true })
+        writeGitConfig({ repoUrl: created.repo.cloneUrl, branch: created.repo.defaultBranch || git.branch })
+        const nextConfig = readGitConfig()
+        const init = await gitInit(dataDir, nextConfig)
+        if (!init.ok) return json(res, 200, { ok: true, data: { action: 'create', repo: created.repo, init, sync: null } })
+        const sync = await gitPush(dataDir, nextConfig, { message: body && body.message })
+        return json(res, 200, { ok: true, data: { action: 'create', repo: created.repo, init, sync } })
+      }
+      // select：选中已有仓库 → 存地址 + 初始化 + 推送
+      const repoUrl = String((body && body.repoUrl) || '').trim()
+      if (repoUrl === '') return fail(res, 400, 'repo-required', '缺少 repoUrl')
+      writeGitConfig({ repoUrl })
+      const nextConfig = readGitConfig()
+      const init = await gitInit(dataDir, nextConfig)
+      const sync = init.ok ? await gitPush(dataDir, nextConfig, { message: body && body.message }) : null
+      return json(res, 200, { ok: true, data: { action: 'select', repoUrl, init, sync } })
     }
     if (route === '/feedback') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
