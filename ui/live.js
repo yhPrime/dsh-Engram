@@ -1,0 +1,203 @@
+/**
+ * exp-ui — live data source（只读）。
+ *
+ * 「等 UI 外壳测试成功直接接入」的那一半：只要把 config 从
+ * `source: mock` 改成 `source: live` 并给 `dataDir`，界面就读真实经验库文件
+ * `<dataDir>/exp-lib.json`（与 dsh-exp-lib-provider 同一种结构），用同一套渲染。
+ *
+ * 为什么只读：真实经验库的写入语义（upsert/取代/退休/反馈重放）在正式引擎里，
+ * 外壳不复制一份写逻辑。反馈按钮在 live 模式下禁用，返回 `read-only`。
+ *
+ * 读不到 / 读坏了都不抛：返回空库 + notice，界面照常显示。
+ */
+
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+import { codedError, emptyStore, skillRowOf } from './data-source.js'
+
+/** 展开 `~`，返回绝对路径；空配置返回 ''。 */
+export function resolveLiveDataDir(config = {}) {
+  const raw = String(config && config.dataDir ? config.dataDir : '').trim()
+  if (raw === '') return ''
+  return path.resolve(raw.replace(/^~(?=$|[\\/])/, os.homedir()))
+}
+
+/** 容错：文件里的对象只取需要的字段，缺什么补什么。 */
+function normalizeStore(parsed) {
+  const raw = parsed !== null && typeof parsed === 'object' ? parsed : {}
+  return {
+    version: Number(raw.version) || 1,
+    types: Array.isArray(raw.types) ? raw.types.filter((item) => item && typeof item === 'object') : [],
+    experiences: Array.isArray(raw.experiences) ? raw.experiences.filter((item) => item && typeof item === 'object') : [],
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 固化技能：<dataDir>/skills/<slug>/（SKILL.md + skill.json）                   */
+/* -------------------------------------------------------------------------- */
+
+function parseFrontmatter(text) {
+  const lines = String(text || '').split(/\r?\n/)
+  if (lines[0] !== '---') return { fields: {}, body: String(text || '') }
+  const fields = {}
+  let idx = 1
+  for (; idx < lines.length; idx += 1) {
+    if (lines[idx] === '---') break
+    const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(lines[idx])
+    if (match) fields[match[1]] = match[2].trim()
+  }
+  return { fields, body: lines.slice(idx + 1).join('\n').replace(/^\n+/, '') }
+}
+
+/** 读一个技能目录；没有 SKILL.md 就不算技能。 */
+function readSkillRow(dir) {
+  const skillFile = path.join(dir, 'SKILL.md')
+  let parsed = { fields: {}, body: '' }
+  let updatedAt = ''
+  try {
+    parsed = parseFrontmatter(fs.readFileSync(skillFile, 'utf8'))
+    updatedAt = fs.statSync(skillFile).mtime.toISOString()
+  } catch {
+    return null
+  }
+  let meta = {}
+  try {
+    meta = JSON.parse(fs.readFileSync(path.join(dir, 'skill.json'), 'utf8'))
+  } catch {
+    meta = {}
+  }
+  const confidence = meta !== null && typeof meta === 'object' && meta.confidence && typeof meta.confidence === 'object' ? meta.confidence : {}
+  const obstacles = meta !== null && typeof meta === 'object' && meta.obstacles && typeof meta.obstacles === 'object' ? meta.obstacles : {}
+  const obstacleValues = Object.values(obstacles)
+  const openObstacles = obstacleValues.filter((entry) => entry && (Number(entry.streak) || 0) >= 3).length
+  const resolved = meta !== null && typeof meta === 'object' && Array.isArray(meta.resolved) ? meta.resolved : []
+  const derivedFrom = meta !== null && typeof meta === 'object' && Array.isArray(meta.derivedFrom) ? meta.derivedFrom : []
+  const slug = path.basename(dir)
+  return skillRowOf({
+    id: slug,
+    name: parsed.fields.name || slug,
+    description: parsed.fields.description || '',
+    body: parsed.body || '',
+    typeName: meta !== null && typeof meta === 'object' && meta.typeName ? meta.typeName : '',
+    context: meta !== null && typeof meta === 'object' ? meta.context : [],
+    triggers: meta !== null && typeof meta === 'object' ? meta.triggers : [],
+    uses: confidence.uses,
+    helped: confidence.helped,
+    hurt: confidence.hurt,
+    obstacleCount: obstacleValues.length,
+    openObstacles,
+    resolvedCount: resolved.length,
+    revisions: meta !== null && typeof meta === 'object' ? meta.revisions : 0,
+    derivedFrom,
+    pendingCommit: meta !== null && typeof meta === 'object' && meta.pendingCommit === true,
+    lastUsedAt: confidence.lastUsedAt || '',
+    updatedAt,
+    path: dir,
+  })
+}
+
+/** 扫 `<dataDir>/skills/*`；目录不存在 / 读坏都返回空数组。 */
+export function readSkills(dataDir) {
+  if (String(dataDir || '') === '') return []
+  const root = path.join(String(dataDir), 'skills')
+  let entries = []
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const rows = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const row = readSkillRow(path.join(root, entry.name))
+    if (row !== null) rows.push(row)
+  }
+  return rows.sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)) || a.name.localeCompare(b.name, 'zh'))
+}
+
+/**
+ * live data source。
+ * @param {{dataDir?: string}} config - 插件行 config。
+ */
+export function createLiveSource(config = {}) {
+  const dataDir = resolveLiveDataDir(config)
+  const file = dataDir === '' ? '' : path.join(dataDir, 'exp-lib.json')
+
+  return {
+    id: 'live',
+    mode: 'live',
+    label: '真实数据',
+    readOnly: true,
+
+    read() {
+      if (file === '') {
+        return {
+          store: emptyStore(),
+          dataDir: '',
+          file: '',
+          exists: false,
+          bytes: 0,
+          updatedAt: '',
+          notice: 'exp-ui 还没接入真实经验库：config.dataDir 未设置，当前按空库显示。',
+        }
+      }
+      try {
+        const stat = fs.statSync(file)
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+        return {
+          store: normalizeStore(parsed),
+          dataDir,
+          file,
+          exists: true,
+          bytes: stat.size,
+          updatedAt: stat.mtime.toISOString(),
+          notice: '',
+        }
+      } catch (error) {
+        const missing = Boolean(error && error.code === 'ENOENT')
+        return {
+          store: emptyStore(),
+          dataDir,
+          file,
+          exists: false,
+          bytes: 0,
+          updatedAt: '',
+          notice: missing
+            ? `没有找到经验库文件：${file}（先跑一次 exp_record，或确认 dataDir 配置）`
+            : `经验库文件读不了：${String((error && error.message) || error)}；已按空库显示。`,
+        }
+      }
+    },
+
+    usageRows(limit) {
+      const size = Math.max(1, Math.min(500, Math.trunc(Number(limit) || 100)))
+      if (dataDir === '') return []
+      const rows = []
+      for (const name of ['usage.jsonl.1', 'usage.jsonl']) {
+        try {
+          const lines = fs.readFileSync(path.join(dataDir, name), 'utf8').split('\n').filter((line) => line.trim() !== '')
+          for (const line of lines) {
+            try {
+              rows.push(JSON.parse(line))
+            } catch {
+              // 跳过损坏行：一行坏掉不影响统计。
+            }
+          }
+        } catch {
+          // 文件不存在就跳过。
+        }
+      }
+      return rows.slice(-size)
+    },
+
+    skills() {
+      return readSkills(dataDir)
+    },
+
+    feedback() {
+      throw codedError('read-only', 'exp-ui 处于只读模式：接入真实经验库之前不改真实数据。')
+    },
+  }
+}

@@ -1,0 +1,751 @@
+/**
+ * 技能沉淀（0.29.0）：`.exp/skills/` 下每技能一个文件夹。
+ *
+ * - `SKILL.md`：标准技能模板（name/description + 正文），可直接注册；
+ * - `skill.json`：引擎账本（confidence/obstacles/resolved/derivedFrom/pendingCommit）；
+ * - 仓库根在 `.exp`（`.exp/.git`），引擎只提交 `skills/` 路径；
+ * - 事件按「障碍签名」独立记录：干净成功给每个活跃签名各记 clean；
+ *   同一签名连续 3 次 → 覆盖技能并归档，之后复发从 1 重新累计。
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
+
+import { abstractState, stateSimilarity } from './kernel.js'
+
+export const SKILLS_DIRNAME = 'skills'
+export const SKILL_FILENAME = 'SKILL.md'
+export const META_FILENAME = 'skill.json'
+export const EXCEPTION_LIMIT = 5
+export const RESOLVED_LIMIT = 20
+export const EVENTS_LIMIT = 10
+export const MATCH_MIN_SIMILARITY = 0.12
+export const MATCH_AMBIGUITY_MARGIN = 0.15
+export const CONFIDENT_MIN_USES = 3
+export const CONFIDENT_MIN_RATIO = 0.8
+
+const GIT_IDENTITY = ['-c', 'user.name=dsh-exp-lib', '-c', 'user.email=exp-lib@local']
+
+export function skillsRootOf(dataDir) {
+  return path.join(String(dataDir || ''), SKILLS_DIRNAME)
+}
+
+const RESERVED_SLUG = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+
+/** slug 只允许字母/数字/中文/短横；拒绝穿越、保留名、尾点尾空格。 */
+export function assertSafeSlug(value) {
+  const slug = String(value || '')
+  if (slug === '' || slug.length > 64) throw new Error('技能 slug 为空或超过 64 字符')
+  if (!/^[a-z0-9\u4e00-\u9fa5][a-z0-9\u4e00-\u9fa5-]*$/i.test(slug)) throw new Error(`技能 slug 非法：${slug}`)
+  if (slug.includes('..')) throw new Error(`技能 slug 不能包含 ..：${slug}`)
+  if (RESERVED_SLUG.test(slug)) throw new Error(`技能 slug 不能是 Windows 保留名：${slug}`)
+  if (/[. ]$/.test(slug)) throw new Error(`技能 slug 不能以点或空格结尾：${slug}`)
+  return slug
+}
+
+/** 在 skillsRoot 内解析技能目录；越界或符号链接直接拒绝。 */
+export function skillDirOf(dataDir, slug) {
+  const safe = assertSafeSlug(slug)
+  const root = path.resolve(skillsRootOf(dataDir))
+  const dir = path.resolve(root, safe)
+  const rel = path.relative(root, dir)
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`技能路径越界：${slug}`)
+  try {
+    if (fs.lstatSync(dir).isSymbolicLink()) throw new Error(`技能目录不能是符号链接：${slug}`)
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+  // Windows junction 的 lstat 不是 symlink：用 realpath 再确认没有跳出 skillsRoot。
+  try {
+    const realpath = fs.realpathSync.native || fs.realpathSync
+    const rootReal = realpath(root)
+    const dirReal = realpath(dir)
+    const realRel = path.relative(rootReal, dirReal)
+    if (realRel === '' || realRel.startsWith('..') || path.isAbsolute(realRel)) {
+      throw new Error(`技能目录越界（realpath）：${slug}`)
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+  return dir
+}
+
+export function slugify(text) {
+  const slug = String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+  return slug === '' ? `skill-${Date.now().toString(36)}` : slug
+}
+
+/** 错误文本归一化：去路径/时间戳/行号，保留错误码与关键 token。 */
+export function normalizeSignature(text) {
+  let out = String(text || '').split(/\r?\n/)[0]
+  out = out.toLowerCase()
+  out = out.replace(/[a-z]:\\[^\s]+/g, ' ')
+  out = out.replace(/\\\\[^\s]+/g, ' ')
+  out = out.replace(/\d{4}-\d{2}-\d{2}[t ][\d:.]+z?/g, ' ')
+  // 只去掉「行号」类数字，保留错误码/版本号（err-1、PS 5.1）。
+  out = out.replace(/(?:line|行|第)\s*\d+(?:\s*行)?/gi, ' ')
+  out = out.replace(/:\d+:\d+/g, ' ')
+  out = out.replace(/\s+/g, ' ').trim()
+  return out === '' ? 'obstacle' : out.slice(0, 80)
+}
+
+export function summarizeSignature(text) {
+  const line = String(text || '').split(/\r?\n/)[0].replace(/\s+/g, ' ').trim()
+  return line === '' ? '未命名障碍' : line.slice(0, 60)
+}
+
+/* -------------------------------------------------------------------------- */
+/* 文件读写                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+export function writeFileAtomic(file, content) {
+  const dir = path.dirname(file)
+  fs.mkdirSync(dir, { recursive: true })
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+  try {
+    fs.writeFileSync(tmp, content, 'utf8')
+    fs.renameSync(tmp, file)
+  } catch (error) {
+    try { fs.unlinkSync(tmp) } catch { /* 清理失败不掩盖原错误 */ }
+    throw error
+  }
+}
+
+function writeJsonFile(file, value) {
+  writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`)
+}
+
+function parseFrontmatter(text) {
+  const lines = String(text || '').split(/\r?\n/)
+  if (lines[0] !== '---') return { fields: {}, body: lines.join('\n') }
+  const fields = {}
+  let idx = 1
+  for (; idx < lines.length; idx += 1) {
+    const line = lines[idx]
+    if (line === '---') break
+    const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line)
+    if (match) fields[match[1]] = match[2].trim()
+  }
+  return { fields, body: lines.slice(idx + 1).join('\n').replace(/^\n+/, '') }
+}
+
+function oneLine(value) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim()
+}
+
+function renderSkillMd(name, description, body) {
+  return `---\nname: ${oneLine(name)}\ndescription: ${oneLine(description)}\n---\n\n${String(body || '').trim()}\n`
+}
+
+function defaultMeta(id) {
+  return {
+    id,
+    typeName: '',
+    context: [],
+    triggers: [],
+    confidence: { uses: 0, helped: 0, hurt: 0, lastUsedAt: null },
+    revisions: 0,
+    obstacles: {},
+    resolved: [],
+    derivedFrom: [],
+    pendingCommit: false,
+  }
+}
+
+function normalizeMeta(raw, id) {
+  const meta = { ...defaultMeta(id), ...(raw && typeof raw === 'object' ? raw : {}) }
+  meta.confidence = { uses: 0, helped: 0, hurt: 0, lastUsedAt: null, ...(raw && raw.confidence) }
+  meta.obstacles = raw && raw.obstacles && typeof raw.obstacles === 'object' ? raw.obstacles : {}
+  meta.resolved = Array.isArray(raw && raw.resolved) ? raw.resolved.slice(-RESOLVED_LIMIT) : []
+  meta.derivedFrom = Array.isArray(raw && raw.derivedFrom) ? raw.derivedFrom : []
+  meta.triggers = Array.isArray(raw && raw.triggers) ? raw.triggers : []
+  meta.context = Array.isArray(raw && raw.context) ? raw.context : []
+  return meta
+}
+
+/** 从同族经验归纳出技能草稿：≥minSamples 条、≥2 正 ≥1 负、抽共同词与反例。 */
+export function deriveSkillDraft(candidates, options = {}) {
+  const intent = String(options.intent || '').trim()
+  const minSamples = Math.max(2, Math.trunc(Number(options.minSamples) || 3))
+  const rows = []
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    for (const evidence of candidate.evidence || []) {
+      if (!rows.some((row) => row.id === evidence.id)) rows.push(evidence)
+    }
+  }
+  const groups = new Map()
+  for (const row of rows) {
+    const key = String(row.typeName || '未分类')
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(row)
+  }
+  let best = null
+  for (const [typeName, list] of groups) {
+    if (best === null || list.length > best.list.length) best = { typeName, list }
+  }
+  if (best === null || best.list.length < minSamples) return null
+  const positives = best.list.filter((row) => (Number(row.G) || 0) > 0)
+  const negatives = best.list.filter((row) => (Number(row.G) || 0) < 0)
+  if (positives.length < 2 || negatives.length === 0) return null
+  const tokenFreq = (subset) => {
+    const freq = new Map()
+    for (const row of subset) {
+      // 动作词优先：意图里通常只有「PPT/插页」这类主题词，抽进「做法」会把规则写空。
+      let state = abstractState(String(row.action || ''))
+      let tokens = new Set([...(state.tokens || []).filter((token) => String(token).length >= 2), ...(state.cgrams || [])])
+      if (tokens.size === 0) {
+        state = abstractState(`${row.intent || ''} ${row.action || ''}`)
+        tokens = new Set([...(state.tokens || []).filter((token) => String(token).length >= 2), ...(state.cgrams || [])])
+      }
+      for (const token of tokens) if (String(token).length >= 2) freq.set(token, (freq.get(token) || 0) + 1)
+    }
+    return freq
+  }
+  const posFreq = tokenFreq(positives)
+  const negFreq = tokenFreq(negatives)
+  const need = Math.max(2, Math.ceil(positives.length * 0.6))
+  const shared = [...posFreq.entries()].filter(([, count]) => count >= need).map(([token]) => token)
+  const avoid = [...negFreq.keys()].filter((token) => !shared.includes(token))
+  if (shared.length === 0 && avoid.length === 0) return null
+  const label = options.name || `${best.typeName}：${shared[0] || avoid[0] || '经验'}`
+  const positiveActions = [...new Set(positives.map((row) => String(row.action || '').trim()).filter(Boolean))].slice(0, 3)
+  const negativeActions = [...new Set(negatives.map((row) => String(row.action || '').trim()).filter(Boolean))].slice(0, 3)
+  const procedure = positiveActions.length > 0
+    ? positiveActions.map((action) => `- 优先：${action.slice(0, 80)}`).join('\n')
+    : '- （按经验做法执行）'
+  const avoidLines = negativeActions.length > 0
+    ? negativeActions.map((action) => `- 避免：${action.slice(0, 80)}`).join('\n')
+    : '- （暂无明确反例）'
+  return {
+    slug: slugify(label),
+    name: label.slice(0, 48),
+    description: (intent || label).slice(0, 120),
+    typeName: best.typeName,
+    context: Array.isArray(options.context) ? options.context : [],
+    triggers: [...shared, ...avoid].slice(0, 8),
+    derivedFrom: best.list.map((row) => row.id),
+    body: `# 何时用\n${intent || label}\n\n## 做法\n${procedure}\n\n## 避免\n${avoidLines}\n\n## 常见例外\n`,
+  }
+}
+
+/** 读一个技能目录；缺 SKILL.md 返回 null，损坏的 skill.json 用默认值兜底。 */
+export function readSkill(dir) {
+  try {
+    if (fs.lstatSync(dir).isSymbolicLink()) return null
+  } catch {
+    return null
+  }
+  const skillFile = path.join(dir, SKILL_FILENAME)
+  if (!fs.existsSync(skillFile)) return null
+  const { fields, body } = parseFrontmatter(fs.readFileSync(skillFile, 'utf8'))
+  const slug = path.basename(dir)
+  const meta = normalizeMeta(readJsonFile(path.join(dir, META_FILENAME)), slug)
+  return {
+    slug,
+    dir,
+    name: fields.name && fields.name !== '' ? fields.name : slug,
+    description: fields.description || '',
+    body,
+    meta,
+  }
+}
+
+export function readSkillBySlug(dataDir, slug) {
+  try {
+    return readSkill(skillDirOf(dataDir, slug))
+  } catch {
+    return null
+  }
+}
+
+export function listSkills(dataDir) {
+  const root = skillsRootOf(dataDir)
+  if (!fs.existsSync(root)) return []
+  const skills = []
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    let dir
+    try {
+      dir = skillDirOf(dataDir, entry.name)
+    } catch {
+      continue
+    }
+    const skill = readSkill(dir)
+    if (skill !== null) skills.push(skill)
+  }
+  return skills.sort((left, right) => (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0))
+}
+
+/** 写技能目录（SKILL.md + skill.json）。 */
+export function writeSkill(dir, draft, meta) {
+  fs.mkdirSync(dir, { recursive: true })
+  writeFileAtomic(path.join(dir, SKILL_FILENAME), renderSkillMd(draft.name, draft.description, draft.body))
+  writeJsonFile(path.join(dir, META_FILENAME), meta)
+}
+
+/* -------------------------------------------------------------------------- */
+/* git                                                                        */
+/* -------------------------------------------------------------------------- */
+
+function gitRun(cwd, args) {
+  return execFileSync('git', ['-C', cwd, ...args], {
+    encoding: 'utf8',
+    stdio: 'ignore',
+    timeout: 15000,
+    windowsHide: true,
+  })
+}
+
+export function ensureSkillsRepo(dataDir) {
+  const root = skillsRootOf(dataDir)
+  fs.mkdirSync(root, { recursive: true })
+  const attributes = path.join(root, '.gitattributes')
+  if (!fs.existsSync(attributes)) fs.writeFileSync(attributes, '* text=auto eol=lf\n', 'utf8')
+  if (!fs.existsSync(path.join(dataDir, '.git'))) {
+    gitRun(dataDir, ['init'])
+  }
+}
+
+/** 提交 skills/ 路径；失败返回 false（写入仍然保留，调用方记 pendingCommit）。 */
+function skillWarningFor(skill, intent) {
+  if (!skill) return null
+  const text = [skill.name, skill.description, ...(skill.meta.triggers || []), ...(skill.meta.context || [])].join(' ')
+  const similarity = stateSimilarity(abstractState(String(intent || '')), abstractState(text))
+  return similarity < 0.12
+    ? `skillId 与 intent 的相似度只有 ${Math.round(similarity * 100) / 100}，确认没有写错技能（账本已按该 id 更新）。`
+    : null
+}
+
+function withSkillLock(dataDir, slug, fn, options = {}) {
+  const lockDir = path.join(String(dataDir || ''), '.locks')
+  fs.mkdirSync(lockDir, { recursive: true })
+  const lockFile = path.join(lockDir, `${slug}.lock`)
+  const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 2000
+  const staleMs = Number.isFinite(Number(options.staleMs)) ? Number(options.staleMs) : 5000
+  const deadline = Date.now() + timeoutMs
+  let fd = null
+  while (fd === null) {
+    try {
+      fd = fs.openSync(lockFile, 'wx')
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      try {
+        const stat = fs.statSync(lockFile)
+        if (Date.now() - stat.mtimeMs > staleMs) {
+          fs.unlinkSync(lockFile)
+          continue
+        }
+      } catch {
+        // 锁刚被释放：重试
+      }
+      if (Date.now() > deadline) return { busy: true }
+      sleepSync(20)
+    }
+  }
+  try {
+    fs.writeSync(fd, `${process.pid} ${Date.now()}`)
+  } finally {
+    try { fs.closeSync(fd) } catch { /* 忽略 */ }
+  }
+  try {
+    return { value: fn() }
+  } finally {
+    try { fs.unlinkSync(lockFile) } catch { /* 锁已不存在也正常 */ }
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+export function commitSkills(dataDir, message) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      ensureSkillsRepo(dataDir)
+      gitRun(dataDir, ['add', '--', SKILLS_DIRNAME])
+      // 只提交 skills/ 路径：用户已 staged 的其它文件不能被顺带提交。
+      gitRun(dataDir, [...GIT_IDENTITY, 'commit', '-m', message, '--', SKILLS_DIRNAME])
+      return true
+    } catch {
+      if (attempt < 2) sleepSync(50 * (attempt + 1))
+    }
+  }
+  return false
+}
+
+/* -------------------------------------------------------------------------- */
+/* 创建                                                                       */
+/* -------------------------------------------------------------------------- */
+
+function defaultBody(draft) {
+  return `# 何时用\n${draft.description || draft.name}\n\n## 做法\n${draft.procedure || '- （待补充）'}\n\n## 常见例外\n`
+}
+
+function mergeSkillBodies(existingBody, draftBody) {
+  let merged = String(draftBody || '').trim()
+  const existing = String(existingBody || '').split(/\r?\n/)
+  for (const title of ['常见例外', '已内化']) {
+    const index = headingIndex(existing, title)
+    if (index < 0) continue
+    const { from, to } = sectionBounds(existing, index)
+    const content = existing.slice(from, to).filter((line) => line.trim() !== '')
+    if (!content.some((line) => /^-\s/.test(line))) continue
+    const draftLines = merged.split(/\r?\n/)
+    const draftIndex = headingIndex(draftLines, title)
+    if (draftIndex >= 0) {
+      const bounds = sectionBounds(draftLines, draftIndex)
+      draftLines.splice(draftIndex, bounds.to - draftIndex)
+    }
+    merged = draftLines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()
+    merged += `\n\n## ${title}\n${content.join('\n')}`
+  }
+  return `${merged.trim()}\n`
+}
+
+/** 创建/更新技能（带锁）：同一 slug 的读-改-写串行。 */
+export function createSkill(dataDir, draft) {
+  const slug = assertSafeSlug(draft.slug || slugify(draft.name))
+  const locked = withSkillLock(dataDir, slug, () => createSkillUnlocked(dataDir, draft))
+  if (locked.busy === true) throw new Error(`技能正在被另一个进程写入：${slug}`)
+  return locked.value
+}
+
+function persistSkill(dataDir, dir, draft, meta, message) {
+  meta.pendingCommit = false
+  writeSkill(dir, draft, meta)
+  const committed = commitSkills(dataDir, message)
+  if (!committed) {
+    meta.pendingCommit = true
+    writeJsonFile(path.join(dir, META_FILENAME), meta)
+  }
+  return committed
+}
+
+function createSkillUnlocked(dataDir, draft) {
+  const root = skillsRootOf(dataDir)
+  const slug = assertSafeSlug(draft.slug || slugify(draft.name))
+  const dir = skillDirOf(dataDir, slug)
+  const existing = readSkill(dir)
+  const action = existing === null ? 'created' : 'updated'
+  const meta = existing === null ? defaultMeta(slug) : existing.meta
+  meta.typeName = draft.typeName || meta.typeName || ''
+  meta.context = Array.isArray(draft.context) ? draft.context : meta.context
+  meta.triggers = Array.isArray(draft.triggers) ? draft.triggers : meta.triggers
+  if (Array.isArray(draft.derivedFrom)) {
+    meta.derivedFrom = [...new Set([...meta.derivedFrom, ...draft.derivedFrom.map(String)])].slice(0, 50)
+  }
+  const body = typeof draft.body === 'string' && draft.body.trim() !== ''
+    ? (existing !== null ? mergeSkillBodies(existing.body, draft.body) : draft.body.trim())
+    : (existing !== null ? existing.body : defaultBody(draft))
+  const message = action === 'created'
+    ? `skill: ${slug} — 创建（源自 ${meta.derivedFrom.length} 条经验）`
+    : `skill: ${slug} — 更新定义`
+  const committed = persistSkill(dataDir, dir, {
+    name: draft.name || (existing !== null ? existing.name : slug),
+    description: draft.description || (existing !== null ? existing.description : ''),
+    body,
+  }, meta, message)
+  return { action, slug, dir, commit: committed }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 计数与修订                                                                  */
+/* -------------------------------------------------------------------------- */
+
+export function highConfidence(meta) {
+  const confidence = (meta && meta.confidence) || {}
+  const helped = Number(confidence.helped) || 0
+  const hurt = Number(confidence.hurt) || 0
+  const uses = helped + hurt
+  const ratio = uses === 0 ? 0 : helped / uses
+  const open = Object.values((meta && meta.obstacles) || {}).some((entry) => (Number(entry.streak) || 0) >= 3)
+  return uses >= CONFIDENT_MIN_USES && ratio >= CONFIDENT_MIN_RATIO && !open
+}
+
+/** 给模型看的置信说明：helped 比例 + 未解决连续障碍。 */
+export function confidenceReason(meta) {
+  const confidence = (meta && meta.confidence) || {}
+  const helped = Number(confidence.helped) || 0
+  const hurt = Number(confidence.hurt) || 0
+  const uses = helped + hurt
+  const ratio = uses === 0 ? 0 : Math.round((helped / uses) * 100) / 100
+  const open = Object.entries((meta && meta.obstacles) || {})
+    .filter(([, entry]) => (Number(entry.streak) || 0) >= 3)
+    .map(([signature]) => signature)
+  return `helped ${helped}/${uses}（比例 ${ratio}）${open.length > 0 ? `；未解决连续障碍：${open.join('、')}` : '；无未解决连续障碍'}`
+}
+
+/** 校验单个技能的账本/正文不变量；返回问题数组（空 = 健康）。 */
+export function validateSkill(skill) {
+  if (!skill) return ['技能为空']
+  const problems = []
+  if (!skill.name) problems.push('name 为空')
+  if (!skill.description) problems.push('description 为空')
+  const meta = skill.meta || {}
+  const confidence = meta.confidence || {}
+  const uses = Number(confidence.uses) || 0
+  const helped = Number(confidence.helped) || 0
+  const hurt = Number(confidence.hurt) || 0
+  if (uses !== helped + hurt) problems.push('uses != helped + hurt')
+  if (helped < 0 || hurt < 0 || uses < 0) problems.push('confidence 出现负数')
+  if (typeof meta.pendingCommit !== 'boolean') problems.push('pendingCommit 不是布尔')
+  const obstacles = meta.obstacles && typeof meta.obstacles === 'object' ? meta.obstacles : {}
+  for (const [signature, entry] of Object.entries(obstacles)) {
+    const total = Number(entry.total) || 0
+    const streak = Number(entry.streak) || 0
+    if (total < 0 || streak < 0) problems.push(`活跃签名 ${signature} 出现负数`)
+    if (total < streak) problems.push(`活跃签名 ${signature}：total < streak`)
+    if (Array.isArray(entry.events) && entry.events.length > EVENTS_LIMIT) problems.push(`活跃签名 ${signature}：events > ${EVENTS_LIMIT}`)
+  }
+  const resolved = Array.isArray(meta.resolved) ? meta.resolved : []
+  if (resolved.length > RESOLVED_LIMIT) problems.push(`resolved > ${RESOLVED_LIMIT}`)
+  const seen = new Set()
+  for (const item of resolved) {
+    const signature = String((item && item.signature) || '')
+    if (seen.has(signature)) problems.push(`resolved 重复：${signature}`)
+    seen.add(signature)
+    if (obstacles[signature]) problems.push(`签名同时活跃与归档：${signature}`)
+  }
+  const headings = String(skill.body || '').split(/\r?\n/).filter((line) => /^##\s/.test(line)).map((line) => line.replace(/^##\s+/, '').trim())
+  for (const title of ['常见例外', '已内化']) {
+    if (headings.filter((heading) => heading === title).length > 1) problems.push(`正文重复段：${title}`)
+  }
+  return problems
+}
+
+/** 扫描全部技能并返回有问题的条目。 */
+export function validateAllSkills(dataDir) {
+  return listSkills(dataDir)
+    .map((skill) => ({ slug: skill.slug, problems: validateSkill(skill) }))
+    .filter((item) => item.problems.length > 0)
+}
+
+export function matchSkill(skills, intent, options = {}) {
+  const query = abstractState(String(intent || ''))
+  const queryContext = Array.isArray(options.context) ? options.context.map((tag) => String(tag).toLowerCase()) : []
+  const candidates = []
+  for (const skill of Array.isArray(skills) ? skills : []) {
+    if (options.requireConfident !== false && !highConfidence(skill.meta)) continue
+    const text = [skill.name, skill.description, ...(skill.meta.triggers || []), ...(skill.meta.context || [])].join(' ')
+    const similarity = stateSimilarity(query, abstractState(text))
+    if (similarity < (Number(options.minSimilarity) || MATCH_MIN_SIMILARITY)) continue
+    let contextScore = 0
+    if (queryContext.length > 0) {
+      const tags = (skill.meta.context || []).map((tag) => String(tag).toLowerCase())
+      if (tags.length > 0) {
+        const hit = queryContext.filter((tag) => tags.includes(tag)).length
+        // 情境不匹配 = 技能不适用于当前环境：直接跳过，而不是只少加一点分。
+        if (hit === 0) continue
+        contextScore = hit / queryContext.length
+      }
+    }
+    const score = similarity + contextScore * 0.1
+    candidates.push({ skill, score })
+  }
+  if (candidates.length === 0) return null
+  candidates.sort((left, right) => right.score - left.score)
+  const top = candidates[0]
+  // 两个技能分数接近时不猜：交回经验列表，避免「随机选一个」。
+  if (candidates.length > 1 && candidates[1].score >= top.score * (1 - MATCH_AMBIGUITY_MARGIN)) return null
+  return top
+}
+
+function headingIndex(lines, title) {
+  const pattern = new RegExp(`^##\\s+${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`)
+  return lines.findIndex((line) => pattern.test(line))
+}
+
+function sectionBounds(lines, index) {
+  let end = lines.length
+  for (let i = index + 1; i < lines.length; i += 1) {
+    if (/^##\s+/.test(lines[i])) { end = i; break }
+  }
+  return { from: index + 1, to: end }
+}
+
+function upsertBullet(lines, title, key, text) {
+  let index = headingIndex(lines, title)
+  if (index < 0) {
+    lines.push('', `## ${title}`, text)
+    return
+  }
+  const { from, to } = sectionBounds(lines, index)
+  for (let i = from; i < to; i += 1) {
+    if (lines[i].startsWith(`- ${key}`)) { lines[i] = text; return }
+  }
+  lines.splice(to, 0, text)
+}
+
+function removeBullet(lines, title, key) {
+  const index = headingIndex(lines, title)
+  if (index < 0) return
+  const { from, to } = sectionBounds(lines, index)
+  for (let i = from; i < to; i += 1) {
+    if (lines[i].startsWith(`- ${key}`)) {
+      lines.splice(i, 1)
+      break
+    }
+  }
+  // 删掉空标题，避免正文残留「## 已内化」空段。
+  const freshIndex = headingIndex(lines, title)
+  if (freshIndex < 0) return
+  const fresh = sectionBounds(lines, freshIndex)
+  if (lines.slice(fresh.from, fresh.to).some((line) => line.trim() !== '')) return
+  let end = freshIndex + 1
+  while (end < lines.length && lines[end].trim() === '') end += 1
+  lines.splice(freshIndex, end - freshIndex)
+  if (freshIndex > 0 && lines[freshIndex - 1].trim() === '' && (freshIndex >= lines.length || lines[freshIndex].trim() === '')) lines.splice(freshIndex - 1, 1)
+}
+
+function pruneBullets(lines, title, limit, mergeLabel) {
+  const index = headingIndex(lines, title)
+  if (index < 0) return
+  const { from, to } = sectionBounds(lines, index)
+  const bullets = []
+  for (let i = from; i < to; i += 1) if (/^-\s/.test(lines[i])) bullets.push(i)
+  if (bullets.length <= limit) return
+  const dropCount = bullets.length - limit + 1
+  const drop = bullets.slice(0, dropCount)
+  for (const lineNumber of [...drop].reverse()) lines.splice(lineNumber, 1)
+  const freshIndex = headingIndex(lines, title)
+  const fresh = sectionBounds(lines, freshIndex)
+  lines.splice(fresh.to, 0, `- ${mergeLabel}（合并 ${dropCount} 条）`)
+}
+
+function exceptionText(label, total, now) {
+  return `- ${label}（出现 ${total} 次，最近 ${now.slice(0, 10)}）`
+}
+
+function normalizeBody(lines) {
+  const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n\n(?=-\s)/g, '\n')
+  return `${text.trimEnd()}\n`
+}
+
+function applyObstacle(skill, signature, label, now) {
+  const meta = skill.meta
+  const obstacles = meta.obstacles
+  const lines = String(skill.body || '').split(/\r?\n/)
+  const existing = obstacles[signature]
+  if (existing === undefined) {
+    const revived = meta.resolved.some((item) => item.signature === signature)
+    obstacles[signature] = { total: 1, streak: 1, events: ['hit'], lastAt: now, label }
+    if (revived) {
+      removeBullet(lines, '已内化', label)
+      meta.resolved = meta.resolved.filter((item) => item.signature !== signature)
+    }
+    upsertBullet(lines, '常见例外', label, exceptionText(label, 1, now))
+    pruneBullets(lines, '常见例外', EXCEPTION_LIMIT, '其它历史例外')
+    return { action: revived ? 'reopened' : 'appended', total: 1, streak: 1, body: normalizeBody(lines) }
+  }
+  existing.total += 1
+  existing.streak = (Number(existing.streak) || 0) + 1
+  existing.events = [...(existing.events || []), 'hit'].slice(-EVENTS_LIMIT)
+  existing.lastAt = now
+  if (existing.streak < 3) {
+    upsertBullet(lines, '常见例外', existing.label, exceptionText(existing.label, existing.total, now))
+    pruneBullets(lines, '常见例外', EXCEPTION_LIMIT, '其它历史例外')
+    return { action: 'appended', total: existing.total, streak: existing.streak, body: normalizeBody(lines) }
+  }
+  // 连续第 3 次：覆盖并归档该签名。
+  const finalTotal = existing.total
+  removeBullet(lines, '常见例外', existing.label)
+  upsertBullet(lines, '已内化', existing.label, `- ${existing.label}（${now.slice(0, 10)} 覆盖）`)
+  pruneBullets(lines, '已内化', 10, '更早的内化记录')
+  meta.resolved = [...meta.resolved, {
+    signature,
+    total: finalTotal,
+    revisions: (Number(meta.revisions) || 0) + 1,
+    archivedAt: now,
+  }].slice(-RESOLVED_LIMIT)
+  meta.revisions = (Number(meta.revisions) || 0) + 1
+  delete obstacles[signature]
+  return { action: 'replaced', total: finalTotal, streak: 0, body: normalizeBody(lines) }
+}
+
+function commitFor(action, slug, signature) {
+  if (action === 'replaced') return `skill: ${slug} — 连续 3 次障碍，覆盖并归档（sig: ${signature}）`
+  if (action === 'reopened') return `skill: ${slug} — 复发重新累计（sig: ${signature}）`
+  return `skill: ${slug} — 追加例外（sig: ${signature}）`
+}
+
+/** 撞到障碍：按签名计数，追加/覆盖/复发。 */
+function applySkillObstacleUnlocked(dataDir, slug, options = {}) {
+  let dir
+  try {
+    dir = skillDirOf(dataDir, slug)
+  } catch {
+    return { action: 'invalid', slug }
+  }
+  const skill = readSkill(dir)
+  if (skill === null) return { action: 'missing', slug }
+  const signature = normalizeSignature(options.signature || options.blockedBy || 'obstacle')
+  const label = options.label || summarizeSignature(options.signature || options.blockedBy || signature)
+  const now = new Date().toISOString()
+  const result = applyObstacle(skill, signature, label, now)
+  const committed = persistSkill(dataDir, dir, { name: skill.name, description: skill.description, body: result.body }, skill.meta, commitFor(result.action, slug, signature))
+  const warning = skillWarningFor(skill, options.intent)
+  return { ...result, slug, signature, commit: committed, ...(warning ? { warning } : {}) }
+}
+
+/** 撞到障碍（带锁）：同一技能串行，避免并发丢更新。 */
+export function applySkillObstacle(dataDir, slug, options = {}) {
+  let dir
+  try {
+    dir = skillDirOf(dataDir, slug)
+  } catch {
+    return { action: 'invalid', slug }
+  }
+  const locked = withSkillLock(dataDir, assertSafeSlug(String(slug)), () => applySkillObstacleUnlocked(dataDir, slug, options), options)
+  return locked.busy === true ? { action: 'busy', slug } : locked.value
+}
+
+/** 用后结果：成功 = helped + 每个活跃签名记 clean；失败 = hurt。 */
+function applySkillOutcomeUnlocked(dataDir, slug, result, options = {}) {
+  let dir
+  try {
+    dir = skillDirOf(dataDir, slug)
+  } catch {
+    return { action: 'invalid', slug }
+  }
+  const skill = readSkill(dir)
+  if (skill === null) return { action: 'missing', slug }
+  const now = new Date().toISOString()
+  const confidence = skill.meta.confidence
+  confidence.uses = (Number(confidence.uses) || 0) + 1
+  if (result === 'helped') confidence.helped = (Number(confidence.helped) || 0) + 1
+  else if (result === 'hurt') confidence.hurt = (Number(confidence.hurt) || 0) + 1
+  confidence.lastUsedAt = now
+  if (result === 'helped') {
+    for (const entry of Object.values(skill.meta.obstacles)) {
+      entry.events = [...(entry.events || []), 'clean'].slice(-EVENTS_LIMIT)
+      entry.streak = 0
+    }
+  }
+  const committed = persistSkill(dataDir, dir, { name: skill.name, description: skill.description, body: skill.body }, skill.meta, `skill: ${slug} — 用后反馈 ${result}`)
+  const warning = skillWarningFor(skill, options.intent)
+  return { action: 'feedback', slug, result, confident: highConfidence(skill.meta), commit: committed, ...(warning ? { warning } : {}) }
+}
+
+/** 用后结果（带锁）。 */
+export function applySkillOutcome(dataDir, slug, result, options = {}) {
+  let dir
+  try {
+    dir = skillDirOf(dataDir, slug)
+  } catch {
+    return { action: 'invalid', slug }
+  }
+  const locked = withSkillLock(dataDir, assertSafeSlug(String(slug)), () => applySkillOutcomeUnlocked(dataDir, slug, result, options), options)
+  return locked.busy === true ? { action: 'busy', slug } : locked.value
+}

@@ -1,0 +1,11 @@
+# exp-ui：经验库界面外壳（内置示例数据）。
+# 真正的经验库（dsh-exp-lib-provider）接入前，先用这个外壳验证界面与交互。
+#
+# config:
+#   source: mock | live      mock = 内置示例数据（默认）；live = 读 <dataDir>/exp-lib.json（只读）
+#   dataDir: <路径>          仅 source=live 时需要；缺省时 live 会返回「未接入」而不是报错
+- insert:
+    - id: exp-ui
+      name: dsh-exp-ui
+      config:
+        source: mock

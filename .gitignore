@@ -1,0 +1,8 @@
+node_modules/
+dist/
+_tmp/
+*.tgz
+*.log
+.exp/
+.exp-lib/
+usage.jsonl

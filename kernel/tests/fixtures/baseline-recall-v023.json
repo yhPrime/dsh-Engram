@@ -1,0 +1,1693 @@
+{
+  "generatedAt": "2026-11-03T08:38:02.643Z",
+  "storeFile": "C:/Users/yh/WorkDeepSeek/.exp",
+  "version": "v0.2.3",
+  "notes": "rankExperiences 的完整输出；P0 结束前必须与实现后逐字段一致（G0）。",
+  "cases": [
+    {
+      "intent": "做个研学课 PPT",
+      "result": {
+        "intent": "做个研学课 PPT",
+        "V": 0.7,
+        "neighbor_count": 8,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 1.8,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 1.8）。",
+        "candidates": [
+          {
+            "action": "先读项目自带史实底稿（_src/_research/四渡赤水史实.md）+只读 dump 全册文字定位关键词，再用官方源（共产党员网/国防部网/党史文献研究院/四渡赤水纪念馆）逐条落地，最后按\"该字在本册已用几次\"写出与新页去重",
+            "advantage": 0.3,
+            "advantage_norm": 0.2,
+            "confidence": 0.6667,
+            "rank_score": 0.2,
+            "support": 1,
+            "mean_similarity": 0.4795,
+            "typeName": "调研 / 资料",
+            "evidence": [
+              {
+                "id": "ex_d1d7a484a84e",
+                "intent": "PPT 课件新增过渡页前做史实核校并与本册已有文案去重",
+                "action": "先读项目自带史实底稿（_src/_research/四渡赤水史实.md）+只读 dump 全册文字定位关键词，再用官方源（共产党员网/国防部网/党史文献研究院/四渡赤水纪念馆）逐条落地，最后按\"该字在本册已用几次\"写出与新页去重",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 用户给的脚本路径常过期：本例 _src/_fusion/dump_pages.py 不存在，实际在 _src/_takeover/。先用 Get-ChildItem 定位再跑。2) dump_pages.py 只打每页前 3 条文本且截 60 字，拿不到全文；要看某页全文就自己写 python-pptx 内联脚本（PowerShell 用 @'...'@ 单引号 here-string 传给 python -c，中文靠 $env:PYTHONIOENCODING='utf-8' + [Console]::OutputEncoding）。3) 去重的关键不是\"意思像不像\"，而是数\"这个字在本册出现几次\"：本例\"避\"已在 P7/P16/P17 三处，新页再用就是四重，直接给\"禁用某字\"。4) 官方源分工：时间/组织人事→共产党员网；作战计划原文+土城会议→国防部网《\"土城会议\"——拉开四渡赤水的序幕》；情报\"旅误译团\"→党史文献研究院（有当事人孔石泉回忆）；渡口/伤亡→四渡赤水纪念馆。5) 伤亡数、兵力数这类要给\"限定语\"（当面之敌/援兵续至），否则课堂会被追问。6) 事实对但措辞会误导小学生时，结论写\"⚠️需改\"而不是\"✅\"，并另给一句 30 字内引导句——这是本次用户最想要的产出。",
+                "similarity": 0.4795,
+                "typeName": "调研 / 资料"
+              }
+            ],
+            "evidence_strength": 0.3357
+          },
+          {
+            "action": "诊断出「只有日期数字、没有人和现场」后，把四步改造成四个场景串成一条路（会场→地图→山沟→渡口），每卡加圆徽步骤号＋一行红色「现场」句（可感的细节、不写数字），事实降为小字；关键数字做成视觉锚点（底部「12 天」大字）；并原地改、不重建页",
+            "advantage": 0.3,
+            "advantage_norm": 0.2,
+            "confidence": 0.6667,
+            "rank_score": 0.2,
+            "support": 1,
+            "mean_similarity": 0.4083,
+            "typeName": "PPT / 课件",
+            "evidence": [
+              {
+                "id": "ex_b0af9d9a0bde",
+                "intent": "把课件里一页「日期＋事实」型过渡页改得更生动（用户反馈：不够生动、文案别扭）",
+                "action": "诊断出「只有日期数字、没有人和现场」后，把四步改造成四个场景串成一条路（会场→地图→山沟→渡口），每卡加圆徽步骤号＋一行红色「现场」句（可感的细节、不写数字），事实降为小字；关键数字做成视觉锚点（底部「12 天」大字）；并原地改、不重建页",
+                "outcome": "accepted",
+                "G": 1,
+                "note": "① 生动的抓手不是形容词，是「场景＋动作＋一句人看得见的话」：把抽象四步落成四个空间（会场/地图/山沟/渡口），读者自己会连成一条路；每卡一句「现场」写细节不写数字（「三天的会都是夜里开、凌晨散」「望远镜里的敌人越打越多」「只改了一句话：不北渡了」），数字全部挪进小字。② 别扭文案要查搭配：「一打来了六个团」里「一打」被读成数量词、主语也飘 → 换成有因果的说法「情报把川军的『旅』译成了『团』」。③ 卡片有大片留白＝\"没说完\"；字号整体上调（题眼 26→28、现场 13.5→14、事实 11.5→12.5）比继续加内容有效。④ 用户已自行改过页序/隐藏页：**只能原地改**（按形状名前缀保留底子、删内容重画），走 `--refresh` 重建会冲掉他的改动；动手前先 `dump_pages` 看页序、再重算页码器标题类清单（页序一变清单就变）。⑤ 落盘前比 md5 确认副本基线＝用户当前档，避免覆盖他刚保存的改动。⑥ 页码器同一天第二次 `--apply` 会因备份名重复而拿旧备份做校验4 → 假失败，删当日备份再跑。⑦ 文件被占（能读不能写、进程表无 WPS）别硬试：副本上做完改动＋页码＋体检，请用户关 WPS 后 `[System.IO.File]::Copy` 一次覆盖。",
+                "similarity": 0.4083,
+                "typeName": "PPT / 课件"
+              }
+            ],
+            "evidence_strength": 0.2858
+          },
+          {
+            "action": "改一条「史实点」时，先把它拆成渡口/经过地域/阶段收束点三类，再决定游戏里该挂哪一个；同时用「最短里程」估算回合预算，别只改名字",
+            "advantage": 0.3,
+            "advantage_norm": 0.2,
+            "confidence": 0.6578,
+            "rank_score": 0.1973,
+            "support": 1,
+            "mean_similarity": 0.3407,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_fa4c6a9f64cd",
+                "intent": "把游戏/课件里的一个史实锚点改准（例：四渡赤水「一渡终点」由古蔺改扎西），同时不弄崩玩法",
+                "action": "改一条「史实点」时，先把它拆成渡口/经过地域/阶段收束点三类，再决定游戏里该挂哪一个；同时用「最短里程」估算回合预算，别只改名字",
+                "outcome": "accepted",
+                "G": 1,
+                "note": "判定顺序：① 先翻项目自带的史实核校卡，把该事件拆成「发生在哪（渡口/战场）」「经过了哪（机动地域）」「阶段在哪收束（会议/集结）」。② 用户指出的往往是对的，但换锚点会改里程预算：本例最短里程 27→29 步，原来 35 回合余 8 步、变 6 步，实测最优线立刻从「刚好通关」变成「3/4 过不去」，40 次打法通关 0/40。→ 换史实点必须连带重算回合上限（本例 45 才回到 37/40）。③ 换点会连带 4 类东西要同步：常量、页面文案、自检用例里写死的坐标、无头测试的导航步骤（点哪一格）。④ 视觉上要单独看：新点若同时是终点+当前目标，名字会被 r=24 终点圈和 r=33 脉冲圈压住，要把 label 挪出圈外（la 改到下方 + ly 加大）。⑤ 坑：多脚本并联做对比实验时，只要有一个脚本硬编码路径、不认 GAME_HTML 之类的环境变量，就会拿旧文件报「通过」——假通过。改完先确认每个脚本读的都是同一份被测文件。",
+                "similarity": 0.3407,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2385
+          },
+          {
+            "action": "整页克隆相邻页底子（白底/底条/kicker/标题/金线/页码锚点＝8 形状）→ 删掉原页主体 → 按本册网格用 Cm 重画 4 步递进卡 + 收束条 → Morph 整块拷 → sldIdLst 挪位；页码器按「插页后物理页序」重算标题类清单；文件被占则先在副本走完全部校验再请用户松锁覆盖",
+            "advantage": 0.3,
+            "advantage_norm": 0.2,
+            "confidence": 0.6554,
+            "rank_score": 0.1966,
+            "support": 1,
+            "mean_similarity": 0.3382,
+            "typeName": "PPT / 课件",
+            "evidence": [
+              {
+                "id": "ex_efb356cfc298",
+                "intent": "在既有 PPTX 课件中间插一页过渡页（P5 后插「遵义会议→四渡赤水」），保动画保编组",
+                "action": "整页克隆相邻页底子（白底/底条/kicker/标题/金线/页码锚点＝8 形状）→ 删掉原页主体 → 按本册网格用 Cm 重画 4 步递进卡 + 收束条 → Morph 整块拷 → sldIdLst 挪位；页码器按「插页后物理页序」重算标题类清单；文件被占则先在副本走完全部校验再请用户松锁覆盖",
+                "outcome": "accepted",
+                "G": 1,
+                "note": "① 加页比原地改页省事且零风险：`add_slide(P5.layout)` + 清占位符 + 深拷贝 P5 `p:spTree` 子节点，底子（白底/三段底条/标题 27pt 思源宋体 Heavy/金线/页码逐 EMU 锚点）白拿；再删原页主体（按名字前缀批删）即可。② 坐标单位：本册几何全是 cm，`add_textbox/add_shape` 必须 `Cm()`；第一版错用 `Inches()` 整页放大 2.54 倍、卡片跑出画布——必须导 PNG 目检才发现。③ 页码：插页后标题类页清单整体 +1（如 1,4,6,7,10,14,24,26 → 1,4,7,8,11,15,25,27），分母 27；先 scan 看「无页码页」再 dry-run 对表，一次过。④ 文件被占（能读能写不了、rename 也失败、进程表无 Office、~$ 是残留）：别连着硬试，先在副本上做完插入+页码+体检（成品存 _prev/cand27.pptx），再请用户松锁，用 Copy + md5 对表落地；Restart Manager 查占用要按 StringBuilder 版签名才有效。⑤ GradFill 要就地替换 spPr 里的 fill 节点，别 insert 到 prstGeom 前面（schema 顺序）。⑥ 插页后包体变小属正常：原包媒体 deflate 后反而变大，重打包压回正常，比 media 条目字节即可证无损。",
+                "similarity": 0.3382,
+                "typeName": "PPT / 课件"
+              }
+            ],
+            "evidence_strength": 0.2367
+          },
+          {
+            "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+            "advantage": 0.1,
+            "advantage_norm": 0.0667,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.4784,
+            "typeName": "文档 / 教案",
+            "evidence": [
+              {
+                "id": "ex_a0c650b65056",
+                "intent": "按既有 PPT 写配套教案（课件已成稿，要求教案与页序对齐）",
+                "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "上一版 A4 + 两张附录 + 结构化环节说明被用户否掉（原话「按照这个格式，课程理念就在ppt p2，别乱扩充」）。教训：①用户给参考件时，格式=参考件本身，不要按自己习惯排（A4→Letter、15pt→15pt 但行距要 1.15 倍 + 段后 10 磅、附录取掉）；②「理念/背景」类段落要原文照引，扩写=减分；③量准的方法：python-docx 读版面与字号、WPS COM 读 LineSpacing/Rule/SpaceAfter（注意 rule=5 是「倍数」，照抄成「固定值」会把大字号标题压扁）、解 zip 确认有无页眉页脚部件；④最后用「一级/二级标题清单 + 表格行列数 + 列宽合计 + 版面数值」与参考件逐项比对，比目检可靠。",
+                "similarity": 0.4784,
+                "typeName": "文档 / 教案"
+              }
+            ],
+            "evidence_strength": 0.3014
+          },
+          {
+            "action": "按 quick-generate.md 走完整链路：project_manager init --quick-generate → text_measure calibrate 四档字号 → 手写 flat SVG（root data-pptx-page-role + 每个顶层 g 带 data-pptx-bounds）→ svg_quality_checker（--quick-generate --canonical-authoring --stage final --json）→ svg_to_pptx --quick-generate --no-notes → WPS COM 导 PNG 目检",
+            "advantage": 0.1,
+            "advantage_norm": 0.0667,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.4125,
+            "typeName": "PPT / 课件",
+            "evidence": [
+              {
+                "id": "ex_7dc1974c1448",
+                "intent": "用 ppt-master 技能快速生成 PPT（Quick Generate 路由）",
+                "action": "按 quick-generate.md 走完整链路：project_manager init --quick-generate → text_measure calibrate 四档字号 → 手写 flat SVG（root data-pptx-page-role + 每个顶层 g 带 data-pptx-bounds）→ svg_quality_checker（--quick-generate --canonical-authoring --stage final --json）→ svg_to_pptx --quick-generate --no-notes → WPS COM 导 PNG 目检",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "3 页 Hello World 一次通过：闸门 3/3、导出 17 KB 原生可编辑 pptx。三条硬经验：①**导出必须走 no-mode 包装**——DSH workspace-write 沙箱下 svg_to_pptx 的 tempfile.mkdtemp（0700）目录写不进，必报 PermissionError；包装法是把 os.mkdir 的 mode 抹成 0777 再 runpy 原脚本。②**失败会留垃圾**：每失败一次就在 exports 和 CWD 根各留 .pptx-build-*（0700，沙箱删不掉，要一次完全权限），所以先上包装别反复直试。③文本 bounds 是硬失败点：首轮 page-header 纵向溢出 9.3% 直接 ERROR（>5% 即 error），扩 data-pptx-bounds 比缩字号正确。另：导出 1280×720 → 960×540 pt，1 px = 0.75 pt；WPS COM 渲染目检是本机唯一可行的视觉验收。",
+                "similarity": 0.4125,
+                "typeName": "PPT / 课件"
+              }
+            ],
+            "evidence_strength": 0.2599
+          },
+          {
+            "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+            "advantage": 0.1,
+            "advantage_norm": 0.0667,
+            "confidence": 0.6561,
+            "rank_score": 0.0656,
+            "support": 1,
+            "mean_similarity": 0.3389,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_bfaf6fbed611",
+                "intent": "清理整理课件/项目目录：删过期备份与临时产物、保持目录整洁",
+                "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "① 盘底两件事决定档位：体积（谁是大头）与 `.gitignore`（二进制成品通常不入库 → 删了没得回退，这类必须先问）。本例 4.03 GB 里 1.9 GB 是无头 Edge 的 CDP 用户目录、0.4 GB 是 v2 中间包，问清楚后一击回收 3.68 GB。② 删除必须幂等：`Directory.Delete` 在 Chromium 自建的 hash 目录（0600/受限 ACL）上报 Access denied，第一次只删了一部分就中止；改成逐项 try/catch 收集失败＋`Test-Path` 重算目标，escalate 后重跑一次就清干净。③ 目标路径逐个断言 `StartsWith(项目根+'\\')` 再删，防止通配符拼错删到项目外。④ 删完立刻重写三份文档（项目信息 备份段/工程遗物行、索引 备份表 26 行→1 行与目录级说明、说明.md 的旧片行），否则索引里全是死指针；顺手发现「成品 md5 与盘上不符」这种历史留痕，按实物修正并注明出处。⑤ 代价要报：`_src/_qa` 里混着一个 `probe_voice.mjs`（gitignore 掉了），随目录一起没了——删「垃圾目录」时要先 `Get-ChildItem *.mjs/*.py` 扫一眼有没有脚本。⑥ 备份目录保留口径：只留「上一次改动之前」那一档，其余中间态全删。",
+                "similarity": 0.3389,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2135
+          },
+          {
+            "action": "先在屏幕上写「问→答（红粗题眼＋灰字）」求生动 → 用户否掉「标准答案上屏」并要求答案进讲者备注 → 改正为：屏幕只留三个大问句（22pt＋圆徽），参考思路/追问句/落点/作业拆进 slide 备注，底部条改成「没有标准答案＋什么叫好答案」，并重排版（行高 2.60、行距放大）",
+            "advantage": -1.5,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -1,
+            "support": 1,
+            "mean_similarity": 0.4086,
+            "typeName": "PPT / 课件",
+            "evidence": [
+              {
+                "id": "ex_693115b45562",
+                "intent": "把课件的结课/总结页做得更像总结，同时不把探究题的答案写死在屏幕上",
+                "action": "先在屏幕上写「问→答（红粗题眼＋灰字）」求生动 → 用户否掉「标准答案上屏」并要求答案进讲者备注 → 改正为：屏幕只留三个大问句（22pt＋圆徽），参考思路/追问句/落点/作业拆进 slide 备注，底部条改成「没有标准答案＋什么叫好答案」，并重排版（行高 2.60、行距放大）",
+                "outcome": "corrected",
+                "G": -0.8,
+                "note": "① 教学设计优先于排版：项目式驱动问题的答案一旦上屏，问题就退化成\"读答案\"；正确落点是「屏上只留问题，参考思路/追问句/落点句/作业安排进演讲者备注（教师可见、放映不显示）」，屏幕底部只写\"没有标准答案＋什么叫好答案\"。② 备注写入的坑：本册 notesMaster 没有占位符（WPS 剥掉了），python-pptx 新建备注页后 notes_text_frame 是 None；**别遍历 prs.slides 取 s.notes_slide 找模板**——访问即新建，实测多出 17 个空备注页部件；改从包里既有 ppt/notesSlides/*.xml 抠带 p:ph 的 p:sp，且必须过 pptx.oxml.parse_xml 重建（lxml 直接深拷贝会报 has_ph_elm AttributeError），再把 idx 设 1 append 进新备注页。③ 只留问题后版式要跟着变：行高从 2.85 收到 2.60、字号 20→22、行距加大，否则每行一条大白条。④ 用户改过页的册子只能原地改，落盘前比 md5。",
+                "similarity": 0.4086,
+                "typeName": "PPT / 课件"
+              }
+            ],
+            "evidence_strength": 0.0286
+          }
+        ]
+      }
+    },
+    {
+      "intent": "做一节课的任务单",
+      "result": {
+        "intent": "做一节课的任务单",
+        "V": 0.8,
+        "neighbor_count": 1,
+        "mode": "evidence",
+        "degenerate": true,
+        "advantage_spread": 0,
+        "note": "无成败对照（advantage 极差 0），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。",
+        "candidates": [
+          {
+            "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+            "advantage": 0,
+            "advantage_norm": 0,
+            "confidence": 0.6667,
+            "rank_score": 0.2394,
+            "support": 1,
+            "mean_similarity": 0.38,
+            "typeName": "文档 / 教案",
+            "evidence": [
+              {
+                "id": "ex_a0c650b65056",
+                "intent": "按既有 PPT 写配套教案（课件已成稿，要求教案与页序对齐）",
+                "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "上一版 A4 + 两张附录 + 结构化环节说明被用户否掉（原话「按照这个格式，课程理念就在ppt p2，别乱扩充」）。教训：①用户给参考件时，格式=参考件本身，不要按自己习惯排（A4→Letter、15pt→15pt 但行距要 1.15 倍 + 段后 10 磅、附录取掉）；②「理念/背景」类段落要原文照引，扩写=减分；③量准的方法：python-docx 读版面与字号、WPS COM 读 LineSpacing/Rule/SpaceAfter（注意 rule=5 是「倍数」，照抄成「固定值」会把大字号标题压扁）、解 zip 确认有无页眉页脚部件；④最后用「一级/二级标题清单 + 表格行列数 + 列宽合计 + 版面数值」与参考件逐项比对，比目检可靠。",
+                "similarity": 0.38,
+                "typeName": "文档 / 教案"
+              }
+            ],
+            "evidence_strength": 0.2394
+          }
+        ]
+      }
+    },
+    {
+      "intent": "修 DSH 插件报错 xxx is not a function",
+      "result": {
+        "intent": "修 DSH 插件报错 xxx is not a function",
+        "V": 0.9,
+        "neighbor_count": 8,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 0.2,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 0.2）。",
+        "candidates": [
+          {
+            "action": "按宿主契约把所有数据面方法改成 async，并用宿主原样写法（.catch / untilAborted）加回归断言",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.6654,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_16b95db796af",
+                "intent": "修 DSH 插件报错「xxx is not a function」：Provider/适配器方法该返回 Promise 却返回同步值",
+                "action": "按宿主契约把所有数据面方法改成 async，并用宿主原样写法（.catch / untilAborted）加回归断言",
+                "outcome": "success",
+                "G": 1,
+                "note": "诊断：在 profile 的 dsh-mnemon-source-memory-spaces/lib/index.js 里 grep providerFor，找到调用点 2853 行 `provider.status(body).catch(...)` —— 同步返回值没有 .catch，必炸；同类的 discover 早前被 `untilAborted(...)` 的 .then 咬过。所以先复现（node 里 adapter.status({}).catch）、再按契约（MemoryProviderAdapter 除 scoreSemantics/invalidateStatus/dispose 外都返回 Promise）全改 async，最后在测试里照抄宿主写法断言 thenable。装到 profile：npm pack --pack-destination dist --cache <工作区内目录>；profile 安装副本是 pnpm store 硬链接，改前先 Remove-Item 再复制，否则写穿全局 store。",
+                "similarity": 0.6654,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.4658
+          },
+          {
+            "action": "npm pack 出 tarball → dsh plugin add dist/*.tgz；不要用 dsh plugin add <目录>",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.3966,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_290288efb8e3",
+                "intent": "给 DSH 安装/更新本地第三方插件（改完代码）",
+                "action": "npm pack 出 tarball → dsh plugin add dist/*.tgz；不要用 dsh plugin add <目录>",
+                "outcome": "accepted",
+                "G": 1,
+                "note": "第二次执行：更新插件时同样走 tarball，确认 hits 累加、不新增行。",
+                "similarity": 0.3966,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2776
+          },
+          {
+            "action": "用 DSH 自带 node 跑 tests/*.test.mjs；改完代码 npm pack 到 dist 再 dsh plugin add 安装",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.3925,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_03ad25f48de4",
+                "intent": "给 DSH 插件跑自动化测试并验证安装副本",
+                "action": "用 DSH 自带 node 跑 tests/*.test.mjs；改完代码 npm pack 到 dist 再 dsh plugin add 安装",
+                "outcome": "success",
+                "G": 1,
+                "note": "node 路径：C:\\Users\\yh\\.dsh\\dsh-runtimes\\dsh-primary-runtime\\dependencies\\node\\bin\\node.exe。测试用 SDK 桩 + 临时目录，不碰真宿主；安装副本可用 node --input-type=module -e \"await import('file:///.../node_modules/<pkg>/index.js')\" 做冒烟。",
+                "similarity": 0.3925,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2748
+          },
+          {
+            "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.3848,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_8b85a719f54a",
+                "intent": "修自写经验库插件的召回与排序（短意图召回 0、Â 全 0 退化、脏数据）",
+                "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+                "outcome": "success",
+                "G": 1,
+                "note": "体检先量：真实库 17 条全是成功、0 负样本。①召回：对称 Jaccard 拿 5 token 短意图比 12+ token 长句，「做个研学课 PPT」过阈 0/17，artifact 只做字面包含（ppt≠pptx、任务单不在表里）。②排序：全成功 ⇒ V̂≈1、Q̂=G=1 ⇒ Â≈0，rank_score 全 0，排序实际只剩相似度。③污染：一条 PPT 经验因 note 粘 </note><parameter name=\"type\">… 掉进未分类，类型计数 0。修法：新增 retrieval.js 把「谁算邻居」从 kernel 剥离——相似度=0.4 查询覆盖+0.25 对称 Jaccard+0.2 artifact 语义组+0.15 二元组，sharesSignal 拦「只共享单字」的假召回；kernel 只加 options.neighbors 入参，保持与 jitrl_memory.py 对拍（19 项照过，免重生成 golden）。阈值 0.12：真实库 17/17 正例 top1、5 条噪声 0/5。排序：rankExperiences 算 advantage_spread，<0.05 或已验证候选<2 → mode=evidence、按 相似度×支持度×(G+1)/2 排，note 明说「Â 不具区分度」。supersede 改成只在两边都正时才取代，否则失败做法会被取代掉、库里永远没有负样本。scoreOf 统一到 kernel OUTCOME_SCORES（success 0.8、aborted −1），此前 store 自写一套。写入清洗残渣并从残渣捞回 type；exp_type 加 assign 定点改挂（不动 hits）。测试 62→73，加 tools/audit.mjs 只读体检（负样本/对照覆盖/残渣/12 条固定意图召回率，FAIL 退出 1）。坑：改 kernel 数学必须同步 Python 与 golden fixture；tarball 重装后要重启 DSH 才生效；npm pack 在沙箱内要 --cache 到工作区。",
+                "similarity": 0.3848,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2694
+          },
+          {
+            "action": "给 pnpm 硬链接安装的第三方插件客户端 bundle 打单点补丁：只改页脚三元条件与计数文案，写临时文件再 rename 断链，锚点失效就报错退出，并留幂等补丁脚本 + 测试",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.4211,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_c33eab259163",
+                "intent": "改记忆空间卡片页脚：第三方 Provider 也显示条数/连接/大小（上游客户端只按 origin=native 显示 stats）",
+                "action": "给 pnpm 硬链接安装的第三方插件客户端 bundle 打单点补丁：只改页脚三元条件与计数文案，写临时文件再 rename 断链，锚点失效就报错退出，并留幂等补丁脚本 + 测试",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "先读宿主：memory-spaces 的 collectSpaces 把 provider.status() 的 stats 合并进卡片（{...metadata,...status}），我们的 status() 本来就返回 stats；客户端 client.js 却按 `!nativeSpaceProvider(body.provider) ? 类型+目录 : stats` 二选一，所以只差页脚条件。补丁=把条件改成 `body.stats === void 0 && !nativeSpaceProvider(...)`，exp-lib 计数文案单独写「N 条经验」。改已安装副本必须写临时文件再 rename 覆盖（原地写会顺着 pnpm store 硬链接写穿全局 store）；备份到工作区，脚本幂等、锚点找不到就报错退出，上游 upgrade 后重跑。验证：3 行 diff、+191 字节、node --check、nlink 2→1、store 文件 hash 不变；真实视觉要刷新/重启且 Web 有鉴权，自动化截不到。教训：先确认数据面已经提供要显示的值，再判断是渲染分叉还是数据缺失。",
+                "similarity": 0.4211,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2653
+          },
+          {
+            "action": "干净 node_modules 模拟加载 + 查 profile 挂载链/peer/写死路径",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.3919,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_e213da0744d1",
+                "intent": "评估自写 DSH 插件能否装到另一台机器（那台已装 dsh-mnemon）",
+                "action": "干净 node_modules 模拟加载 + 查 profile 挂载链/peer/写死路径",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "检查项按顺序：①包内 cordis.patch.yml 有没有写死绝对路径（换机会写到错目录/写不进）；②package.json 是否 private（挡 npm publish，只发 tgz 则无所谓）；③peer 依赖（provider-sdk 包）目标 profile 是否已有——装了 dsh-mnemon 就有；④Provider 面板挂载写在 profile 的 cordis.patch.yml 里 mnemon-source-memory-spaces.providers 的 use/instanceId，源码不自动发现，必须手工加；⑤`dsh plugin add` 只是转发 pnpm，不会写 dsh.profile.bundles，装完要在插件管理里启用 bundle 才会加载。验证法：把包 + provider-sdk 拷进临时 node_modules，import plugin.js 看工具是否注册、真跑一次 exp_record/exp_recall，import index.js 看 provider id。",
+                "similarity": 0.3919,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2469
+          },
+          {
+            "action": "去 private + 默认路径从 DSH_HOME 派生 + 从 profile 读 mnemon 存储根 + README 通用安装；发布树不含 tests，用 tarball + 临时 index 构造",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.3824,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_b2e521700b13",
+                "intent": "把自写 DSH 插件做成可对外安装的正式插件（B 正：不注册 npm，发 GitHub + tgz）",
+                "action": "去 private + 默认路径从 DSH_HOME 派生 + 从 profile 读 mnemon 存储根 + README 通用安装；发布树不含 tests，用 tarball + 临时 index 构造",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "顺序：包内 cordis.patch.yml 不留任何绝对路径（否则换机写错目录）→ package.json 去 private、补 repo 字段并升版本 → 数据目录默认 $DSH_HOME/exp-lib/provider-data → 关键：工具要能自己找到 memory-providers.json，除了 config 还要读 profile 的 cordis.patch.yml 里 mnemon 条目的 dataDir（README 里写明）→ npm pack 后装进 profile 再验 hash → GitHub 只推 tarball 内容 + .gitignore（临时 GIT_INDEX_FILE + --work-tree + commit-tree，不用 worktree）→ 发布树删 tests/ dist/。坑：把 dataDir 从包内 patch 删掉后，运行中的实例读不到真实库，提示层直接变 0 条——本机 mnemon 自定义存储根时只靠插件 config 会读空库。",
+                "similarity": 0.3824,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2409
+          },
+          {
+            "action": "配置层显式给工具条目 mnemonDataDir + 代码层兜底（环境缺省扫 $DSH_HOME/profiles/* 读 mnemon 的 dataDir、从 cwd 祖先链找 .mnemon），显式配置仍优先",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.3805,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_267ddc52dd03",
+                "intent": "给 DSH 自写插件的工具/Provider 定位记忆插件真实数据目录（工具读空库、提示层 0 条）",
+                "action": "配置层显式给工具条目 mnemonDataDir + 代码层兜底（环境缺省扫 $DSH_HOME/profiles/* 读 mnemon 的 dataDir、从 cwd 祖先链找 .mnemon），显式配置仍优先",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "诊断顺序：先看提示层条数（0 条）→ exp_recall 返回「没有可见条目」→ 查 plugin-apply.log 落在 $DSH_HOME/exp-lib/provider-data（说明工具实例退回了默认空目录），而 Provider 卡片正常。根因：工具条目 config 只有 hint，Provider 条目才有 mnemonDataDir；读 profile patch 依赖 DSH_PROFILE_DIR/DSH_PROFILE，这两个只注入给模型 shell，插件进程里没有（所以 $env:DSH_* 能看到但插件看不到）。修法：①profile patch 末尾加 - id: <plugin-id> + config.mnemonDataDir，注意 loader 的 config 是整体替换（要连带 hint: true），改完宿主热重载、下一轮生效，无需重启；②代码兜底：环境缺省时扫 $DSH_HOME/profiles/*（跳过 backup-*）读 mnemon 块 dataDir，并从 cwd 逐级往上找 .mnemon/state/memory-providers.json，候选去重、显式配置优先。验证：清掉 DSH_HOME/DSH_PROFILE_DIR/DSH_PROFILE/DSH_MNEMON_DATA_DIR/MNEMON_DATA_DIR，从与存储根无关的 cwd 解析仍得到真实 .exp 与 21 条。坑：只做 A 的话换机/重建 profile 会复发；只做 B 的话当前进程仍要重启才生效。",
+                "similarity": 0.3805,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2397
+          }
+        ]
+      }
+    },
+    {
+      "intent": "给 DSH 安装本地插件",
+      "result": {
+        "intent": "给 DSH 安装本地插件",
+        "V": 0.9,
+        "neighbor_count": 8,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 0.2,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 0.2）。",
+        "candidates": [
+          {
+            "action": "npm pack 出 tarball → dsh plugin add dist/*.tgz；不要用 dsh plugin add <目录>",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.7015,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_290288efb8e3",
+                "intent": "给 DSH 安装/更新本地第三方插件（改完代码）",
+                "action": "npm pack 出 tarball → dsh plugin add dist/*.tgz；不要用 dsh plugin add <目录>",
+                "outcome": "accepted",
+                "G": 1,
+                "note": "第二次执行：更新插件时同样走 tarball，确认 hits 累加、不新增行。",
+                "similarity": 0.7015,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.4911
+          },
+          {
+            "action": "用 DSH 自带 node 跑 tests/*.test.mjs；改完代码 npm pack 到 dist 再 dsh plugin add 安装",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.627,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_03ad25f48de4",
+                "intent": "给 DSH 插件跑自动化测试并验证安装副本",
+                "action": "用 DSH 自带 node 跑 tests/*.test.mjs；改完代码 npm pack 到 dist 再 dsh plugin add 安装",
+                "outcome": "success",
+                "G": 1,
+                "note": "node 路径：C:\\Users\\yh\\.dsh\\dsh-runtimes\\dsh-primary-runtime\\dependencies\\node\\bin\\node.exe。测试用 SDK 桩 + 临时目录，不碰真宿主；安装副本可用 node --input-type=module -e \"await import('file:///.../node_modules/<pkg>/index.js')\" 做冒烟。",
+                "similarity": 0.627,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.4389
+          },
+          {
+            "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6598,
+            "rank_score": 0.066,
+            "support": 1,
+            "mean_similarity": 0.3428,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_2d58f246e8b3",
+                "intent": "把自写的 DSH 插件发布到 GitHub（新建公开仓库）",
+                "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 推之前必须 `git diff <发布分支> $(git rev-parse master:<包目录>)` 对齐，只允许 LICENSE/.gitignore/README/package.json 四处差异——首次推完才发现发布分支落后一个提交（缺 async status 修复），重切分支 force-with-lease 重推一遍。2) 发布分支是独立血统，不并回 master（README/package.json 的脱敏只在发布分支），以后改代码改 master 再重切。3) 建仓不需 gh CLI：git credential fill 取已存 token（40 位）→ python/Invoke-RestMethod 调 API 即可；仓库建时不 auto_init，第一次 push 就是初始化。4) 安全网拦 git branch -D / git worktree remove --force / git checkout <ref> -- <path>，清场用无 force 的 worktree remove + 别删分支。",
+                "similarity": 0.3428,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.24
+          },
+          {
+            "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6217,
+            "rank_score": 0.0622,
+            "support": 1,
+            "mean_similarity": 0.3028,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_8b85a719f54a",
+                "intent": "修自写经验库插件的召回与排序（短意图召回 0、Â 全 0 退化、脏数据）",
+                "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+                "outcome": "success",
+                "G": 1,
+                "note": "体检先量：真实库 17 条全是成功、0 负样本。①召回：对称 Jaccard 拿 5 token 短意图比 12+ token 长句，「做个研学课 PPT」过阈 0/17，artifact 只做字面包含（ppt≠pptx、任务单不在表里）。②排序：全成功 ⇒ V̂≈1、Q̂=G=1 ⇒ Â≈0，rank_score 全 0，排序实际只剩相似度。③污染：一条 PPT 经验因 note 粘 </note><parameter name=\"type\">… 掉进未分类，类型计数 0。修法：新增 retrieval.js 把「谁算邻居」从 kernel 剥离——相似度=0.4 查询覆盖+0.25 对称 Jaccard+0.2 artifact 语义组+0.15 二元组，sharesSignal 拦「只共享单字」的假召回；kernel 只加 options.neighbors 入参，保持与 jitrl_memory.py 对拍（19 项照过，免重生成 golden）。阈值 0.12：真实库 17/17 正例 top1、5 条噪声 0/5。排序：rankExperiences 算 advantage_spread，<0.05 或已验证候选<2 → mode=evidence、按 相似度×支持度×(G+1)/2 排，note 明说「Â 不具区分度」。supersede 改成只在两边都正时才取代，否则失败做法会被取代掉、库里永远没有负样本。scoreOf 统一到 kernel OUTCOME_SCORES（success 0.8、aborted −1），此前 store 自写一套。写入清洗残渣并从残渣捞回 type；exp_type 加 assign 定点改挂（不动 hits）。测试 62→73，加 tools/audit.mjs 只读体检（负样本/对照覆盖/残渣/12 条固定意图召回率，FAIL 退出 1）。坑：改 kernel 数学必须同步 Python 与 golden fixture；tarball 重装后要重启 DSH 才生效；npm pack 在沙箱内要 --cache 到工作区。",
+                "similarity": 0.3028,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.212
+          },
+          {
+            "action": "去 private + 默认路径从 DSH_HOME 派生 + 从 profile 读 mnemon 存储根 + README 通用安装；发布树不含 tests，用 tarball + 临时 index 构造",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.5536,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_b2e521700b13",
+                "intent": "把自写 DSH 插件做成可对外安装的正式插件（B 正：不注册 npm，发 GitHub + tgz）",
+                "action": "去 private + 默认路径从 DSH_HOME 派生 + 从 profile 读 mnemon 存储根 + README 通用安装；发布树不含 tests，用 tarball + 临时 index 构造",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "顺序：包内 cordis.patch.yml 不留任何绝对路径（否则换机写错目录）→ package.json 去 private、补 repo 字段并升版本 → 数据目录默认 $DSH_HOME/exp-lib/provider-data → 关键：工具要能自己找到 memory-providers.json，除了 config 还要读 profile 的 cordis.patch.yml 里 mnemon 条目的 dataDir（README 里写明）→ npm pack 后装进 profile 再验 hash → GitHub 只推 tarball 内容 + .gitignore（临时 GIT_INDEX_FILE + --work-tree + commit-tree，不用 worktree）→ 发布树删 tests/ dist/。坑：把 dataDir 从包内 patch 删掉后，运行中的实例读不到真实库，提示层直接变 0 条——本机 mnemon 自定义存储根时只靠插件 config 会读空库。",
+                "similarity": 0.5536,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.3488
+          },
+          {
+            "action": "给 pnpm 硬链接安装的第三方插件客户端 bundle 打单点补丁：只改页脚三元条件与计数文案，写临时文件再 rename 断链，锚点失效就报错退出，并留幂等补丁脚本 + 测试",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.5397,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_c33eab259163",
+                "intent": "改记忆空间卡片页脚：第三方 Provider 也显示条数/连接/大小（上游客户端只按 origin=native 显示 stats）",
+                "action": "给 pnpm 硬链接安装的第三方插件客户端 bundle 打单点补丁：只改页脚三元条件与计数文案，写临时文件再 rename 断链，锚点失效就报错退出，并留幂等补丁脚本 + 测试",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "先读宿主：memory-spaces 的 collectSpaces 把 provider.status() 的 stats 合并进卡片（{...metadata,...status}），我们的 status() 本来就返回 stats；客户端 client.js 却按 `!nativeSpaceProvider(body.provider) ? 类型+目录 : stats` 二选一，所以只差页脚条件。补丁=把条件改成 `body.stats === void 0 && !nativeSpaceProvider(...)`，exp-lib 计数文案单独写「N 条经验」。改已安装副本必须写临时文件再 rename 覆盖（原地写会顺着 pnpm store 硬链接写穿全局 store）；备份到工作区，脚本幂等、锚点找不到就报错退出，上游 upgrade 后重跑。验证：3 行 diff、+191 字节、node --check、nlink 2→1、store 文件 hash 不变；真实视觉要刷新/重启且 Web 有鉴权，自动化截不到。教训：先确认数据面已经提供要显示的值，再判断是渲染分叉还是数据缺失。",
+                "similarity": 0.5397,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.34
+          },
+          {
+            "action": "配置层显式给工具条目 mnemonDataDir + 代码层兜底（环境缺省扫 $DSH_HOME/profiles/* 读 mnemon 的 dataDir、从 cwd 祖先链找 .mnemon），显式配置仍优先",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.4477,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_267ddc52dd03",
+                "intent": "给 DSH 自写插件的工具/Provider 定位记忆插件真实数据目录（工具读空库、提示层 0 条）",
+                "action": "配置层显式给工具条目 mnemonDataDir + 代码层兜底（环境缺省扫 $DSH_HOME/profiles/* 读 mnemon 的 dataDir、从 cwd 祖先链找 .mnemon），显式配置仍优先",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "诊断顺序：先看提示层条数（0 条）→ exp_recall 返回「没有可见条目」→ 查 plugin-apply.log 落在 $DSH_HOME/exp-lib/provider-data（说明工具实例退回了默认空目录），而 Provider 卡片正常。根因：工具条目 config 只有 hint，Provider 条目才有 mnemonDataDir；读 profile patch 依赖 DSH_PROFILE_DIR/DSH_PROFILE，这两个只注入给模型 shell，插件进程里没有（所以 $env:DSH_* 能看到但插件看不到）。修法：①profile patch 末尾加 - id: <plugin-id> + config.mnemonDataDir，注意 loader 的 config 是整体替换（要连带 hint: true），改完宿主热重载、下一轮生效，无需重启；②代码兜底：环境缺省时扫 $DSH_HOME/profiles/*（跳过 backup-*）读 mnemon 块 dataDir，并从 cwd 逐级往上找 .mnemon/state/memory-providers.json，候选去重、显式配置优先。验证：清掉 DSH_HOME/DSH_PROFILE_DIR/DSH_PROFILE/DSH_MNEMON_DATA_DIR/MNEMON_DATA_DIR，从与存储根无关的 cwd 解析仍得到真实 .exp 与 21 条。坑：只做 A 的话换机/重建 profile 会复发；只做 B 的话当前进程仍要重启才生效。",
+                "similarity": 0.4477,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2821
+          },
+          {
+            "action": "干净 node_modules 模拟加载 + 查 profile 挂载链/peer/写死路径",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.3621,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_e213da0744d1",
+                "intent": "评估自写 DSH 插件能否装到另一台机器（那台已装 dsh-mnemon）",
+                "action": "干净 node_modules 模拟加载 + 查 profile 挂载链/peer/写死路径",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "检查项按顺序：①包内 cordis.patch.yml 有没有写死绝对路径（换机会写到错目录/写不进）；②package.json 是否 private（挡 npm publish，只发 tgz 则无所谓）；③peer 依赖（provider-sdk 包）目标 profile 是否已有——装了 dsh-mnemon 就有；④Provider 面板挂载写在 profile 的 cordis.patch.yml 里 mnemon-source-memory-spaces.providers 的 use/instanceId，源码不自动发现，必须手工加；⑤`dsh plugin add` 只是转发 pnpm，不会写 dsh.profile.bundles，装完要在插件管理里启用 bundle 才会加载。验证法：把包 + provider-sdk 拷进临时 node_modules，import plugin.js 看工具是否注册、真跑一次 exp_record/exp_recall，import index.js 看 provider id。",
+                "similarity": 0.3621,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2281
+          }
+        ]
+      }
+    },
+    {
+      "intent": "清空一个 git 工作区",
+      "result": {
+        "intent": "清空一个 git 工作区",
+        "V": 0.8625,
+        "neighbor_count": 8,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 0.7,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 0.7）。",
+        "candidates": [
+          {
+            "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.6391,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_4b33438a274e",
+                "intent": "清空/重置一个 git 工作区，只保留项目信息文件",
+                "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+                "outcome": "success",
+                "G": 1,
+                "note": "关键：动手前分清 tracked vs ignored——本例 *.univer/_preview/_check/_build 从未入库，删了就真没了，必须向用户点名；已入库的 49 个文件封存在提交 b5cb2b3，用 git checkout <hash> -- <path> 可单取。删除用 Resolve-Path 校验绝对路径后再 Remove-Item。提交后再 git gc --prune=now，14 MB 松散对象压到 4.4 MB。收场把封存哈希、恢复命令、丢失项写进 项目信息.md，避免下次以为还能翻出来。",
+                "similarity": 0.6391,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.4474
+          },
+          {
+            "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.5669,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_2f600ab68429",
+                "intent": "整理清除工作区没用的文件（清垃圾、归位依赖、删大件参照克隆）",
+                "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 关键判断：根目录 node_modules 看着像残渣，实际是 dsh-site-dock 测试的 devDependencies（jsdom/react），删了就断；正确做法是整体移进该包目录再重跑测试验证（移动前后都是 49 过/2 败，失败是沙箱 spawnSync EPERM）。2) _tmp 里旧插件副本删前要确认能从 git 历史取回（git log --name-status 查路径，注意 core.quotepath 会挡住中文路径匹配，要加 -c core.quotepath=false）。3) 坑：workspace-write 沙箱拒删「嵌套 git 仓库」内的任何文件（连 .gitignore 都 Access denied，ACL 是全权限），需一次性 escalate 到 danger-full-access 并写清理由。4) 删被误 force-add 的构建产物用 git rm --cached 保住盘上文件。5) 收尾：重跑测试、git gc --prune=now（4.27MB→1.67MB）、把删了什么/怎么恢复/踩的坑写进 项目信息.md。总回收 462.72MB→20.89MB。",
+                "similarity": 0.5669,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.3968
+          },
+          {
+            "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.642,
+            "rank_score": 0.0883,
+            "support": 1,
+            "mean_similarity": 0.3241,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_5541eaa2bf4d",
+                "intent": "给经验库设计写入语义（合并 / 替换 / 忘记）",
+                "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+                "outcome": "success",
+                "G": 1,
+                "note": "读时过滤 deleted_at 与 superseded_by；排序仍用 JitRL（Â × confidence）在读取时算，不能写入时预排全局序（会丢状态条件性）。墓碑只软删，物理清理靠 TTL 或显式 purge。数据文件保持单一 {types, experiences}，类型目录同文件。",
+                "similarity": 0.3241,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2269
+          },
+          {
+            "action": "escalate 到 danger-full-access 跑 git（schannel 才拿得到本机凭据）；无 gh 时用 `git credential fill` 取已存 token 调 GitHub API `POST /user/repos` 建仓（不 auto_init）；建完再 `git push --force-with-lease` 首推即初始化",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6409,
+            "rank_score": 0.0881,
+            "support": 1,
+            "mean_similarity": 0.3229,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_09619fae2f6a",
+                "intent": "在 DSH 沙箱内对 GitHub 建仓并推送",
+                "action": "escalate 到 danger-full-access 跑 git（schannel 才拿得到本机凭据）；无 gh 时用 `git credential fill` 取已存 token 调 GitHub API `POST /user/repos` 建仓（不 auto_init）；建完再 `git push --force-with-lease` 首推即初始化",
+                "outcome": "success",
+                "G": 1,
+                "note": "workspace-write 下必然失败：git HTTPS 报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`；`git credential fill` 报 cygwin `couldn't create signal pipe`；`git subtree` 起不了 sh；`git -c http.sslBackend=openssl` 能握手但 `unable to get local issuer certificate`（TLS 被中间人代理，根证书只在 Windows 证书库）。python(OpenSSL) 走系统证书库所以 HTTPS 正常，可用于 API 调用与远端文件 hash 比对。提权是逐条命令的：`sandbox_permissions=danger-full-access` + 一句 justification，用户会看到审批。",
+                "similarity": 0.3229,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.226
+          },
+          {
+            "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6391,
+            "rank_score": 0.0879,
+            "support": 1,
+            "mean_similarity": 0.3211,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_2d58f246e8b3",
+                "intent": "把自写的 DSH 插件发布到 GitHub（新建公开仓库）",
+                "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 推之前必须 `git diff <发布分支> $(git rev-parse master:<包目录>)` 对齐，只允许 LICENSE/.gitignore/README/package.json 四处差异——首次推完才发现发布分支落后一个提交（缺 async status 修复），重切分支 force-with-lease 重推一遍。2) 发布分支是独立血统，不并回 master（README/package.json 的脱敏只在发布分支），以后改代码改 master 再重切。3) 建仓不需 gh CLI：git credential fill 取已存 token（40 位）→ python/Invoke-RestMethod 调 API 即可；仓库建时不 auto_init，第一次 push 就是初始化。4) 安全网拦 git branch -D / git worktree remove --force / git checkout <ref> -- <path>，清场用无 force 的 worktree remove + 别删分支。",
+                "similarity": 0.3211,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2248
+          },
+          {
+            "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+            "advantage": -0.0625,
+            "advantage_norm": -0.1111,
+            "confidence": 0.6667,
+            "rank_score": -0.0417,
+            "support": 1,
+            "mean_similarity": 0.4515,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_a49a9ef876a4",
+                "intent": "把仓库外的工具脚本并入要发布的插件包，并推送到 GitHub（发布树包含它）",
+                "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "确认发布树来源：npm pack 只收 package.json files 白名单（+LICENSE/package.json），所以脚本必须在 files 里才会进仓；tests/ 不进发布树（沿用「不推测试文件」）。做法：git mv 脚本与测试进包（tools/、tests/），修相对导入，备份路径改成 process.cwd()/备份 免得假设仓库布局；加进 npm test 后总项数 79→85。发布：npm pack --pack-destination dist --cache 工作区目录 → tar 解出到 _tmp → 写 .gitignore（node_modules/dist/_tmp/备份/*.log）→ GIT_INDEX_FILE 指向临时 index、git --work-tree=<解出目录> add -A → write-tree → commit-tree <tree> -p <旧 main> → update-ref 本地发布分支 → git push <remote> <分支>:main（沙箱内必须 danger-full-access）。校验：git ls-remote 对 SHA；再拉 raw.githubusercontent 的 package.json/脚本对内容（第一次 fetch 偶发 failed，重试即可）。坑：发布仓与工作区仓是两套历史，发布树必须用 tarball/临时 index 生成，别直接 subtree split（会把 tests/ 带上）；本地 remote-tracking 手工 update-ref 一下更省心。",
+                "similarity": 0.4515,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2844
+          },
+          {
+            "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+            "advantage": -0.0625,
+            "advantage_norm": -0.1111,
+            "confidence": 0.6667,
+            "rank_score": -0.0417,
+            "support": 1,
+            "mean_similarity": 0.4398,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_bfaf6fbed611",
+                "intent": "清理整理课件/项目目录：删过期备份与临时产物、保持目录整洁",
+                "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "① 盘底两件事决定档位：体积（谁是大头）与 `.gitignore`（二进制成品通常不入库 → 删了没得回退，这类必须先问）。本例 4.03 GB 里 1.9 GB 是无头 Edge 的 CDP 用户目录、0.4 GB 是 v2 中间包，问清楚后一击回收 3.68 GB。② 删除必须幂等：`Directory.Delete` 在 Chromium 自建的 hash 目录（0600/受限 ACL）上报 Access denied，第一次只删了一部分就中止；改成逐项 try/catch 收集失败＋`Test-Path` 重算目标，escalate 后重跑一次就清干净。③ 目标路径逐个断言 `StartsWith(项目根+'\\')` 再删，防止通配符拼错删到项目外。④ 删完立刻重写三份文档（项目信息 备份段/工程遗物行、索引 备份表 26 行→1 行与目录级说明、说明.md 的旧片行），否则索引里全是死指针；顺手发现「成品 md5 与盘上不符」这种历史留痕，按实物修正并注明出处。⑤ 代价要报：`_src/_qa` 里混着一个 `probe_voice.mjs`（gitignore 掉了），随目录一起没了——删「垃圾目录」时要先 `Get-ChildItem *.mjs/*.py` 扫一眼有没有脚本。⑥ 备份目录保留口径：只留「上一次改动之前」那一档，其余中间态全删。",
+                "similarity": 0.4398,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2771
+          },
+          {
+            "action": "清场用无 `--force` 的 `git worktree remove`；被取代的本地分支不硬删，留给用户终端处理（安全网拦 `git branch -D`、`git worktree remove --force`、`git checkout <ref> -- <path>`）",
+            "advantage": -0.5625,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.375,
+            "support": 1,
+            "mean_similarity": 0.3893,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_934d5e241718",
+                "intent": "清理发布用的临时 worktree 与废弃本地分支",
+                "action": "清场用无 `--force` 的 `git worktree remove`；被取代的本地分支不硬删，留给用户终端处理（安全网拦 `git branch -D`、`git worktree remove --force`、`git checkout <ref> -- <path>`）",
+                "outcome": "partial",
+                "G": 0.3,
+                "note": "worktree 里改完并 commit 后树是干净的，直接 `git worktree remove <dir>` 就能成功，不需要 force。`git checkout <ref> -- <path>` 被拦，要取旧版本文件内容就改用 write 工具重写或 `git show <ref>:<path>`（注意重定向编码）。删不掉的旧分支在交接里注明，别用 update-ref 绕。",
+                "similarity": 0.3893,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.1771
+          }
+        ]
+      }
+    },
+    {
+      "intent": "整理工作区垃圾文件",
+      "result": {
+        "intent": "整理工作区垃圾文件",
+        "V": 0.92,
+        "neighbor_count": 5,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 0.2,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 0.2）。",
+        "candidates": [
+          {
+            "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+            "advantage": 0.08,
+            "advantage_norm": 0.6667,
+            "confidence": 0.6667,
+            "rank_score": 0.0533,
+            "support": 1,
+            "mean_similarity": 0.4405,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_2f600ab68429",
+                "intent": "整理清除工作区没用的文件（清垃圾、归位依赖、删大件参照克隆）",
+                "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 关键判断：根目录 node_modules 看着像残渣，实际是 dsh-site-dock 测试的 devDependencies（jsdom/react），删了就断；正确做法是整体移进该包目录再重跑测试验证（移动前后都是 49 过/2 败，失败是沙箱 spawnSync EPERM）。2) _tmp 里旧插件副本删前要确认能从 git 历史取回（git log --name-status 查路径，注意 core.quotepath 会挡住中文路径匹配，要加 -c core.quotepath=false）。3) 坑：workspace-write 沙箱拒删「嵌套 git 仓库」内的任何文件（连 .gitignore 都 Access denied，ACL 是全权限），需一次性 escalate 到 danger-full-access 并写清理由。4) 删被误 force-add 的构建产物用 git rm --cached 保住盘上文件。5) 收尾：重跑测试、git gc --prune=now（4.27MB→1.67MB）、把删了什么/怎么恢复/踩的坑写进 项目信息.md。总回收 462.72MB→20.89MB。",
+                "similarity": 0.4405,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.3084
+          },
+          {
+            "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+            "advantage": 0.08,
+            "advantage_norm": 0.6667,
+            "confidence": 0.5703,
+            "rank_score": 0.0456,
+            "support": 1,
+            "mean_similarity": 0.2488,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_4b33438a274e",
+                "intent": "清空/重置一个 git 工作区，只保留项目信息文件",
+                "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+                "outcome": "success",
+                "G": 1,
+                "note": "关键：动手前分清 tracked vs ignored——本例 *.univer/_preview/_check/_build 从未入库，删了就真没了，必须向用户点名；已入库的 49 个文件封存在提交 b5cb2b3，用 git checkout <hash> -- <path> 可单取。删除用 Resolve-Path 校验绝对路径后再 Remove-Item。提交后再 git gc --prune=now，14 MB 松散对象压到 4.4 MB。收场把封存哈希、恢复命令、丢失项写进 项目信息.md，避免下次以为还能翻出来。",
+                "similarity": 0.2488,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.1742
+          },
+          {
+            "action": "整页克隆相邻页底子（白底/底条/kicker/标题/金线/页码锚点＝8 形状）→ 删掉原页主体 → 按本册网格用 Cm 重画 4 步递进卡 + 收束条 → Morph 整块拷 → sldIdLst 挪位；页码器按「插页后物理页序」重算标题类清单；文件被占则先在副本走完全部校验再请用户松锁覆盖",
+            "advantage": 0.08,
+            "advantage_norm": 0.6667,
+            "confidence": 0.5133,
+            "rank_score": 0.0411,
+            "support": 1,
+            "mean_similarity": 0.189,
+            "typeName": "PPT / 课件",
+            "evidence": [
+              {
+                "id": "ex_efb356cfc298",
+                "intent": "在既有 PPTX 课件中间插一页过渡页（P5 后插「遵义会议→四渡赤水」），保动画保编组",
+                "action": "整页克隆相邻页底子（白底/底条/kicker/标题/金线/页码锚点＝8 形状）→ 删掉原页主体 → 按本册网格用 Cm 重画 4 步递进卡 + 收束条 → Morph 整块拷 → sldIdLst 挪位；页码器按「插页后物理页序」重算标题类清单；文件被占则先在副本走完全部校验再请用户松锁覆盖",
+                "outcome": "accepted",
+                "G": 1,
+                "note": "① 加页比原地改页省事且零风险：`add_slide(P5.layout)` + 清占位符 + 深拷贝 P5 `p:spTree` 子节点，底子（白底/三段底条/标题 27pt 思源宋体 Heavy/金线/页码逐 EMU 锚点）白拿；再删原页主体（按名字前缀批删）即可。② 坐标单位：本册几何全是 cm，`add_textbox/add_shape` 必须 `Cm()`；第一版错用 `Inches()` 整页放大 2.54 倍、卡片跑出画布——必须导 PNG 目检才发现。③ 页码：插页后标题类页清单整体 +1（如 1,4,6,7,10,14,24,26 → 1,4,7,8,11,15,25,27），分母 27；先 scan 看「无页码页」再 dry-run 对表，一次过。④ 文件被占（能读能写不了、rename 也失败、进程表无 Office、~$ 是残留）：别连着硬试，先在副本上做完插入+页码+体检（成品存 _prev/cand27.pptx），再请用户松锁，用 Copy + md5 对表落地；Restart Manager 查占用要按 StringBuilder 版签名才有效。⑤ GradFill 要就地替换 spPr 里的 fill 节点，别 insert 到 prstGeom 前面（schema 顺序）。⑥ 插页后包体变小属正常：原包媒体 deflate 后反而变大，重打包压回正常，比 media 条目字节即可证无损。",
+                "similarity": 0.189,
+                "typeName": "PPT / 课件"
+              }
+            ],
+            "evidence_strength": 0.1323
+          },
+          {
+            "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+            "advantage": -0.12,
+            "advantage_norm": -1,
+            "confidence": 0.5236,
+            "rank_score": -0.0628,
+            "support": 1,
+            "mean_similarity": 0.1998,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_a49a9ef876a4",
+                "intent": "把仓库外的工具脚本并入要发布的插件包，并推送到 GitHub（发布树包含它）",
+                "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "确认发布树来源：npm pack 只收 package.json files 白名单（+LICENSE/package.json），所以脚本必须在 files 里才会进仓；tests/ 不进发布树（沿用「不推测试文件」）。做法：git mv 脚本与测试进包（tools/、tests/），修相对导入，备份路径改成 process.cwd()/备份 免得假设仓库布局；加进 npm test 后总项数 79→85。发布：npm pack --pack-destination dist --cache 工作区目录 → tar 解出到 _tmp → 写 .gitignore（node_modules/dist/_tmp/备份/*.log）→ GIT_INDEX_FILE 指向临时 index、git --work-tree=<解出目录> add -A → write-tree → commit-tree <tree> -p <旧 main> → update-ref 本地发布分支 → git push <remote> <分支>:main（沙箱内必须 danger-full-access）。校验：git ls-remote 对 SHA；再拉 raw.githubusercontent 的 package.json/脚本对内容（第一次 fetch 偶发 failed，重试即可）。坑：发布仓与工作区仓是两套历史，发布树必须用 tarball/临时 index 生成，别直接 subtree split（会把 tests/ 带上）；本地 remote-tracking 手工 update-ref 一下更省心。",
+                "similarity": 0.1998,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.1259
+          },
+          {
+            "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+            "advantage": -0.12,
+            "advantage_norm": -1,
+            "confidence": 0.6066,
+            "rank_score": -0.0728,
+            "support": 1,
+            "mean_similarity": 0.2869,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_bfaf6fbed611",
+                "intent": "清理整理课件/项目目录：删过期备份与临时产物、保持目录整洁",
+                "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "① 盘底两件事决定档位：体积（谁是大头）与 `.gitignore`（二进制成品通常不入库 → 删了没得回退，这类必须先问）。本例 4.03 GB 里 1.9 GB 是无头 Edge 的 CDP 用户目录、0.4 GB 是 v2 中间包，问清楚后一击回收 3.68 GB。② 删除必须幂等：`Directory.Delete` 在 Chromium 自建的 hash 目录（0600/受限 ACL）上报 Access denied，第一次只删了一部分就中止；改成逐项 try/catch 收集失败＋`Test-Path` 重算目标，escalate 后重跑一次就清干净。③ 目标路径逐个断言 `StartsWith(项目根+'\\')` 再删，防止通配符拼错删到项目外。④ 删完立刻重写三份文档（项目信息 备份段/工程遗物行、索引 备份表 26 行→1 行与目录级说明、说明.md 的旧片行），否则索引里全是死指针；顺手发现「成品 md5 与盘上不符」这种历史留痕，按实物修正并注明出处。⑤ 代价要报：`_src/_qa` 里混着一个 `probe_voice.mjs`（gitignore 掉了），随目录一起没了——删「垃圾目录」时要先 `Get-ChildItem *.mjs/*.py` 扫一眼有没有脚本。⑥ 备份目录保留口径：只留「上一次改动之前」那一档，其余中间态全删。",
+                "similarity": 0.2869,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.1807
+          }
+        ]
+      }
+    },
+    {
+      "intent": "写 Windows 启动脚本 bat ps1",
+      "result": {
+        "intent": "写 Windows 启动脚本 bat ps1",
+        "V": 0.9,
+        "neighbor_count": 8,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 0.2,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 0.2）。",
+        "candidates": [
+          {
+            "action": ".bat 用 CRLF+纯 ASCII 写；.ps1 用 UTF-8 BOM；路径用 %~dp0 并 pushd；脚本开头先检查目标进程是否在运行",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.6731,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_02fb971aea7d",
+                "intent": "写 Windows 启动/维护脚本（bat + ps1）",
+                "action": ".bat 用 CRLF+纯 ASCII 写；.ps1 用 UTF-8 BOM；路径用 %~dp0 并 pushd；脚本开头先检查目标进程是否在运行",
+                "outcome": "success",
+                "G": 1,
+                "note": "cmd 不认 LF 换行，会报 '~dp0\"' is not recognized 这类错；PS 5.1 把无 BOM 的 UTF-8 当 ANSI，中文必乱码。生成用 .NET WriteAllText(..., Encoding.ASCII) / utf8BOM，别用 write 工具的默认 LF。",
+                "similarity": 0.6731,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.4712
+          },
+          {
+            "action": "先分清两类崩溃：cookie jar 累积 dsh-auth-*（约 70 次启动撞 16KB 头限→431）与 profile package.json 带 BOM；前者清 cookie jar，后者剥 BOM",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.3719,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_1a30bd14bafd",
+                "intent": "排查 DSH 桌面版启动崩溃（Web authentication failed / 启动即退）",
+                "action": "先分清两类崩溃：cookie jar 累积 dsh-auth-*（约 70 次启动撞 16KB 头限→431）与 profile package.json 带 BOM；前者清 cookie jar，后者剥 BOM",
+                "outcome": "success",
+                "G": 1,
+                "note": "cookie 名 = dsh-auth- + sha256(host:port)，端口随机 ⇒ 每次新增一条；Electron jar 按 host 归置且不清理，请求头超 Node 16KB 上限就 431。清 cookie 不影响账号（凭据在 .credentials.yaml）。BOM 崩溃的报错是 Unexpected token。先跑自检脚本分清再动手。",
+                "similarity": 0.3719,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2603
+          },
+          {
+            "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.37,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_8b85a719f54a",
+                "intent": "修自写经验库插件的召回与排序（短意图召回 0、Â 全 0 退化、脏数据）",
+                "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+                "outcome": "success",
+                "G": 1,
+                "note": "体检先量：真实库 17 条全是成功、0 负样本。①召回：对称 Jaccard 拿 5 token 短意图比 12+ token 长句，「做个研学课 PPT」过阈 0/17，artifact 只做字面包含（ppt≠pptx、任务单不在表里）。②排序：全成功 ⇒ V̂≈1、Q̂=G=1 ⇒ Â≈0，rank_score 全 0，排序实际只剩相似度。③污染：一条 PPT 经验因 note 粘 </note><parameter name=\"type\">… 掉进未分类，类型计数 0。修法：新增 retrieval.js 把「谁算邻居」从 kernel 剥离——相似度=0.4 查询覆盖+0.25 对称 Jaccard+0.2 artifact 语义组+0.15 二元组，sharesSignal 拦「只共享单字」的假召回；kernel 只加 options.neighbors 入参，保持与 jitrl_memory.py 对拍（19 项照过，免重生成 golden）。阈值 0.12：真实库 17/17 正例 top1、5 条噪声 0/5。排序：rankExperiences 算 advantage_spread，<0.05 或已验证候选<2 → mode=evidence、按 相似度×支持度×(G+1)/2 排，note 明说「Â 不具区分度」。supersede 改成只在两边都正时才取代，否则失败做法会被取代掉、库里永远没有负样本。scoreOf 统一到 kernel OUTCOME_SCORES（success 0.8、aborted −1），此前 store 自写一套。写入清洗残渣并从残渣捞回 type；exp_type 加 assign 定点改挂（不动 hits）。测试 62→73，加 tools/audit.mjs 只读体检（负样本/对照覆盖/残渣/12 条固定意图召回率，FAIL 退出 1）。坑：改 kernel 数学必须同步 Python 与 golden fixture；tarball 重装后要重启 DSH 才生效；npm pack 在沙箱内要 --cache 到工作区。",
+                "similarity": 0.37,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.259
+          },
+          {
+            "action": "用 DSH 自带 node 跑 tests/*.test.mjs；改完代码 npm pack 到 dist 再 dsh plugin add 安装",
+            "advantage": 0.1,
+            "advantage_norm": 1,
+            "confidence": 0.6667,
+            "rank_score": 0.0667,
+            "support": 1,
+            "mean_similarity": 0.3692,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_03ad25f48de4",
+                "intent": "给 DSH 插件跑自动化测试并验证安装副本",
+                "action": "用 DSH 自带 node 跑 tests/*.test.mjs；改完代码 npm pack 到 dist 再 dsh plugin add 安装",
+                "outcome": "success",
+                "G": 1,
+                "note": "node 路径：C:\\Users\\yh\\.dsh\\dsh-runtimes\\dsh-primary-runtime\\dependencies\\node\\bin\\node.exe。测试用 SDK 桩 + 临时目录，不碰真宿主；安装副本可用 node --input-type=module -e \"await import('file:///.../node_modules/<pkg>/index.js')\" 做冒烟。",
+                "similarity": 0.3692,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2584
+          },
+          {
+            "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.3653,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_a49a9ef876a4",
+                "intent": "把仓库外的工具脚本并入要发布的插件包，并推送到 GitHub（发布树包含它）",
+                "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "确认发布树来源：npm pack 只收 package.json files 白名单（+LICENSE/package.json），所以脚本必须在 files 里才会进仓；tests/ 不进发布树（沿用「不推测试文件」）。做法：git mv 脚本与测试进包（tools/、tests/），修相对导入，备份路径改成 process.cwd()/备份 免得假设仓库布局；加进 npm test 后总项数 79→85。发布：npm pack --pack-destination dist --cache 工作区目录 → tar 解出到 _tmp → 写 .gitignore（node_modules/dist/_tmp/备份/*.log）→ GIT_INDEX_FILE 指向临时 index、git --work-tree=<解出目录> add -A → write-tree → commit-tree <tree> -p <旧 main> → update-ref 本地发布分支 → git push <remote> <分支>:main（沙箱内必须 danger-full-access）。校验：git ls-remote 对 SHA；再拉 raw.githubusercontent 的 package.json/脚本对内容（第一次 fetch 偶发 failed，重试即可）。坑：发布仓与工作区仓是两套历史，发布树必须用 tarball/临时 index 生成，别直接 subtree split（会把 tests/ 带上）；本地 remote-tracking 手工 update-ref 一下更省心。",
+                "similarity": 0.3653,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2301
+          },
+          {
+            "action": "给 pnpm 硬链接安装的第三方插件客户端 bundle 打单点补丁：只改页脚三元条件与计数文案，写临时文件再 rename 断链，锚点失效就报错退出，并留幂等补丁脚本 + 测试",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.3622,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_c33eab259163",
+                "intent": "改记忆空间卡片页脚：第三方 Provider 也显示条数/连接/大小（上游客户端只按 origin=native 显示 stats）",
+                "action": "给 pnpm 硬链接安装的第三方插件客户端 bundle 打单点补丁：只改页脚三元条件与计数文案，写临时文件再 rename 断链，锚点失效就报错退出，并留幂等补丁脚本 + 测试",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "先读宿主：memory-spaces 的 collectSpaces 把 provider.status() 的 stats 合并进卡片（{...metadata,...status}），我们的 status() 本来就返回 stats；客户端 client.js 却按 `!nativeSpaceProvider(body.provider) ? 类型+目录 : stats` 二选一，所以只差页脚条件。补丁=把条件改成 `body.stats === void 0 && !nativeSpaceProvider(...)`，exp-lib 计数文案单独写「N 条经验」。改已安装副本必须写临时文件再 rename 覆盖（原地写会顺着 pnpm store 硬链接写穿全局 store）；备份到工作区，脚本幂等、锚点找不到就报错退出，上游 upgrade 后重跑。验证：3 行 diff、+191 字节、node --check、nlink 2→1、store 文件 hash 不变；真实视觉要刷新/重启且 Web 有鉴权，自动化截不到。教训：先确认数据面已经提供要显示的值，再判断是渲染分叉还是数据缺失。",
+                "similarity": 0.3622,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2282
+          },
+          {
+            "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.3602,
+            "typeName": "文档 / 教案",
+            "evidence": [
+              {
+                "id": "ex_a0c650b65056",
+                "intent": "按既有 PPT 写配套教案（课件已成稿，要求教案与页序对齐）",
+                "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "上一版 A4 + 两张附录 + 结构化环节说明被用户否掉（原话「按照这个格式，课程理念就在ppt p2，别乱扩充」）。教训：①用户给参考件时，格式=参考件本身，不要按自己习惯排（A4→Letter、15pt→15pt 但行距要 1.15 倍 + 段后 10 磅、附录取掉）；②「理念/背景」类段落要原文照引，扩写=减分；③量准的方法：python-docx 读版面与字号、WPS COM 读 LineSpacing/Rule/SpaceAfter（注意 rule=5 是「倍数」，照抄成「固定值」会把大字号标题压扁）、解 zip 确认有无页眉页脚部件；④最后用「一级/二级标题清单 + 表格行列数 + 列宽合计 + 版面数值」与参考件逐项比对，比目检可靠。",
+                "similarity": 0.3602,
+                "typeName": "文档 / 教案"
+              }
+            ],
+            "evidence_strength": 0.2269
+          },
+          {
+            "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+            "advantage": -0.1,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.0667,
+            "support": 1,
+            "mean_similarity": 0.36,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_bfaf6fbed611",
+                "intent": "清理整理课件/项目目录：删过期备份与临时产物、保持目录整洁",
+                "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "① 盘底两件事决定档位：体积（谁是大头）与 `.gitignore`（二进制成品通常不入库 → 删了没得回退，这类必须先问）。本例 4.03 GB 里 1.9 GB 是无头 Edge 的 CDP 用户目录、0.4 GB 是 v2 中间包，问清楚后一击回收 3.68 GB。② 删除必须幂等：`Directory.Delete` 在 Chromium 自建的 hash 目录（0600/受限 ACL）上报 Access denied，第一次只删了一部分就中止；改成逐项 try/catch 收集失败＋`Test-Path` 重算目标，escalate 后重跑一次就清干净。③ 目标路径逐个断言 `StartsWith(项目根+'\\')` 再删，防止通配符拼错删到项目外。④ 删完立刻重写三份文档（项目信息 备份段/工程遗物行、索引 备份表 26 行→1 行与目录级说明、说明.md 的旧片行），否则索引里全是死指针；顺手发现「成品 md5 与盘上不符」这种历史留痕，按实物修正并注明出处。⑤ 代价要报：`_src/_qa` 里混着一个 `probe_voice.mjs`（gitignore 掉了），随目录一起没了——删「垃圾目录」时要先 `Get-ChildItem *.mjs/*.py` 扫一眼有没有脚本。⑥ 备份目录保留口径：只留「上一次改动之前」那一档，其余中间态全删。",
+                "similarity": 0.36,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2268
+          }
+        ]
+      }
+    },
+    {
+      "intent": "查一下这个角色设定",
+      "result": {
+        "intent": "查一下这个角色设定",
+        "V": 0,
+        "neighbor_count": 0,
+        "mode": "evidence",
+        "degenerate": true,
+        "advantage_spread": 0,
+        "note": "没有相似度 ≥ 0.12 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。",
+        "candidates": []
+      }
+    },
+    {
+      "intent": "做个 Excel 统计表",
+      "result": {
+        "intent": "做个 Excel 统计表",
+        "V": 0.8,
+        "neighbor_count": 1,
+        "mode": "evidence",
+        "degenerate": true,
+        "advantage_spread": 0,
+        "note": "无成败对照（advantage 极差 0），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。",
+        "candidates": [
+          {
+            "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+            "advantage": 0,
+            "advantage_norm": 0,
+            "confidence": 0.6563,
+            "rank_score": 0.2136,
+            "support": 1,
+            "mean_similarity": 0.3391,
+            "typeName": "文档 / 教案",
+            "evidence": [
+              {
+                "id": "ex_a0c650b65056",
+                "intent": "按既有 PPT 写配套教案（课件已成稿，要求教案与页序对齐）",
+                "action": "用户指定参考件版式 → 先把参考件逐项量准（纸张/边距/各级字号/缩进/行距/表格列宽与底色/章节骨架），再按骨架重写内容，教学过程写成教师逐字讲稿；课程理念直接引课件 P2 原文不扩写；脚本按版式参数重建，最后与参考件逐项比对等值",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "上一版 A4 + 两张附录 + 结构化环节说明被用户否掉（原话「按照这个格式，课程理念就在ppt p2，别乱扩充」）。教训：①用户给参考件时，格式=参考件本身，不要按自己习惯排（A4→Letter、15pt→15pt 但行距要 1.15 倍 + 段后 10 磅、附录取掉）；②「理念/背景」类段落要原文照引，扩写=减分；③量准的方法：python-docx 读版面与字号、WPS COM 读 LineSpacing/Rule/SpaceAfter（注意 rule=5 是「倍数」，照抄成「固定值」会把大字号标题压扁）、解 zip 确认有无页眉页脚部件；④最后用「一级/二级标题清单 + 表格行列数 + 列宽合计 + 版面数值」与参考件逐项比对，比目检可靠。",
+                "similarity": 0.3391,
+                "typeName": "文档 / 教案"
+              }
+            ],
+            "evidence_strength": 0.2136
+          }
+        ]
+      }
+    },
+    {
+      "intent": "设计经验库的写入语义",
+      "result": {
+        "intent": "设计经验库的写入语义",
+        "V": 1,
+        "neighbor_count": 3,
+        "mode": "evidence",
+        "degenerate": true,
+        "advantage_spread": 0,
+        "note": "无成败对照（advantage 极差 0），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。",
+        "candidates": [
+          {
+            "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+            "advantage": 0,
+            "advantage_norm": 0,
+            "confidence": 0.6667,
+            "rank_score": 0.3251,
+            "support": 1,
+            "mean_similarity": 0.4644,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_5541eaa2bf4d",
+                "intent": "给经验库设计写入语义（合并 / 替换 / 忘记）",
+                "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+                "outcome": "success",
+                "G": 1,
+                "note": "读时过滤 deleted_at 与 superseded_by；排序仍用 JitRL（Â × confidence）在读取时算，不能写入时预排全局序（会丢状态条件性）。墓碑只软删，物理清理靠 TTL 或显式 purge。数据文件保持单一 {types, experiences}，类型目录同文件。",
+                "similarity": 0.4644,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.3251
+          },
+          {
+            "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+            "advantage": 0,
+            "advantage_norm": 0,
+            "confidence": 0.6662,
+            "rank_score": 0.2447,
+            "support": 1,
+            "mean_similarity": 0.3495,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_8b85a719f54a",
+                "intent": "修自写经验库插件的召回与排序（短意图召回 0、Â 全 0 退化、脏数据）",
+                "action": "召回层 v2（查询覆盖 + artifact 语义组）+ degenerate 降级 + 写入清洗/assign + 体检脚本",
+                "outcome": "success",
+                "G": 1,
+                "note": "体检先量：真实库 17 条全是成功、0 负样本。①召回：对称 Jaccard 拿 5 token 短意图比 12+ token 长句，「做个研学课 PPT」过阈 0/17，artifact 只做字面包含（ppt≠pptx、任务单不在表里）。②排序：全成功 ⇒ V̂≈1、Q̂=G=1 ⇒ Â≈0，rank_score 全 0，排序实际只剩相似度。③污染：一条 PPT 经验因 note 粘 </note><parameter name=\"type\">… 掉进未分类，类型计数 0。修法：新增 retrieval.js 把「谁算邻居」从 kernel 剥离——相似度=0.4 查询覆盖+0.25 对称 Jaccard+0.2 artifact 语义组+0.15 二元组，sharesSignal 拦「只共享单字」的假召回；kernel 只加 options.neighbors 入参，保持与 jitrl_memory.py 对拍（19 项照过，免重生成 golden）。阈值 0.12：真实库 17/17 正例 top1、5 条噪声 0/5。排序：rankExperiences 算 advantage_spread，<0.05 或已验证候选<2 → mode=evidence、按 相似度×支持度×(G+1)/2 排，note 明说「Â 不具区分度」。supersede 改成只在两边都正时才取代，否则失败做法会被取代掉、库里永远没有负样本。scoreOf 统一到 kernel OUTCOME_SCORES（success 0.8、aborted −1），此前 store 自写一套。写入清洗残渣并从残渣捞回 type；exp_type 加 assign 定点改挂（不动 hits）。测试 62→73，加 tools/audit.mjs 只读体检（负样本/对照覆盖/残渣/12 条固定意图召回率，FAIL 退出 1）。坑：改 kernel 数学必须同步 Python 与 golden fixture；tarball 重装后要重启 DSH 才生效；npm pack 在沙箱内要 --cache 到工作区。",
+                "similarity": 0.3495,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2447
+          },
+          {
+            "action": "只读探针：真实库跑 rankExperiences + 逐条 stateSimilarity + 类型计数核对",
+            "advantage": 0,
+            "advantage_norm": 0,
+            "confidence": 0.5522,
+            "rank_score": 0.1609,
+            "support": 1,
+            "mean_similarity": 0.2298,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_f9d2ea7dc2ad",
+                "intent": "给自写的经验库插件做召回/排序体检，判断库里到底有没有可学的东西",
+                "action": "只读探针：真实库跑 rankExperiences + 逐条 stateSimilarity + 类型计数核对",
+                "outcome": "success",
+                "G": 1,
+                "note": "三个坑：①自然短意图（「做个研学课 PPT」「做一节课的任务单」）过阈 0/17，最强相似度 0.0375 / 0.0308 < MIN_SIMILARITY 0.05——stateSimilarity 用对称 Jaccard，5 个 token 的短查询被 12+ token 的长 intent 稀释；artifact 只做字面包含（ppt≠pptx、任务单不在 ARTIFACT_HINTS）。②全成功库（15×G=1 + 2×G=0.3，0 条负样本）下 Â=Q̂−V̂≈0，PPT 意图 3 条候选 advantage 与 rank_score 全 0，排序实际退化为 confidence≈相似度；只有「同一意图下存在低回报做法」时 Â 才有信息量。③62 项单测用带负样本的 golden fixture，代码绿但测不出真实库召回空转——评测数据必须与线上分布对齐。修法：写侧 sanitize 工具参数残渣、recall 在 advantage 极差≈0 时标 degenerate 并改按证据强度排序、补自然意图回归测试。",
+                "similarity": 0.2298,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.1609
+          }
+        ]
+      }
+    },
+    {
+      "intent": "清理嵌套 git 仓库",
+      "result": {
+        "intent": "清理嵌套 git 仓库",
+        "V": 0.8625,
+        "neighbor_count": 8,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 0.7,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 0.7）。",
+        "candidates": [
+          {
+            "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.4662,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_2f600ab68429",
+                "intent": "整理清除工作区没用的文件（清垃圾、归位依赖、删大件参照克隆）",
+                "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 关键判断：根目录 node_modules 看着像残渣，实际是 dsh-site-dock 测试的 devDependencies（jsdom/react），删了就断；正确做法是整体移进该包目录再重跑测试验证（移动前后都是 49 过/2 败，失败是沙箱 spawnSync EPERM）。2) _tmp 里旧插件副本删前要确认能从 git 历史取回（git log --name-status 查路径，注意 core.quotepath 会挡住中文路径匹配，要加 -c core.quotepath=false）。3) 坑：workspace-write 沙箱拒删「嵌套 git 仓库」内的任何文件（连 .gitignore 都 Access denied，ACL 是全权限），需一次性 escalate 到 danger-full-access 并写清理由。4) 删被误 force-add 的构建产物用 git rm --cached 保住盘上文件。5) 收尾：重跑测试、git gc --prune=now（4.27MB→1.67MB）、把删了什么/怎么恢复/踩的坑写进 项目信息.md。总回收 462.72MB→20.89MB。",
+                "similarity": 0.4662,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.3263
+          },
+          {
+            "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.4235,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_5541eaa2bf4d",
+                "intent": "给经验库设计写入语义（合并 / 替换 / 忘记）",
+                "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+                "outcome": "success",
+                "G": 1,
+                "note": "读时过滤 deleted_at 与 superseded_by；排序仍用 JitRL（Â × confidence）在读取时算，不能写入时预排全局序（会丢状态条件性）。墓碑只软删，物理清理靠 TTL 或显式 purge。数据文件保持单一 {types, experiences}，类型目录同文件。",
+                "similarity": 0.4235,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2965
+          },
+          {
+            "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.4172,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_2d58f246e8b3",
+                "intent": "把自写的 DSH 插件发布到 GitHub（新建公开仓库）",
+                "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 推之前必须 `git diff <发布分支> $(git rev-parse master:<包目录>)` 对齐，只允许 LICENSE/.gitignore/README/package.json 四处差异——首次推完才发现发布分支落后一个提交（缺 async status 修复），重切分支 force-with-lease 重推一遍。2) 发布分支是独立血统，不并回 master（README/package.json 的脱敏只在发布分支），以后改代码改 master 再重切。3) 建仓不需 gh CLI：git credential fill 取已存 token（40 位）→ python/Invoke-RestMethod 调 API 即可；仓库建时不 auto_init，第一次 push 就是初始化。4) 安全网拦 git branch -D / git worktree remove --force / git checkout <ref> -- <path>，清场用无 force 的 worktree remove + 别删分支。",
+                "similarity": 0.4172,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.292
+          },
+          {
+            "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.4147,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_4b33438a274e",
+                "intent": "清空/重置一个 git 工作区，只保留项目信息文件",
+                "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+                "outcome": "success",
+                "G": 1,
+                "note": "关键：动手前分清 tracked vs ignored——本例 *.univer/_preview/_check/_build 从未入库，删了就真没了，必须向用户点名；已入库的 49 个文件封存在提交 b5cb2b3，用 git checkout <hash> -- <path> 可单取。删除用 Resolve-Path 校验绝对路径后再 Remove-Item。提交后再 git gc --prune=now，14 MB 松散对象压到 4.4 MB。收场把封存哈希、恢复命令、丢失项写进 项目信息.md，避免下次以为还能翻出来。",
+                "similarity": 0.4147,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2903
+          },
+          {
+            "action": "escalate 到 danger-full-access 跑 git（schannel 才拿得到本机凭据）；无 gh 时用 `git credential fill` 取已存 token 调 GitHub API `POST /user/repos` 建仓（不 auto_init）；建完再 `git push --force-with-lease` 首推即初始化",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.3629,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_09619fae2f6a",
+                "intent": "在 DSH 沙箱内对 GitHub 建仓并推送",
+                "action": "escalate 到 danger-full-access 跑 git（schannel 才拿得到本机凭据）；无 gh 时用 `git credential fill` 取已存 token 调 GitHub API `POST /user/repos` 建仓（不 auto_init）；建完再 `git push --force-with-lease` 首推即初始化",
+                "outcome": "success",
+                "G": 1,
+                "note": "workspace-write 下必然失败：git HTTPS 报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`；`git credential fill` 报 cygwin `couldn't create signal pipe`；`git subtree` 起不了 sh；`git -c http.sslBackend=openssl` 能握手但 `unable to get local issuer certificate`（TLS 被中间人代理，根证书只在 Windows 证书库）。python(OpenSSL) 走系统证书库所以 HTTPS 正常，可用于 API 调用与远端文件 hash 比对。提权是逐条命令的：`sandbox_permissions=danger-full-access` + 一句 justification，用户会看到审批。",
+                "similarity": 0.3629,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.254
+          },
+          {
+            "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+            "advantage": -0.0625,
+            "advantage_norm": -0.1111,
+            "confidence": 0.6667,
+            "rank_score": -0.0417,
+            "support": 1,
+            "mean_similarity": 0.4128,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_bfaf6fbed611",
+                "intent": "清理整理课件/项目目录：删过期备份与临时产物、保持目录整洁",
+                "action": "先按目录量体积＋查 git 是否纳管，分三档（纯垃圾直删／工程构件留脚本删产物／成品副本问用户留最新一档）；目标全拼绝对路径并断言在项目根下；删除脚本写成幂等＋逐项 try/catch；浏览器/缓存目录 ACL 拒删则一次性 escalate 到 danger-full-access",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "① 盘底两件事决定档位：体积（谁是大头）与 `.gitignore`（二进制成品通常不入库 → 删了没得回退，这类必须先问）。本例 4.03 GB 里 1.9 GB 是无头 Edge 的 CDP 用户目录、0.4 GB 是 v2 中间包，问清楚后一击回收 3.68 GB。② 删除必须幂等：`Directory.Delete` 在 Chromium 自建的 hash 目录（0600/受限 ACL）上报 Access denied，第一次只删了一部分就中止；改成逐项 try/catch 收集失败＋`Test-Path` 重算目标，escalate 后重跑一次就清干净。③ 目标路径逐个断言 `StartsWith(项目根+'\\')` 再删，防止通配符拼错删到项目外。④ 删完立刻重写三份文档（项目信息 备份段/工程遗物行、索引 备份表 26 行→1 行与目录级说明、说明.md 的旧片行），否则索引里全是死指针；顺手发现「成品 md5 与盘上不符」这种历史留痕，按实物修正并注明出处。⑤ 代价要报：`_src/_qa` 里混着一个 `probe_voice.mjs`（gitignore 掉了），随目录一起没了——删「垃圾目录」时要先 `Get-ChildItem *.mjs/*.py` 扫一眼有没有脚本。⑥ 备份目录保留口径：只留「上一次改动之前」那一档，其余中间态全删。",
+                "similarity": 0.4128,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2601
+          },
+          {
+            "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+            "advantage": -0.0625,
+            "advantage_norm": -0.1111,
+            "confidence": 0.6667,
+            "rank_score": -0.0417,
+            "support": 1,
+            "mean_similarity": 0.3652,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_a49a9ef876a4",
+                "intent": "把仓库外的工具脚本并入要发布的插件包，并推送到 GitHub（发布树包含它）",
+                "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "确认发布树来源：npm pack 只收 package.json files 白名单（+LICENSE/package.json），所以脚本必须在 files 里才会进仓；tests/ 不进发布树（沿用「不推测试文件」）。做法：git mv 脚本与测试进包（tools/、tests/），修相对导入，备份路径改成 process.cwd()/备份 免得假设仓库布局；加进 npm test 后总项数 79→85。发布：npm pack --pack-destination dist --cache 工作区目录 → tar 解出到 _tmp → 写 .gitignore（node_modules/dist/_tmp/备份/*.log）→ GIT_INDEX_FILE 指向临时 index、git --work-tree=<解出目录> add -A → write-tree → commit-tree <tree> -p <旧 main> → update-ref 本地发布分支 → git push <remote> <分支>:main（沙箱内必须 danger-full-access）。校验：git ls-remote 对 SHA；再拉 raw.githubusercontent 的 package.json/脚本对内容（第一次 fetch 偶发 failed，重试即可）。坑：发布仓与工作区仓是两套历史，发布树必须用 tarball/临时 index 生成，别直接 subtree split（会把 tests/ 带上）；本地 remote-tracking 手工 update-ref 一下更省心。",
+                "similarity": 0.3652,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2301
+          },
+          {
+            "action": "清场用无 `--force` 的 `git worktree remove`；被取代的本地分支不硬删，留给用户终端处理（安全网拦 `git branch -D`、`git worktree remove --force`、`git checkout <ref> -- <path>`）",
+            "advantage": -0.5625,
+            "advantage_norm": -1,
+            "confidence": 0.6667,
+            "rank_score": -0.375,
+            "support": 1,
+            "mean_similarity": 0.428,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_934d5e241718",
+                "intent": "清理发布用的临时 worktree 与废弃本地分支",
+                "action": "清场用无 `--force` 的 `git worktree remove`；被取代的本地分支不硬删，留给用户终端处理（安全网拦 `git branch -D`、`git worktree remove --force`、`git checkout <ref> -- <path>`）",
+                "outcome": "partial",
+                "G": 0.3,
+                "note": "worktree 里改完并 commit 后树是干净的，直接 `git worktree remove <dir>` 就能成功，不需要 force。`git checkout <ref> -- <path>` 被拦，要取旧版本文件内容就改用 write 工具重写或 `git show <ref>:<path>`（注意重定向编码）。删不掉的旧分支在交接里注明，别用 update-ref 绕。",
+                "similarity": 0.428,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.1947
+          }
+        ]
+      }
+    },
+    {
+      "intent": "推送到 GitHub",
+      "result": {
+        "intent": "推送到 GitHub",
+        "V": 0.8625,
+        "neighbor_count": 8,
+        "mode": "advantage",
+        "degenerate": false,
+        "advantage_spread": 0.7,
+        "note": "按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 0.7）。",
+        "candidates": [
+          {
+            "action": "escalate 到 danger-full-access 跑 git（schannel 才拿得到本机凭据）；无 gh 时用 `git credential fill` 取已存 token 调 GitHub API `POST /user/repos` 建仓（不 auto_init）；建完再 `git push --force-with-lease` 首推即初始化",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.6249,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_09619fae2f6a",
+                "intent": "在 DSH 沙箱内对 GitHub 建仓并推送",
+                "action": "escalate 到 danger-full-access 跑 git（schannel 才拿得到本机凭据）；无 gh 时用 `git credential fill` 取已存 token 调 GitHub API `POST /user/repos` 建仓（不 auto_init）；建完再 `git push --force-with-lease` 首推即初始化",
+                "outcome": "success",
+                "G": 1,
+                "note": "workspace-write 下必然失败：git HTTPS 报 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`；`git credential fill` 报 cygwin `couldn't create signal pipe`；`git subtree` 起不了 sh；`git -c http.sslBackend=openssl` 能握手但 `unable to get local issuer certificate`（TLS 被中间人代理，根证书只在 Windows 证书库）。python(OpenSSL) 走系统证书库所以 HTTPS 正常，可用于 API 调用与远端文件 hash 比对。提权是逐条命令的：`sandbox_permissions=danger-full-access` + 一句 justification，用户会看到审批。",
+                "similarity": 0.6249,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.4374
+          },
+          {
+            "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6667,
+            "rank_score": 0.0917,
+            "support": 1,
+            "mean_similarity": 0.5109,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_2d58f246e8b3",
+                "intent": "把自写的 DSH 插件发布到 GitHub（新建公开仓库）",
+                "action": "git subtree split 切出「只含插件包内容」的发布分支 → 临时 worktree 里做发布准备（LICENSE、.gitignore、package.json 补 author/repository/homepage/bugs 与 scripts.test、README 去本机绝对路径并按实测测试数重写）→ GitHub API POST /user/repos 建公开仓 → git push --force-with-lease 推 publish 分支到 main",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 推之前必须 `git diff <发布分支> $(git rev-parse master:<包目录>)` 对齐，只允许 LICENSE/.gitignore/README/package.json 四处差异——首次推完才发现发布分支落后一个提交（缺 async status 修复），重切分支 force-with-lease 重推一遍。2) 发布分支是独立血统，不并回 master（README/package.json 的脱敏只在发布分支），以后改代码改 master 再重切。3) 建仓不需 gh CLI：git credential fill 取已存 token（40 位）→ python/Invoke-RestMethod 调 API 即可；仓库建时不 auto_init，第一次 push 就是初始化。4) 安全网拦 git branch -D / git worktree remove --force / git checkout <ref> -- <path>，清场用无 force 的 worktree remove + 别删分支。",
+                "similarity": 0.5109,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.3576
+          },
+          {
+            "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6239,
+            "rank_score": 0.0858,
+            "support": 1,
+            "mean_similarity": 0.3051,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_5541eaa2bf4d",
+                "intent": "给经验库设计写入语义（合并 / 替换 / 忘记）",
+                "action": "upsert 三分支：同做法就地更新 hits；同意图同类型但做法不同 → 新条 + 旧条 superseded_by；其余追加；软删墓碑 30 天后清理",
+                "outcome": "success",
+                "G": 1,
+                "note": "读时过滤 deleted_at 与 superseded_by；排序仍用 JitRL（Â × confidence）在读取时算，不能写入时预排全局序（会丢状态条件性）。墓碑只软删，物理清理靠 TTL 或显式 purge。数据文件保持单一 {types, experiences}，类型目录同文件。",
+                "similarity": 0.3051,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.2136
+          },
+          {
+            "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6226,
+            "rank_score": 0.0856,
+            "support": 1,
+            "mean_similarity": 0.3037,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_4b33438a274e",
+                "intent": "清空/重置一个 git 工作区，只保留项目信息文件",
+                "action": "先 git status --ignored 分清「已入库」与「.gitignore 排除（未入库、删了不可恢复）」两类，再逐目录 Resolve-Path 校验后删除；删完改 项目信息.md 记下封存提交哈希与恢复命令，提交删除，最后 git gc --prune=now 压历史包",
+                "outcome": "success",
+                "G": 1,
+                "note": "关键：动手前分清 tracked vs ignored——本例 *.univer/_preview/_check/_build 从未入库，删了就真没了，必须向用户点名；已入库的 49 个文件封存在提交 b5cb2b3，用 git checkout <hash> -- <path> 可单取。删除用 Resolve-Path 校验绝对路径后再 Remove-Item。提交后再 git gc --prune=now，14 MB 松散对象压到 4.4 MB。收场把封存哈希、恢复命令、丢失项写进 项目信息.md，避免下次以为还能翻出来。",
+                "similarity": 0.3037,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2126
+          },
+          {
+            "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+            "advantage": 0.1375,
+            "advantage_norm": 0.2444,
+            "confidence": 0.6221,
+            "rank_score": 0.0855,
+            "support": 1,
+            "mean_similarity": 0.3032,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_2f600ab68429",
+                "intent": "整理清除工作区没用的文件（清垃圾、归位依赖、删大件参照克隆）",
+                "action": "先量每个目录体积并核对 git 跟踪状态，按「草稿/可重建 → 直接删」「被引用的依赖 → 归位而非删」「大件 → 问用户拍板」三档处理；删前用 Resolve-Path 校验在库内，删后重跑测试，最后 gc 压包并写 项目信息.md",
+                "outcome": "success",
+                "G": 1,
+                "note": "1) 关键判断：根目录 node_modules 看着像残渣，实际是 dsh-site-dock 测试的 devDependencies（jsdom/react），删了就断；正确做法是整体移进该包目录再重跑测试验证（移动前后都是 49 过/2 败，失败是沙箱 spawnSync EPERM）。2) _tmp 里旧插件副本删前要确认能从 git 历史取回（git log --name-status 查路径，注意 core.quotepath 会挡住中文路径匹配，要加 -c core.quotepath=false）。3) 坑：workspace-write 沙箱拒删「嵌套 git 仓库」内的任何文件（连 .gitignore 都 Access denied，ACL 是全权限），需一次性 escalate 到 danger-full-access 并写清理由。4) 删被误 force-add 的构建产物用 git rm --cached 保住盘上文件。5) 收尾：重跑测试、git gc --prune=now（4.27MB→1.67MB）、把删了什么/怎么恢复/踩的坑写进 项目信息.md。总回收 462.72MB→20.89MB。",
+                "similarity": 0.3032,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.2122
+          },
+          {
+            "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+            "advantage": -0.0625,
+            "advantage_norm": -0.1111,
+            "confidence": 0.6667,
+            "rank_score": -0.0417,
+            "support": 1,
+            "mean_similarity": 0.6242,
+            "typeName": "代码 / 插件",
+            "evidence": [
+              {
+                "id": "ex_a49a9ef876a4",
+                "intent": "把仓库外的工具脚本并入要发布的插件包，并推送到 GitHub（发布树包含它）",
+                "action": "把工作区工具脚本移进插件包（tools/）并加进 package.json files + npm test；发布树用 npm pack 解出 + 临时 index/--work-tree/commit-tree（parent 取旧 main 保证快进）推送，推完用 raw.githubusercontent 校验内容",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "确认发布树来源：npm pack 只收 package.json files 白名单（+LICENSE/package.json），所以脚本必须在 files 里才会进仓；tests/ 不进发布树（沿用「不推测试文件」）。做法：git mv 脚本与测试进包（tools/、tests/），修相对导入，备份路径改成 process.cwd()/备份 免得假设仓库布局；加进 npm test 后总项数 79→85。发布：npm pack --pack-destination dist --cache 工作区目录 → tar 解出到 _tmp → 写 .gitignore（node_modules/dist/_tmp/备份/*.log）→ GIT_INDEX_FILE 指向临时 index、git --work-tree=<解出目录> add -A → write-tree → commit-tree <tree> -p <旧 main> → update-ref 本地发布分支 → git push <remote> <分支>:main（沙箱内必须 danger-full-access）。校验：git ls-remote 对 SHA；再拉 raw.githubusercontent 的 package.json/脚本对内容（第一次 fetch 偶发 failed，重试即可）。坑：发布仓与工作区仓是两套历史，发布树必须用 tarball/临时 index 生成，别直接 subtree split（会把 tests/ 带上）；本地 remote-tracking 手工 update-ref 一下更省心。",
+                "similarity": 0.6242,
+                "typeName": "代码 / 插件"
+              }
+            ],
+            "evidence_strength": 0.3932
+          },
+          {
+            "action": "去 private + 默认路径从 DSH_HOME 派生 + 从 profile 读 mnemon 存储根 + README 通用安装；发布树不含 tests，用 tarball + 临时 index 构造",
+            "advantage": -0.0625,
+            "advantage_norm": -0.1111,
+            "confidence": 0.6667,
+            "rank_score": -0.0417,
+            "support": 1,
+            "mean_similarity": 0.4096,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_b2e521700b13",
+                "intent": "把自写 DSH 插件做成可对外安装的正式插件（B 正：不注册 npm，发 GitHub + tgz）",
+                "action": "去 private + 默认路径从 DSH_HOME 派生 + 从 profile 读 mnemon 存储根 + README 通用安装；发布树不含 tests，用 tarball + 临时 index 构造",
+                "outcome": "success",
+                "G": 0.8,
+                "note": "顺序：包内 cordis.patch.yml 不留任何绝对路径（否则换机写错目录）→ package.json 去 private、补 repo 字段并升版本 → 数据目录默认 $DSH_HOME/exp-lib/provider-data → 关键：工具要能自己找到 memory-providers.json，除了 config 还要读 profile 的 cordis.patch.yml 里 mnemon 条目的 dataDir（README 里写明）→ npm pack 后装进 profile 再验 hash → GitHub 只推 tarball 内容 + .gitignore（临时 GIT_INDEX_FILE + --work-tree + commit-tree，不用 worktree）→ 发布树删 tests/ dist/。坑：把 dataDir 从包内 patch 删掉后，运行中的实例读不到真实库，提示层直接变 0 条——本机 mnemon 自定义存储根时只靠插件 config 会读空库。",
+                "similarity": 0.4096,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.258
+          },
+          {
+            "action": "清场用无 `--force` 的 `git worktree remove`；被取代的本地分支不硬删，留给用户终端处理（安全网拦 `git branch -D`、`git worktree remove --force`、`git checkout <ref> -- <path>`）",
+            "advantage": -0.5625,
+            "advantage_norm": -1,
+            "confidence": 0.6249,
+            "rank_score": -0.3515,
+            "support": 1,
+            "mean_similarity": 0.3061,
+            "typeName": "环境 / 部署",
+            "evidence": [
+              {
+                "id": "ex_934d5e241718",
+                "intent": "清理发布用的临时 worktree 与废弃本地分支",
+                "action": "清场用无 `--force` 的 `git worktree remove`；被取代的本地分支不硬删，留给用户终端处理（安全网拦 `git branch -D`、`git worktree remove --force`、`git checkout <ref> -- <path>`）",
+                "outcome": "partial",
+                "G": 0.3,
+                "note": "worktree 里改完并 commit 后树是干净的，直接 `git worktree remove <dir>` 就能成功，不需要 force。`git checkout <ref> -- <path>` 被拦，要取旧版本文件内容就改用 write 工具重写或 `git show <ref>:<path>`（注意重定向编码）。删不掉的旧分支在交接里注明，别用 update-ref 绕。",
+                "similarity": 0.3061,
+                "typeName": "环境 / 部署"
+              }
+            ],
+            "evidence_strength": 0.1393
+          }
+        ]
+      }
+    }
+  ]
+}
