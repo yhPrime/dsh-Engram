@@ -64,7 +64,7 @@ await check('manifest：provider 契约字段与能力位', () => {
   assert.equal(manifest.apiVersion, 'dsh-mnemon.memory-space-provider/v1')
   assert.equal(manifest.kind, 'provider')
   assert.equal(manifest.typeId, 'exp-lib')
-  assert.equal(manifest.packageName, 'dsh-exp-lib-provider')
+  assert.equal(manifest.packageName, 'dsh-engram')
   assert.equal(manifest.origin, 'third-party')
   assert.equal(manifest.locality, 'local')
   assert.deepEqual(manifest.capabilities, {

@@ -11,7 +11,7 @@ import path from 'node:path'
 import { createTools } from './engine.js'
 import { renderHint, resolveToolDataDir } from './store.js'
 
-export const name = 'dsh-exp-lib-provider'
+export const name = 'dsh-engram'
 // Cordis 标准：等 tools / systemPrompt 服务就绪后再 apply。
 export const inject = ['tools', 'systemPrompt']
 

@@ -31,7 +31,7 @@ import {
 const PACKAGE_VERSION = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 
 export const PROVIDER_ID = 'exp-lib'
-export const PACKAGE_NAME = 'dsh-exp-lib-provider'
+export const PACKAGE_NAME = 'dsh-engram'
 export const API_VERSION = 'dsh-mnemon.memory-space-provider/v1'
 
 export const DATA_DIR_FIELD = {

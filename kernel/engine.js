@@ -8,9 +8,11 @@
  *   engine.record(...) / engine.recall(...) / engine.feedback(...)
  *   engine.consolidate(...) / engine.listSkills() / engine.validate()
  */
+import fs from 'node:fs'
+
 import { buildTools } from './tools.js'
 import { listSkills, readSkillBySlug, validateAllSkills } from './skills.js'
-import { renderHint } from './store.js'
+import { readStore, renderHint, storeFile } from './store.js'
 
 /** 构建工具面（适配器与 headless 共用同一套配置解析）。 */
 export function createTools(config = {}, defineTool = (definition) => definition) {
@@ -45,5 +47,31 @@ export function createEngine(options = {}) {
     readSkill: (slug) => readSkillBySlug(dataDir, slug),
     validate: () => validateAllSkills(dataDir),
     hint: (maxCharacters) => renderHint(config, maxCharacters),
+    snapshot: () => {
+      const file = storeFile(dataDir)
+      let exists = false
+      let bytes = 0
+      let updatedAt = ''
+      try {
+        const stat = fs.statSync(file)
+        exists = true
+        bytes = stat.size
+        updatedAt = stat.mtime.toISOString()
+      } catch {
+        // 文件不存在：按空库返回
+      }
+      let corrupt = false
+      let parseError = ''
+      if (exists) {
+        try {
+          JSON.parse(fs.readFileSync(file, 'utf8'))
+        } catch (error) {
+          corrupt = true
+          parseError = String((error && error.message) || error)
+        }
+      }
+      const store = corrupt ? { version: 1, types: [], experiences: [] } : readStore(dataDir)
+      return { dataDir, file, exists, bytes, updatedAt, corrupt, parseError, store }
+    },
   }
 }

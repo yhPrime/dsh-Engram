@@ -29,7 +29,7 @@ function ctxWithTools(registered) {
 }
 
 await check('插件入口：name / inject / apply 存在', () => {
-  assert.equal(mod.name, 'dsh-exp-lib-provider')
+  assert.equal(mod.name, 'dsh-engram')
   assert.deepEqual(mod.inject, ['tools', 'systemPrompt'])
   assert.equal(typeof mod.apply, 'function')
 })

@@ -1,4 +1,4 @@
-# dsh-exp-lib-provider
+# dsh-engram
 
 把「经验库」做成 **dsh-mnemon 的一个记忆空间 Provider**：空间由一个 JSON 文件存储，面板可观可管；写入只走 `exp_record`，读取走 `exp_recall`（或记忆插件的通用检索）。
 
@@ -8,7 +8,7 @@
 
 | 项 | 值 |
 |---|---|
-| `typeId` / 包名 | `exp-lib` / `dsh-exp-lib-provider` |
+| `typeId` / 包名 | `exp-lib` / `dsh-engram` |
 | 形态 | 本地 Provider（`locality: local`，`workspaceBinding: optional-override`） |
 | 能力 | search / browse / graph / entities / forget；**remember: false**；`writeMode: exact`、`deletionMode: soft` |
 | 工具 | `exp_record`、`exp_recall`、`exp_feedback`、`exp_type`（与 Provider 共用同一份数据） |
@@ -19,16 +19,16 @@
 前置：DSH 里已装 `dsh-mnemon`。
 
 ```powershell
-dsh plugin --profile <profile> add ./dist/dsh-exp-lib-provider-<版本>.tgz
+dsh plugin --profile <profile> add ./dist/dsh-engram-<版本>.tgz
 ```
 
 用 tarball 而不是目录：`dsh plugin add <目录>` 会 pnpm link，运行时按真实路径解析，宿主提供的 `dsh-mnemon-source-memory-spaces` 会找不到。改完代码要重新 pack + add 才生效。
 
-2) 插件管理里启用 `dsh-exp-lib-provider`（`dsh plugin add` 不会自动写进 bundles）。  
+2) 插件管理里启用 `dsh-engram`（`dsh plugin add` 不会自动写进 bundles）。  
 3) 在 `cordis.patch.yml` 的 `mnemon-source-memory-spaces` 条目里给 `providers` 末尾补：
 
 ```yaml
-      - use: dsh-exp-lib-provider
+      - use: dsh-engram
         instanceId: exp-lib
 ```
 

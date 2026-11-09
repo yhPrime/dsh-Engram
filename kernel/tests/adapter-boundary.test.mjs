@@ -43,7 +43,7 @@ check('plugin 只做注册：通过 createTools 建工具，不再直接 import 
   assert.ok(text.includes('createTools(config, defineTool)'))
   assert.ok(!/import\s*\{[^}]*buildTools[^}]*\}\s*from\s*'\.\/tools\.js'/.test(text), 'plugin 不应再直接 import buildTools')
   assert.equal(typeof plugin.apply, 'function')
-  assert.equal(plugin.name, 'dsh-exp-lib-provider')
+  assert.equal(plugin.name, 'dsh-engram')
 })
 
 check('engine 不反向依赖适配器', () => {

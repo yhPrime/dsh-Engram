@@ -1,6 +1,6 @@
 - insert:
     - id: exp-lib-provider
-      name: dsh-exp-lib-provider/plugin
+      name: dsh-engram/plugin
       config:
         # 数据目录默认从 $DSH_HOME 派生（$DSH_HOME/exp-lib/provider-data），换机器不用改。
         # 想固定到别处再取消注释（支持 ~ 开头）：
