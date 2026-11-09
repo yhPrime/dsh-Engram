@@ -92,3 +92,27 @@ export function writeUiConfig(patch, env = process.env) {
   writeSettings({ ui: next }, env)
   return next
 }
+
+/**
+ * Git 备份配置（像记忆插件那样把库推到远端仓库）。
+ * 存在同一个 settings.json 的 `git` 键下；token 也在这里（本机文件，README 有安全提示）。
+ */
+export const GIT_DEFAULTS = { branch: 'main', autoBackupMinutes: 0 }
+
+export function readGitConfig(env = process.env) {
+  const raw = readSettings(env).git
+  const git = raw !== null && typeof raw === 'object' ? raw : {}
+  return { ...GIT_DEFAULTS, ...git }
+}
+
+export function writeGitConfig(patch, env = process.env) {
+  const current = readGitConfig(env)
+  const next = { ...current }
+  for (const [key, value] of Object.entries(patch && typeof patch === 'object' ? patch : {})) {
+    if (value === null || value === undefined || value === '') delete next[key]
+    else next[key] = value
+  }
+  writeSettings({ git: next }, env)
+  return next
+}
+

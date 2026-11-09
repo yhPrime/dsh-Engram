@@ -374,7 +374,46 @@ body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结�
 → `{ problems: [{ slug, problems: string[] }] }`
 
 ### `GET /settings`
-→ `{ source, dataDir, file, exists, bytes, updatedAt, currentRoot, version }`
+→ `{ source, dataDir, file, exists, bytes, updatedAt, currentRoot, version, config, ui, git, spec }`
+
+- `config` / `ui` / `git`：已保存的覆盖值（没存过的键不出现，界面显示「默认」）。
+- `spec`：三组设置项的字段说明 `{ config[], ui[], git[] }`，每项 `{ key, label, type, values?, labels?, hint?, tip? }`；
+  `tip` 是给鼠标悬停提示框用的长说明（有歧义的项才有）。
+- 设置项保存：`POST /settings` body 可带 `currentRoot` / `config` / `ui` / `git` 任意组合；传 `null` 或空串等于「恢复默认」（删键）。
+
+### `GET /sync`
+→ Git 备份状态：
+
+```json
+{
+  "available": true,
+  "dataDir": "C:/Users/<用户>/WorkDeepSeek/.exp",
+  "isRepo": true,
+  "branch": "main",
+  "remote": "https://github.com/<用户>/<仓库>.git",
+  "dirtyCount": 0,
+  "ahead": 0,
+  "behind": 0,
+  "lastCommitAt": "2026-11-09T16:00:00.000Z",
+  "lastCommitSubject": "经验库备份 2026-11-09 16:00:00",
+  "configured": true,
+  "targetBranch": "main",
+  "autoBackupMinutes": 0,
+  "error": ""
+}
+```
+
+### `POST /sync`
+body: `{ action: "init" | "push" | "pull" | "status", message? }`
+
+- `init`：在数据目录里 `git init` 并设置 `origin`（已存在则只更新 origin）。
+- `push`：`git add -A -- .` → 有改动就 commit → `git push -u origin <branch>`。
+- `pull`：`fetch` + `merge --ff-only`；有分叉不自动合并，返回原因。
+- 返回 `{ ok, action, committed?, pushed?, commit?, reason? }`；失败不抛 500，用 `ok:false + reason` 表达。
+- 错误码：`bad-action`（未知动作）。
+
+> Git 备份配置在 `~/.dsh/engram/settings.json` 的 `git` 键：`repoUrl` / `branch` / `token` / `authorName` / `authorEmail` / `autoBackupMinutes`。
+> `token` 只用于 https 的 `http.extraHeader`，不会写进仓库、也不会出现在错误信息里（已打码）。
 
 ### GET /graph&#10;→ { nodes, edges, summary, notice, updatedAt }。节点 kind：root/type/experience/skill；边 kind：root/type/derived。供「关系图」页渲染。
 

@@ -18,7 +18,8 @@ import path from 'node:path'
 
 import * as kernel from './kernel/plugin.js'
 import { API_PREFIX, createApi } from './ui/shell.js'
-import { resolveEngramDataDir } from './kernel/settings.js'
+import { readGitConfig, resolveEngramDataDir } from './kernel/settings.js'
+import { gitPush } from './kernel/git-sync.js'
 
 export const name = 'dsh-engram'
 
@@ -59,5 +60,31 @@ export async function apply(ctx, rawConfig = {}) {
     } catch (error) {
       audit(rawConfig, `apply: webServer inject failed: ${error && error.message ? error.message : String(error)}`)
     }
+  }
+  startAutoBackup(ctx, rawConfig)
+}
+
+/**
+ * 自动备份：设置里 autoBackupMinutes > 0 时，按间隔 commit + push。
+ * 每次触发都重新读配置与数据目录（改设置/换存储位置后立刻跟随），没有改动时 gitPush 会直接返回。
+ */
+function startAutoBackup(ctx, rawConfig) {
+  try {
+    const minutes = Number(readGitConfig().autoBackupMinutes) || 0
+    if (minutes <= 0) return
+    const intervalMs = Math.max(15, minutes) * 60000
+    const timer = setInterval(() => {
+      const dataDir = resolveEngramDataDir(rawConfig)
+      gitPush(dataDir, readGitConfig())
+        .then((result) => {
+          if (result && result.pushed) audit(rawConfig, `auto-backup: pushed ${result.commit || ''}`.trim())
+        })
+        .catch((error) => audit(rawConfig, `auto-backup failed: ${error && error.message ? error.message : String(error)}`))
+    }, intervalMs)
+    if (timer && typeof timer.unref === 'function') timer.unref()
+    if (ctx && typeof ctx.effect === 'function') ctx.effect(() => () => clearInterval(timer))
+    audit(rawConfig, `auto-backup: every ${intervalMs / 60000} min`)
+  } catch (error) {
+    audit(rawConfig, `auto-backup setup failed: ${error && error.message ? error.message : String(error)}`)
   }
 }

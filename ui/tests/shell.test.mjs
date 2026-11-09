@@ -509,6 +509,37 @@ await check('GET /graph：根/类型/经验/技能节点与边齐全', async () 
   assert.equal(data.summary.experiences, 12)
 })
 
+await check('GET /settings：spec 含 git 组，有歧义的项都带 tip', async () => {
+  const source = createLiveSource({ dataDir: tempDir() })
+  const { status, payload } = await call(source, '/settings')
+  assert.equal(status, 200)
+  assert.equal(payload.ok, true)
+  const spec = payload.data.spec
+  assert.ok(Array.isArray(spec.git) && spec.git.length >= 6, 'git 组缺失')
+  const byKey = Object.fromEntries([...spec.config, ...spec.ui, ...spec.git].map((field) => [field.key, field]))
+  for (const key of ['hint', 'usageLogMaxBytes', 'dataDir', 'feedbackDecayDays', 'mergeThreshold', 'typeSimilarity']) {
+    assert.ok(byKey[key] && typeof byKey[key].tip === 'string' && byKey[key].tip.length > 8, `${key} 缺 tip`)
+  }
+  assert.equal(typeof payload.data.git, 'object')
+  assert.equal(payload.data.git.branch, 'main')
+  assert.equal(payload.data.git.autoBackupMinutes, 0)
+})
+
+await check('GET /sync：未初始化也返回完整状态；未知动作 400', async () => {
+  const source = createLiveSource({ dataDir: tempDir() })
+  const status = await call(source, '/sync')
+  assert.equal(status.status, 200)
+  const data = status.payload.data
+  assert.equal(data.isRepo, false)
+  assert.equal(data.configured, false)
+  assert.equal(typeof data.dirtyCount, 'number')
+  assert.equal(typeof data.ahead, 'number')
+  const bad = await call(source, '/sync', { method: 'POST', body: { action: 'nope' } })
+  assert.equal(bad.status, 400)
+  assert.equal(bad.payload.ok, false)
+  assert.equal(bad.payload.error.code, 'bad-action')
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
 
