@@ -1,7 +1,12 @@
 # dsh-engram 单一插件：一个入口同时挂工具面（kernel）与控制台 API（ui）。
+#
+# 注意：条目名必须是「裸包名」dsh-engram。DSH 的客户端模块加载器按 Loader
+# 条目名认包、读 package.json 里的 dsh.client；写成 dsh-engram/plugin 这种
+# 带子路径的名字，它会去找 dsh-engram/plugin/package.json 从而认不出客户端半，
+# 结果就是 host 起来、侧栏和主面板都不出现。
 - insert:
     - id: engram
-      name: dsh-engram/plugin
+      name: dsh-engram
       config:
         hint: true
         # 控制台数据源：live = 真实经验库（默认）；mock = 内置示例数据（仅演示）
