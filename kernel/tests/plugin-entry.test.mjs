@@ -110,5 +110,13 @@ await check('webServer 注册抛错时不拖垮工具面', async () => {
   await entry.apply(boom, { hint: false, dataDir: path.join(root, '_tmp', 'entry-test-data') })
 })
 
+await check('cordis patch 用裸包名挂条目（客户端加载器按条目名认包，带子路径会认不出）', () => {
+  const patch = fs.readFileSync(path.join(root, 'cordis.patch.yml'), 'utf8')
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  assert.match(patch, new RegExp(`name:\\s*${pkg.name}\\s*$`, 'm'), '条目名不是裸包名')
+  assert.doesNotMatch(patch, new RegExp(`name:\\s*${pkg.name}/`), '条目名带了子路径')
+  assert.equal(pkg.exports['.'], './index.js')
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
