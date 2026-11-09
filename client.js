@@ -1236,6 +1236,55 @@ window.__ModuleLoader__.load({
       const [ghBusy, setGhBusy] = useState(false)
       const [newRepoName, setNewRepoName] = useState('')
       const [newRepoPrivate, setNewRepoPrivate] = useState(true)
+      const [device, setDevice] = useState(null)
+      const deviceStart = async () => {
+        setGhBusy(true); setGhNotice('')
+        try {
+          const data = await request('/github', { method: 'POST', body: { action: 'device-start' } })
+          setDevice({ ...data, status: 'waiting' })
+        } catch (caught) {
+          setGhNotice(caught.message || String(caught))
+        } finally {
+          setGhBusy(false)
+        }
+      }
+      const deviceCancel = async () => {
+        try {
+          await request('/github', { method: 'POST', body: { action: 'device-cancel' } })
+        } catch {
+          // 取消失败也没关系：状态机在 host 里
+        }
+        setDevice(null)
+      }
+      useEffect(() => {
+        if (device === null || device.status !== 'waiting') return undefined
+        let cancelled = false
+        const interval = Math.max(5, Number(device.interval) || 5)
+        const tick = async () => {
+          try {
+            const data = await request('/github', { method: 'POST', body: { action: 'device-poll' } })
+            if (cancelled) return
+            if (data.status === 'authorized') {
+              setDevice((previous) => (previous === null ? previous : { ...previous, status: 'authorized' }))
+              if (data.user) setGhUser(data.user)
+              setGhNotice(`已登录：${data.user && data.user.login ? data.user.login : 'GitHub'}`)
+              return
+            }
+            if (data.status === 'expired' || data.status === 'denied') {
+              setDevice((previous) => (previous === null ? previous : { ...previous, status: data.status }))
+              setGhNotice(data.status === 'expired' ? '设备码过期了，重新点一次登录' : '授权被拒绝')
+            }
+          } catch (caught) {
+            if (!cancelled) setGhNotice(caught.message || String(caught))
+          }
+        }
+        tick()
+        const timer = setInterval(tick, interval * 1000)
+        return () => {
+          cancelled = true
+          clearInterval(timer)
+        }
+      }, [device === null ? null : device.userCode, device === null ? null : device.status])
       const ghRun = async (action, body, label) => {
         setGhBusy(true); setGhNotice('')
         try {
@@ -1358,9 +1407,24 @@ window.__ModuleLoader__.load({
           syncNotice ? h(Banner, null, syncNotice) : null,
           sync.error ? h(Banner, { bad: true }, sync.error) : null,
           h('div', { className: 'eng-label', style: { margin: '14px 0 8px' } }, 'GitHub 账号'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, '点下面按钮走 GitHub 设备码登录：浏览器打开验证页、输入一次性代码即可，不用建 token。'),
           h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
-            h(Button, { disabled: busy || ghBusy, onClick: () => ghRun('login', {}, '登录') }, ghUser ? `已登录：${ghUser.login}` : '登录 GitHub'),
+            device === null || device.status !== 'waiting'
+              ? h(Button, { kind: 'primary', disabled: busy || ghBusy, onClick: deviceStart }, '用 GitHub 登录（免 token）')
+              : h(Button, { disabled: ghBusy, onClick: deviceCancel }, '取消登录'),
+            h(Button, { disabled: busy || ghBusy, onClick: () => ghRun('login', {}, '登录') }, ghUser ? `已登录：${ghUser.login}` : '用已填 token 登录'),
             h(Button, { disabled: busy || ghBusy, onClick: () => ghRun('repos', {}, '读取仓库') }, '加载我的仓库')),
+          device === null ? null : h('div', { className: 'eng-banner', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+            device.status === 'waiting'
+              ? h('div', null,
+                '在浏览器打开 ',
+                h('a', { href: device.verificationUri || 'https://github.com/login/device', target: '_blank', rel: 'noreferrer' }, device.verificationUri || 'https://github.com/login/device'),
+                '，输入代码 ',
+                h('span', { className: 'eng-mono', style: { fontWeight: 700, letterSpacing: '.08em' } }, device.userCode || ''),
+                '，授权后这里会自动跳转（本页保持打开）。')
+              : device.status === 'authorized'
+                ? '✓ 登录成功，token 已保存（不需要再贴 token）'
+                : `登录未完成：${device.status === 'expired' ? '设备码过期' : '授权被拒绝'}`),
           ghNotice ? h(Banner, null, ghNotice) : null,
           ghRepos === null ? null : h('div', { className: 'eng-git-repos' },
             ghRepos.length === 0
