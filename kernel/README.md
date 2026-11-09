@@ -82,3 +82,4 @@ node tools/eval-routing.mjs
 - 0.32.0：从 `dsh-exp-lib-provider` 改名 `dsh-engram`；
 - 0.33.0：**去 Provider**——删除 `provider.js`、index 不再导出 Provider；新增 `settings.js`（currentRoot/ENGRAM_DATA_DIR）；工具/插件/审计统一自有数据根；
 - 旧数据（`.exp/exp-lib.json` + `skills/`）直接可读，不需要迁移。
+

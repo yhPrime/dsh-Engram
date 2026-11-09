@@ -10,7 +10,7 @@
  *   失败 { ok: false, error: { code, message } }
  */
 
-import { createLiveSource } from './live.js'
+import { createLiveSource, resolveLiveDataDir } from './live.js'
 import { createMockSource } from './mock.js'
 import {
   FEEDBACK_ETA,
@@ -26,6 +26,8 @@ import {
 } from './data-source.js'
 import fs from 'node:fs'
 
+import { readEngineConfig, readSettings, readUiConfig, setCurrentRoot, writeEngineConfig, writeUiConfig } from '../kernel/settings.js'
+
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
 /** 外显名；与真实经验库（exp-lib）区分开。 */
@@ -33,6 +35,50 @@ export const APP_NAME = '经验库'
 
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 300
+
+/** 设置页可编辑项（全部都在这里，未知键不落盘）。 */
+export const SETTINGS_SPEC = {
+  config: [
+    { key: 'hint', label: '每轮提示段', type: 'boolean', hint: '关闭后不再向系统提示写经验库用法' },
+    { key: 'usageLog', label: '用法日志', type: 'boolean', hint: '记录 exp_* 调用，用于使用记录页' },
+    { key: 'usageLogMaxBytes', label: '日志上限（字节）', type: 'number' },
+    { key: 'feedbackEta', label: '反馈学习率 η', type: 'number', hint: '0~1，默认 0.35' },
+    { key: 'feedbackDecayDays', label: '反馈衰减（天）', type: 'number' },
+    { key: 'routing', label: '簇路由', type: 'enum', values: ['on', 'shadow', 'off'] },
+    { key: 'autoAssign', label: '自动归族', type: 'boolean' },
+    { key: 'consolidation', label: '沉淀候选', type: 'boolean' },
+    { key: 'consolidationMinSamples', label: '沉淀最少样本', type: 'number' },
+    { key: 'induction', label: '归纳提示', type: 'boolean' },
+    { key: 'inductionMinSamples', label: '归纳最少样本', type: 'number' },
+    { key: 'maxTypes', label: '类型上限', type: 'number' },
+    { key: 'newTypesPerDay', label: '每日新类型上限', type: 'number' },
+    { key: 'mergeThreshold', label: '类型合并阈值', type: 'number' },
+    { key: 'replaceThreshold', label: '经验取代阈值', type: 'number' },
+    { key: 'typeSimilarity', label: '类型相似度阈值', type: 'number' },
+  ],
+  ui: [
+    { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示' },
+    { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根' },
+  ],
+}
+
+function sanitizeSettings(input, fields) {
+  const out = {}
+  for (const field of fields) {
+    if (input === null || typeof input !== 'object' || !Object.prototype.hasOwnProperty.call(input, field.key)) continue
+    const value = input[field.key]
+    if (field.type === 'boolean') out[field.key] = value === true
+    else if (field.type === 'number') {
+      const number = Number(value)
+      out[field.key] = Number.isFinite(number) && value !== '' && value !== null ? number : null
+    } else if (field.type === 'enum') {
+      out[field.key] = field.values.includes(String(value)) ? String(value) : null
+    } else {
+      out[field.key] = value !== null && value !== undefined && String(value).trim() !== '' ? String(value).trim() : null
+    }
+  }
+  return out
+}
 
 let cachedVersion = ''
 /** 插件版本：读 package.json，读不到用 0.0.0。 */
@@ -50,18 +96,28 @@ export function pluginVersion() {
 /** 同一 config 复用同一个 data source（mock 的反馈状态才不会每请求丢一次）。 */
 const sources = new Map()
 
+function withUiConfig(config = {}) {
+  const ui = readUiConfig()
+  const merged = { ...config }
+  if (ui.source !== undefined) merged.source = ui.source
+  if (ui.dataDir !== undefined) merged.dataDir = ui.dataDir
+  return merged
+}
+
 export function sourceKeyOf(config = {}) {
-  const mode = String(config.source || 'live').toLowerCase() === 'mock' ? 'mock' : 'live'
-  return `${mode}|${mode === 'live' ? String(config.dataDir || '') : ''}`
+  const merged = withUiConfig(config)
+  const mode = String(merged.source || 'live').toLowerCase() === 'mock' ? 'mock' : 'live'
+  return `${mode}|${mode === 'live' ? resolveLiveDataDir(merged) : ''}`
 }
 
 /** 按 config 取 data source。 */
 export function createSource(config = {}) {
-  const key = sourceKeyOf(config)
+  const effective = withUiConfig(config)
+  const key = sourceKeyOf(effective)
   const existing = sources.get(key)
   if (existing !== undefined) return existing
-  const mode = String(config.source || 'live').toLowerCase() === 'mock' ? 'mock' : 'live'
-  const source = mode === 'live' ? createLiveSource(config) : createMockSource()
+  const mode = String(effective.source || 'live').toLowerCase() === 'mock' ? 'mock' : 'live'
+  const source = mode === 'live' ? createLiveSource(effective) : createMockSource()
   sources.set(key, source)
   return source
 }
@@ -361,8 +417,16 @@ export async function handleRequest(req, res, source) {
       return json(res, 200, { ok: true, data: buildValidate(active) })
     }
     if (route === '/settings') {
-      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
-      return json(res, 200, { ok: true, data: buildSettings(active) })
+      if (method === 'POST') {
+        const body = await readBody(req)
+        if (body && Object.prototype.hasOwnProperty.call(body, 'currentRoot')) setCurrentRoot(String(body.currentRoot || '').trim())
+        if (body && body.config !== undefined) writeEngineConfig(sanitizeSettings(body.config, SETTINGS_SPEC.config))
+        if (body && body.ui !== undefined) writeUiConfig(sanitizeSettings(body.ui, SETTINGS_SPEC.ui))
+        resetSourceCache()
+        return json(res, 200, { ok: true, data: { action: 'saved' } })
+      }
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET/POST')
+      return json(res, 200, { ok: true, data: { ...buildSettings(active), config: readEngineConfig(), ui: readUiConfig(), spec: SETTINGS_SPEC } })
     }
     if (route === '/feedback') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')

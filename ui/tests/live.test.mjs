@@ -31,13 +31,20 @@ function check(name, fn) {
 
 const newDataDir = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'exp-ui-live-')), '.exp')
 
-check('没有 dataDir：按空库兜底，不抛错', () => {
-  const source = createLiveSource({})
-  const read = source.read()
-  assert.equal(read.exists, false)
-  assert.deepEqual(read.store.experiences, [])
-  assert.ok(read.notice.includes('dataDir'))
-  assert.equal(source.readOnly, false)
+check('没有 dataDir：按默认目录兜底，空库不抛错', () => {
+  const old = process.env.DSH_HOME
+  process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-home-'))
+  try {
+    const source = createLiveSource({})
+    const read = source.read()
+    assert.equal(read.exists, false)
+    assert.deepEqual(read.store.experiences, [])
+    assert.ok(read.notice.includes('没有找到经验库文件'))
+    assert.equal(source.readOnly, false)
+  } finally {
+    if (old === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = old
+  }
 })
 
 check('read 走 engine：能看到 engine 记录的经验', () => {

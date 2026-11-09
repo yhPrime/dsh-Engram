@@ -592,21 +592,93 @@ window.__ModuleLoader__.load({
             h('td', null, row.feedback || (row.ok === false ? '失败' : 'ok'))))))))
     }
 
-    function Settings() {
+    function Settings(props) {
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const validation = useLoad(useCallback(() => request('/validate'), []))
+      const [rootInput, setRootInput] = useState('')
+      const [notice, setNotice] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [configDraft, setConfigDraft] = useState({})
+      const [uiDraft, setUiDraft] = useState({})
+      useEffect(() => {
+        if (!settings.data) return
+        setRootInput(settings.data.currentRoot || settings.data.dataDir || '')
+        setConfigDraft(settings.data.config || {})
+        setUiDraft(settings.data.ui || {})
+      }, [settings.data])
+      const post = async (payload) => {
+        setBusy(true); setNotice('')
+        try {
+          await request('/settings', { method: 'POST', body: payload })
+          await Promise.all([settings.reload(), validation.reload()])
+          if (props.onChanged) props.onChanged()
+          setNotice('已保存')
+        } catch (caught) {
+          setNotice(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const saveRoot = async (value) => {
+        setBusy(true); setNotice('')
+        try {
+          await request('/settings', { method: 'POST', body: { currentRoot: value } })
+          setNotice(value === '' ? '已恢复默认目录' : '已切换存储位置')
+          await Promise.all([settings.reload(), validation.reload()])
+          if (props.onChanged) props.onChanged()
+        } catch (caught) {
+          setNotice(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const draftSetter = (setter) => (key, value) => setter((previous) => ({ ...previous, [key]: value }))
+      const renderFields = (fields, draft, setDraft) => (fields || []).map((field) => {
+        const value = draft[field.key]
+        const update = draftSetter(setDraft)
+        let control
+        if (field.type === 'boolean') {
+          control = h('label', { className: 'eng-actions', style: { fontWeight: 400 } },
+            h('input', { type: 'checkbox', checked: value === true, onChange: (event) => update(field.key, event.target.checked) }),
+            h('span', { className: 'eng-muted' }, value === true ? '开' : '关'))
+        } else if (field.type === 'enum') {
+          control = h('select', { className: 'eng-select', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) },
+            h('option', { value: '' }, '默认'),
+            (field.values || []).map((option) => h('option', { key: option, value: option }, option)))
+        } else if (field.type === 'number') {
+          control = h('input', { className: 'eng-input', type: 'number', step: 'any', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
+        } else {
+          control = h('input', { className: 'eng-input', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
+        }
+        return h(Field, { key: field.key, label: field.label, hint: field.hint }, control)
+      })
       if (settings.error) return h(Banner, { bad: true }, settings.error)
       const data = settings.data || {}
-      return h('div', { className: 'eng-cols' },
+      const spec = data.spec || { config: [], ui: [] }
+      return h('div', { className: 'eng-stack' },
         h('div', { className: 'eng-card eng-detail' },
-          h('h3', { className: 'eng-detail-title' }, '数据源'),
+          h('h3', { className: 'eng-detail-title' }, '存储位置'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '经验库根目录（包含 exp-lib.json 的 .exp 目录）；留空点「恢复默认」。'),
+          h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
+            h('input', { className: 'eng-input', style: { flex: '1 1 320px' }, value: rootInput, onChange: (event) => setRootInput(event.target.value), placeholder: '例如：C:/Users/yh/WorkDeepSeek/.exp' }),
+            h(Button, { kind: 'primary', disabled: busy || rootInput.trim() === '', onClick: () => saveRoot(rootInput.trim()) }, '切换'),
+            h(Button, { disabled: busy, onClick: () => saveRoot('') }, '恢复默认')),
+          notice ? h(Banner, null, notice) : null,
           h('dl', { className: 'eng-kv' },
-            h('dt', null, '模式'), h('dd', null, data.source ? `${data.source.label}（${data.source.mode}）` : '—'),
-            h('dt', null, '数据目录'), h('dd', { className: 'eng-mono' }, data.dataDir || '—'),
+            h('dt', null, '当前根'), h('dd', { className: 'eng-mono' }, data.currentRoot || '（未设置，用默认）'),
+            h('dt', null, '生效目录'), h('dd', { className: 'eng-mono' }, data.dataDir || '—'),
             h('dt', null, '经验库文件'), h('dd', { className: 'eng-mono' }, data.file || '—'),
-            h('dt', null, 'currentRoot'), h('dd', { className: 'eng-mono' }, data.currentRoot || '（未设置）'),
             h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
             h('dt', null, '版本'), h('dd', null, data.version || '—'))),
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, '数据源（界面）'),
+          h('div', { className: 'eng-form-grid' }, renderFields(spec.ui, uiDraft, setUiDraft)),
+          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ ui: uiDraft }) }, '保存数据源'))),
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, '内核参数'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '保存后写入 settings.json；DSH 插件下次读取即用新值，语义参数可立即生效。'),
+          h('div', { className: 'eng-form-grid' }, renderFields(spec.config, configDraft, setConfigDraft)),
+          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ config: configDraft }) }, '保存内核参数'))),
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '技能校验'),
           validation.data && validation.data.problems && validation.data.problems.length > 0
@@ -696,7 +768,7 @@ window.__ModuleLoader__.load({
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
         if (tab === 'types') return h(Types, { onChanged: loadState })
         if (tab === 'usage') return h(Usage)
-        return h(Settings)
+        return h(Settings, { onChanged: loadState })
       })()
       const source = state && state.source
       const navButton = ([id, label, icon]) => h('button', {

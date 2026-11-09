@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import { createTools } from './engine.js'
 import { renderHint } from './store.js'
-import { resolveEngramDataDir } from './settings.js'
+import { readEngineConfig, resolveEngramDataDir } from './settings.js'
 
 export const name = 'dsh-engram'
 // Cordis 标准：等 tools / systemPrompt 服务就绪后再 apply。
@@ -27,7 +27,15 @@ function audit(config, line) {
   }
 }
 
-export async function apply(ctx, config = {}) {
+export async function apply(ctx, rawConfig = {}) {
+  // 设置页保存的参数优先于插件行配置，且每次读取都取最新值。
+  const config = new Proxy({}, {
+    get(_target, key) {
+      const overrides = readEngineConfig()
+      if (Object.prototype.hasOwnProperty.call(overrides, String(key))) return overrides[String(key)]
+      return rawConfig[key]
+    },
+  })
   let defineTool = (definition) => definition
   try {
     const toolsSdk = await import('@deepseek-ai/dsh-tools')

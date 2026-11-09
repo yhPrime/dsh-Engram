@@ -287,12 +287,42 @@ await check('live：JSON 坏了也 200，按空库显示并说明', async () => 
   assert.ok(state.payload.data.notice.includes('读不了'))
 })
 
-await check('live：没配 dataDir 时给「未接入」说明', async () => {
-  const source = createLiveSource({})
-  const state = await call(source, '/state')
-  assert.equal(state.status, 200)
-  assert.equal(state.payload.data.exists, false)
-  assert.ok(state.payload.data.notice.includes('还没接入'))
+await check('live：没配 dataDir 时按默认/设置目录（无文件则空库+说明）', async () => {
+  const old = process.env.DSH_HOME
+  process.env.DSH_HOME = tempDir()
+  try {
+    const source = createLiveSource({})
+    const state = await call(source, '/state')
+    assert.equal(state.status, 200)
+    assert.equal(state.payload.data.exists, false)
+    assert.ok(state.payload.data.notice.includes('没有找到经验库文件'))
+  } finally {
+    if (old === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = old
+  }
+})
+
+await check('POST /settings：切换 currentRoot 后 live 立刻读新目录', async () => {
+  const old = process.env.DSH_HOME
+  process.env.DSH_HOME = tempDir()
+  try {
+    const root = tempDir()
+    fs.writeFileSync(path.join(root, 'exp-lib.json'), JSON.stringify({
+      version: 1,
+      types: [{ id: 'ty_engram', name: '真实类型' }],
+      experiences: [{ id: 'ex_live_1', intent: '切换根后的经验', action: '读新目录', typeId: 'ty_engram', typeName: '真实类型', outcome: 'success', G: 1, ts: new Date().toISOString(), lastSeenAt: new Date().toISOString() }],
+    }), 'utf8')
+    const source = createLiveSource({})
+    const saved = await call(source, '/settings', { method: 'POST', body: { currentRoot: root } })
+    assert.equal(saved.status, 200)
+    const next = createLiveSource({})
+    const state = await call(next, '/state')
+    assert.equal(state.payload.data.exists, true)
+    assert.equal(state.payload.data.totals.visible, 1)
+  } finally {
+    if (old === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = old
+  }
 })
 
 await check('GET /skills：示例数据 5 个技能、状态分布齐全', async () => {
@@ -438,6 +468,28 @@ await check('live 的 /experiences?query= 走 engine.recall（候选带 evidence
   assert.equal(status, 200)
   assert.notEqual(payload.data.mode, 'list')
   assert.ok((payload.data.candidates || []).some((item) => Array.isArray(item.evidence)), JSON.stringify(payload.data).slice(0, 200))
+})
+
+
+await check('POST /settings：内核参数落盘、可清空', async () => {
+  const old = process.env.DSH_HOME
+  process.env.DSH_HOME = tempDir()
+  try {
+    const source = createLiveSource({ dataDir: tempDir() })
+    const saved = await call(source, '/settings', { method: 'POST', body: { config: { feedbackEta: 0.5, routing: 'off', hint: false } } })
+    assert.equal(saved.status, 200)
+    const first = await call(source, '/settings')
+    assert.equal(first.payload.data.config.feedbackEta, 0.5)
+    assert.equal(first.payload.data.config.routing, 'off')
+    assert.equal(first.payload.data.config.hint, false)
+    assert.ok(first.payload.data.spec.config.some((field) => field.key === 'feedbackEta'))
+    await call(source, '/settings', { method: 'POST', body: { config: { feedbackEta: '' } } })
+    const second = await call(source, '/settings')
+    assert.equal(second.payload.data.config.feedbackEta, undefined)
+  } finally {
+    if (old === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = old
+  }
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)

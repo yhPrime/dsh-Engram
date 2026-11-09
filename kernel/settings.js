@@ -57,3 +57,38 @@ export function resolveEngramDataDir(config = {}, env = process.env) {
 export function setCurrentRoot(root, env = process.env) {
   return writeSettings({ currentRoot: expand(root) }, env)
 }
+
+
+/** 内核可调参数（设置页只暴露这些；未知键不落盘）。 */
+export function readEngineConfig(env = process.env) {
+  const config = readSettings(env).config
+  return config !== null && typeof config === 'object' ? config : {}
+}
+
+export function writeEngineConfig(patch, env = process.env) {
+  const current = readEngineConfig(env)
+  const next = { ...current }
+  for (const [key, value] of Object.entries(patch && typeof patch === 'object' ? patch : {})) {
+    if (value === null || value === undefined) delete next[key]
+    else next[key] = value
+  }
+  writeSettings({ config: next }, env)
+  return next
+}
+
+/** 界面层配置（数据源/目录覆盖）。 */
+export function readUiConfig(env = process.env) {
+  const ui = readSettings(env).ui
+  return ui !== null && typeof ui === 'object' ? ui : {}
+}
+
+export function writeUiConfig(patch, env = process.env) {
+  const current = readUiConfig(env)
+  const next = { ...current }
+  for (const [key, value] of Object.entries(patch && typeof patch === 'object' ? patch : {})) {
+    if (value === null || value === undefined || value === '') delete next[key]
+    else next[key] = value
+  }
+  writeSettings({ ui: next }, env)
+  return next
+}

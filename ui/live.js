@@ -17,13 +17,14 @@ import path from 'node:path'
 
 import { codedError, emptyStore, skillRowOf } from './data-source.js'
 import { createEngine } from '../kernel/engine.js'
-import { readSettings } from '../kernel/settings.js'
+import { readSettings, resolveEngramDataDir } from '../kernel/settings.js'
 
 /** 展开 `~`，返回绝对路径；空配置返回 ''。 */
 export function resolveLiveDataDir(config = {}) {
   const raw = String(config && config.dataDir ? config.dataDir : '').trim()
-  if (raw === '') return ''
-  return path.resolve(raw.replace(/^~(?=$|[\\/])/, os.homedir()))
+  if (raw !== '') return path.resolve(raw.replace(/^~(?=$|[\\/])/, os.homedir()))
+  // 没显式配 dataDir 时走 settings.currentRoot / ENGRAM_DATA_DIR / 默认目录
+  return resolveEngramDataDir(config)
 }
 
 /** 容错：文件里的对象只取需要的字段，缺什么补什么。 */
