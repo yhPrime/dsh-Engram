@@ -579,9 +579,11 @@ export async function handleRequest(req, res, source) {
       if (action === 'device-start') {
         const flow = await startDeviceFlow({ clientId: readGitConfig().oauthClientId })
         deviceSession = { deviceCode: flow.deviceCode, expiresAt: Date.now() + flow.expiresIn * 1000, interval: flow.interval }
-        // 自动打开浏览器 + 自动复制验证码（都尽力而为，失败不阻断）
-        const opened = openExternal(flow.verificationUri)
-        const copied = await copyToClipboard(flow.userCode)
+        // 自动打开浏览器 + 自动复制验证码（都尽力而为，失败不阻断）。
+        // 自动化验证时传 noOpen:true，避免抢用户的浏览器和剪贴板。
+        const quiet = body && body.noOpen === true
+        const opened = quiet ? false : openExternal(flow.verificationUri)
+        const copied = quiet ? false : await copyToClipboard(flow.userCode)
         return json(res, 200, {
           ok: true,
           data: {
@@ -607,6 +609,7 @@ export async function handleRequest(req, res, source) {
           let user = null
           try {
             user = await githubLogin(polled.token)
+            if (user && user.login) writeGitConfig({ login: user.login })
           } catch {
             user = null
           }
@@ -627,7 +630,11 @@ export async function handleRequest(req, res, source) {
       const token = provided !== '' ? provided : git.token
       if (!['login', 'repos', 'create', 'select'].includes(action)) return fail(res, 400, 'bad-action', `未知动作：${action}`)
       const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
-      if (action === 'login') return json(res, 200, { ok: true, data: await githubLogin(token) })
+      if (action === 'login') {
+        const user = await githubLogin(token)
+        if (user.login !== '') writeGitConfig({ login: user.login })
+        return json(res, 200, { ok: true, data: user })
+      }
       if (action === 'repos') return json(res, 200, { ok: true, data: await githubRepos(token) })
       if (action === 'create') {
         const created = await githubCreateRepo(token, { name: body && body.name, private: body ? body.private !== false : true })

@@ -1248,6 +1248,32 @@ window.__ModuleLoader__.load({
           setGhBusy(false)
         }
       }
+      const deviceCheckNow = async () => {
+        setGhBusy(true); setGhNotice('')
+        try {
+          const data = await request('/github', { method: 'POST', body: { action: 'device-poll' } })
+          if (data.status === 'authorized') {
+            setDevice((previous) => (previous === null ? previous : { ...previous, status: 'authorized' }))
+            if (data.user) setGhUser(data.user)
+            setGhNotice(`已登录：${data.user && data.user.login ? data.user.login : 'GitHub'}`)
+          } else if (data.status === 'expired' || data.status === 'denied') {
+            setDevice((previous) => (previous === null ? previous : { ...previous, status: data.status }))
+            setGhNotice(data.status === 'expired' ? '设备码过期了，重新点一次登录' : '授权被拒绝')
+          } else {
+            setGhNotice(`还没收到授权（${data.status}），在 GitHub 页面点绿色按钮后稍等一下`)
+          }
+        } catch (caught) {
+          const message = caught.message || String(caught)
+          if (/没有正在进行的登录/u.test(message)) {
+            setDevice(null)
+            setGhNotice('这个登录会话已失效（插件重载或超时），重新点一次「用 GitHub 登录」')
+          } else {
+            setGhNotice(message)
+          }
+        } finally {
+          setGhBusy(false)
+        }
+      }
       const deviceCancel = async () => {
         try {
           await request('/github', { method: 'POST', body: { action: 'device-cancel' } })
@@ -1275,7 +1301,14 @@ window.__ModuleLoader__.load({
               setGhNotice(data.status === 'expired' ? '设备码过期了，重新点一次登录' : '授权被拒绝')
             }
           } catch (caught) {
-            if (!cancelled) setGhNotice(caught.message || String(caught))
+            if (cancelled) return
+            const message = caught.message || String(caught)
+            if (/没有正在进行的登录/u.test(message)) {
+              setDevice(null)
+              setGhNotice('这个登录会话已失效（插件重载或超时），重新点一次「用 GitHub 登录」')
+            } else {
+              setGhNotice(message)
+            }
           }
         }
         tick()
@@ -1316,6 +1349,7 @@ window.__ModuleLoader__.load({
         setConfigDraft(settings.data.config || {})
         setUiDraft(settings.data.ui || {})
         setGitDraft(settings.data.git || {})
+        if (settings.data.git && settings.data.git.login) setGhUser({ login: settings.data.git.login })
       }, [settings.data])
       const syncAction = async (action, label) => {
         setBusy(true); setSyncNotice('')
@@ -1423,7 +1457,8 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'eng-mono', style: { fontWeight: 700, letterSpacing: '.08em' } }, device.userCode || ''),
                 '，授权后这里会自动跳转（本页保持打开）。',
                 h('div', { className: 'eng-actions' },
-                  h(Button, { small: true, onClick: async () => { try { await navigator.clipboard.writeText(device.userCode || ''); setGhNotice('验证码已复制') } catch { setGhNotice('浏览器不讓复制，请手动选中验证码') } } }, '复制验证码')))
+                  h(Button, { small: true, onClick: async () => { try { await navigator.clipboard.writeText(device.userCode || ''); setGhNotice('验证码已复制') } catch { setGhNotice('浏览器不讓复制，请手动选中验证码') } } }, '复制验证码'),
+                  h(Button, { kind: 'primary', small: true, disabled: ghBusy, onClick: deviceCheckNow }, '我已授权，立即检查')))
               : device.status === 'authorized'
                 ? '✓ 登录成功，token 已保存（不需要再贴 token）'
                 : `登录未完成：${device.status === 'expired' ? '设备码过期' : '授权被拒绝'}`),
