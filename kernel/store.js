@@ -65,7 +65,30 @@ function dshHome() {
   return path.join(os.homedir(), '.dsh')
 }
 
-/** 默认数据目录：配置优先，其次 $DSH_HOME/exp-lib/provider-data（可用 EXP_LIB_PROVIDER_DIR 覆盖）。 */
+/**
+ * @legacy-provider 以下是 Provider 时代（dsh-exp-lib-provider 作为 dsh-mnemon
+ * 记忆空间的 Provider，0.4–0.10）的目录解析代码，保留给老库迁移用。
+ *
+ * 现在（0.11.0 起的单插件形态）真正决定数据位置的是 kernel/settings.js 的
+ * `resolveEngramDataDir()`：
+ *   config.dataDir / ENGRAM_DATA_DIR → ~/.dsh/engram/settings.json 的 currentRoot
+ *   → ~/.dsh/engram/data
+ * 工具面（exp_record / exp_recall / …）与插件入口都走那一条，不读这里的逻辑。
+ *
+ * 这里仍在用的只有两处，且都是「读旧映射」：
+ *   ① resolveToolDataDir()：只被 renderHint() 用（每轮提示段的条数统计）。
+ *      它会去翻 `…/.mnemon/state/memory-providers.json` 里的 `services["exp-lib"].dataDir`。
+ *      2026-11-09 实机：该文件仍在
+ *      （C:\Users\yh\WorkDeepSeek\.mnemon\state\memory-providers.json，指向 .exp），
+ *      所以提示段和工具现在读到同一个目录；但**一旦在控制台改了「存储位置」，
+ *      提示段不会跟着变**（它还认这份旧映射）。
+ *   ② 兼容函数本身：数据目录被显式配置时整条链路直接短路。
+ *
+ * ⚠️ 不要直接删：删掉会丢掉老库自动迁移路径。等确认不再需要从旧布局迁移，
+ * 再连同 renderHint 的数据源一起切换成 resolveEngramDataDir() 并清理。
+ */
+
+/** @legacy-provider 默认数据目录：配置优先，其次 $DSH_HOME/exp-lib/provider-data（可用 EXP_LIB_PROVIDER_DIR 覆盖）。 */
 export function resolveDataDir(config = {}) {
   const configured = String(config.dataDir || process.env.EXP_LIB_PROVIDER_DIR || '').trim()
   if (configured !== '') return path.resolve(configured.replace(/^~(?=$|[\\/])/, os.homedir()))
@@ -73,7 +96,7 @@ export function resolveDataDir(config = {}) {
 }
 
 /**
- * 从某个 `cordis.patch.yml` 里读出记忆插件（mnemon）条目的 `dataDir`（可能多条）。
+ * @legacy-provider 从某个 `cordis.patch.yml` 里读出记忆插件（mnemon）条目的 `dataDir`（可能多条）。
  *
  * 只扫 `- id: mnemon` / `- name: dsh-mnemon` 那一块，遇到下一条顶层条目就停；读不到返回空数组。
  */
@@ -103,7 +126,7 @@ function mnemonDataDirsFromPatchFile(file) {
 }
 
 /**
- * 记忆插件（mnemon）存储根的候选：profile 的 `cordis.patch.yml` 里 mnemon 条目的 `dataDir`。
+ * @legacy-provider 记忆插件（mnemon）存储根的候选：profile 的 `cordis.patch.yml` 里 mnemon 条目的 `dataDir`。
  *
  * 两个来源，缺一不可：
  *   ① 环境变量 `DSH_PROFILE_DIR` / `DSH_PROFILE` 指向的 profile；
@@ -140,10 +163,12 @@ function mnemonDataDirsFromProfilePatches() {
 }
 
 /**
- * 从记忆插件的 Provider 服务设置里读 exp-lib 的数据目录。
+ * @legacy-provider 从记忆插件的 Provider 服务设置里读 exp-lib 的数据目录。
  *
- * 这是「工具跟随配置」的关键：用户在记忆引擎里改了「经验库」的数据目录，
- * 工具不需要重新打包/改 profile，直接读同一份服务设置。
+ * 这是 Provider 时代「工具跟随配置」的做法：用户在记忆引擎里改了「经验库」的
+ * 数据目录，工具读同一份 `services["exp-lib"].dataDir`。0.11.0 解耦后这条路
+ * 只剩 renderHint() 还在走，见文件顶部 @legacy-provider 说明。
+ *
  * 候选位置：显式 providerStateFile → mnemonDataDir → DSH_MNEMON_DATA_DIR → MNEMON_DATA_DIR
  * → profile 里 mnemon 配置的 dataDir（含扫 profiles/* 的兜底）→ 工作区/.mnemon →
  * cwd 祖先链里的 .mnemon → 家目录/.mnemon。
@@ -205,7 +230,10 @@ export function dataDirFromProviderState(config = {}) {
   return ''
 }
 
-/** 工具用：优先跟随记忆插件里的 Provider 设置，读不到再退回插件自己的配置。 */
+/**
+ * @legacy-provider 工具用：优先跟随记忆插件里的 Provider 设置，读不到再退回插件自己的配置。
+ * 0.11.0 起工具面改用 settings.js 的 resolveEngramDataDir()，本函数只剩 renderHint() 调用。
+ */
 export function resolveToolDataDir(config = {}) {
   return dataDirFromProviderState(config) || resolveDataDir(config)
 }
@@ -1578,6 +1606,9 @@ export function assignType(store, id, nameOrId) {
 export function renderHint(config = {}, maxCharacters = 900) {
   let store
   try {
+    // @legacy-provider 这里仍走旧解析（会读 .mnemon 里的 services["exp-lib"].dataDir）。
+    // 工具面已经是 resolveEngramDataDir()：在控制台改「存储位置」后，工具跟着变、
+    // 提示段的条数统计不会跟着变。切换前先确认不再需要老库自动迁移。
     store = readStore(resolveToolDataDir(config))
   } catch {
     store = { types: [{ ...SYSTEM_TYPE }], experiences: [] }
