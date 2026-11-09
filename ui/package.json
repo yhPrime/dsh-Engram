@@ -1,6 +1,6 @@
 {
   "name": "dsh-exp-ui",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "private": true,
   "description": "exp-ui：经验库的界面外壳（内置示例数据）。接口与返回值已按文档固定，真实经验库接入前先用它验证界面与交互。",
   "type": "module",

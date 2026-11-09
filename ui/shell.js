@@ -62,7 +62,7 @@ export const SETTINGS_SPEC = {
     { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示' },
     { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根' },
     { key: 'graphTheme', label: '关系图主题', type: 'enum', values: ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration'], labels: { personal: '个人记忆碎片', dream: '梦境记忆轨迹', knowledge: '知识概念关联', emotion: '情绪记忆链路', spacetime: '时空记忆时间线', collective: '集体共享记忆', inspiration: '灵感思绪蛛网' } },
-    { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' } },
+    { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['dsh', 'cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { dsh: '跟随 DSH 主题', cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' } },
     { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭' },
     { key: 'graphBloom', label: '泛光 bloom', type: 'boolean' },
     { key: 'graphGlitch', label: '色散/毛刺', type: 'boolean' },

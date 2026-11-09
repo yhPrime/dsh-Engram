@@ -113,20 +113,8 @@ window.__ModuleLoader__.load({
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
-.eng-graph { position: relative; padding: 10px 12px 8px; background: radial-gradient(760px 460px at 50% 42%, color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent), transparent 72%), var(--dsw-alias-bg-layer-2); }
-.eng-graph svg { width: 100%; height: auto; display: block; }
-.eng-graph-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 2px 6px 6px; }
-.eng-graph-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 4px 8px 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
-.eng-graph-node { cursor: pointer; }
-.eng-graph-node:hover circle, .eng-graph-node:hover rect { filter: drop-shadow(0 0 7px currentColor); }
-.eng-graph-label { fill: var(--dsw-alias-label-primary); font-size: 10px; paint-order: stroke; stroke: var(--dsw-alias-bg-layer-1); stroke-width: 3px; }
-.eng-graph-label-sub { fill: var(--dsw-alias-label-secondary); font-size: 9px; }
-.eng-graph-edge { stroke: var(--dsw-alias-border-l1); fill: none; }
-.eng-graph-edge-derived { stroke-dasharray: 4 4; animation: eng-dash 1.5s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .eng-nav-item, .eng-row, .eng-skill-row { transition: none; } }
-.eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; }
-.eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: #03040a; }
-.eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+.eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: transparent; }
+.eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
 `
     function ensureStyles() {
       try {
@@ -609,6 +597,7 @@ window.__ModuleLoader__.load({
 
     const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
     const GRAPH_PALETTES = {
+      dsh: {},
       cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
       aurora: { bg: '#010208', bgInner: '#06101a', node: '#7dffd4', node2: '#b892ff', edge: '#7cc7ff', highlight: '#c9b6ff', warn: '#ffe3a3', glow: '#9dffdf', dust: '#bfffe9', bloom: 18 },
       blackgold: { bg: '#060504', bgInner: '#141006', node: '#ffcc66', node2: '#ff9f2e', edge: '#b9852f', highlight: '#ffe3a3', warn: '#ffcf7a', glow: '#ffb84d', dust: '#ffe3a3', bloom: 16 },
@@ -679,6 +668,28 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function readDshGraphPalette(canvas) {
+      const local = getComputedStyle(canvas)
+      const root = getComputedStyle(document.documentElement)
+      const read = (name, fallback) => (local.getPropertyValue(name) || root.getPropertyValue(name) || '').trim() || fallback
+      const bg = read('--dsw-alias-bg-layer-1', '#0b0e14')
+      const bgInner = read('--dsw-alias-bg-layer-2', bg)
+      const brand = read('--dsw-alias-brand-primary', '#4f7cff')
+      const secondary = read('--dsw-alias-label-secondary', '#8b93a7')
+      return {
+        bg: bgInner === bg ? bg : bgInner,
+        bgInner: bg,
+        node: brand,
+        node2: secondary,
+        edge: read('--dsw-alias-border-l1', '#3a4150'),
+        highlight: brand,
+        warn: read('--dsw-alias-warning-primary', '#c08312'),
+        glow: brand,
+        dust: secondary,
+        bloom: 10,
+      }
+    }
+
     function Graph() {
       const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
@@ -692,8 +703,8 @@ window.__ModuleLoader__.load({
         const canvas = canvasRef.current
         if (!canvas || !graph.data) return undefined
         const ui = (settings.data && settings.data.ui) || {}
-        const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'cyberpunk'
-        const palette = GRAPH_PALETTES[paletteKey]
+        const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
+        const palette = paletteKey === 'dsh' ? readDshGraphPalette(canvas) : GRAPH_PALETTES[paletteKey]
         const theme = GRAPH_THEMES.includes(ui.graphTheme) ? ui.graphTheme : 'personal'
         const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
         const bloom = ui.graphBloom !== false
