@@ -601,15 +601,6 @@ window.__ModuleLoader__.load({
     }
 
     const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
-    const GRAPH_THEME_ACCENTS = {
-      personal: { light: '#0e7490', dark: '#22d3ee' },
-      dream: { light: '#7c3aed', dark: '#c4b5fd' },
-      knowledge: { light: '#0f766e', dark: '#2dd4bf' },
-      emotion: { light: '#be123c', dark: '#fb7185' },
-      spacetime: { light: '#4338ca', dark: '#818cf8' },
-      collective: { light: '#b45309', dark: '#fbbf24' },
-      inspiration: { light: '#6d28d9', dark: '#a78bfa' },
-    }
     const GRAPH_PALETTES = {
       dsh: {},
       cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', ok: '#39ff88', bad: '#ff3b5c', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
@@ -723,15 +714,11 @@ window.__ModuleLoader__.load({
         const canvas = canvasRef.current
         if (!canvas || !graph.data) return undefined
         const ui = (settings.data && settings.data.ui) || {}
-        const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
-        const palette = paletteKey === 'dsh'
-          ? (() => {
-              const base = readDshGraphPalette(canvas)
-              const accent = (GRAPH_THEME_ACCENTS[theme] || GRAPH_THEME_ACCENTS.personal)[base.dark ? 'dark' : 'light']
-              return { ...base, node: accent, node2: accent, highlight: accent, glow: accent, dust: accent }
-            })()
-          : { ...GRAPH_PALETTES[paletteKey], node2: GRAPH_PALETTES[paletteKey].node, highlight: GRAPH_PALETTES[paletteKey].node }
         const theme = GRAPH_THEMES.includes(ui.graphTheme) ? ui.graphTheme : 'personal'
+        const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
+        let palette = paletteKey === 'dsh'
+          ? readDshGraphPalette(canvas)
+          : { ...GRAPH_PALETTES[paletteKey], node2: GRAPH_PALETTES[paletteKey].node, highlight: GRAPH_PALETTES[paletteKey].node }
         const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
@@ -930,6 +917,18 @@ window.__ModuleLoader__.load({
         }
         resize()
         sync(graph.data)
+        const refreshPalette = () => {
+          if (paletteKey !== 'dsh') return
+          palette = readDshGraphPalette(canvas)
+        }
+        let themeObserver = null
+        try {
+          themeObserver = new MutationObserver(refreshPalette)
+          themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+          if (document.body) themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+        } catch {
+          themeObserver = null
+        }
         window.addEventListener('resize', resize)
         window.addEventListener('pointermove', onPointerMove)
         window.addEventListener('pointerup', onPointerUp)
@@ -1065,6 +1064,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('resize', resize)
           window.removeEventListener('pointermove', onPointerMove)
           window.removeEventListener('pointerup', onPointerUp)
+          if (themeObserver !== null) themeObserver.disconnect()
           canvas.removeEventListener('pointerdown', onPointerDown)
           canvas.removeEventListener('wheel', onWheel)
         }
