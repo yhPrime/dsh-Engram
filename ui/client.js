@@ -108,10 +108,11 @@ window.__ModuleLoader__.load({
 .eng-skill-name { font-weight: 620; }
 .eng-skill-desc { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
 .eng-nav-sep { height: 1px; margin: 10px 8px; background: var(--dsw-alias-border-l1); }
-@container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
+.eng-split[data-open="true"] .eng-stack > .eng-detail-card { order: -1; }
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: transparent; }
 .eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
@@ -303,6 +304,7 @@ window.__ModuleLoader__.load({
       const [type, setType] = useState('')
       const [outcome, setOutcome] = useState('')
       const [selected, setSelected] = useState(null)
+      const detailRef = useRef(null)
       const list = useLoad(useCallback(() => {
         const params = new URLSearchParams({ limit: '100' })
         if (type !== '') params.set('type', type)
@@ -310,6 +312,12 @@ window.__ModuleLoader__.load({
         return request(`/experiences?${params.toString()}`)
       }, [type, outcome]))
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
+      // 窄面板下列表与详情会被压成一列：选中后把详情卡片滚进视野，否则看起来「点了没反应」。
+      useEffect(() => {
+        const node = detailRef.current
+        if (selected === null || node === null || typeof node.scrollIntoView !== 'function') return
+        node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }, [selected, detail.data])
       const types = (props.state && props.state.types) || []
       const rows = (list.data && (list.data.rows || list.data.candidates)) || []
       const send = async (result) => {
@@ -329,7 +337,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'eng-muted' }, `${list.data ? list.data.total : '—'} 条`),
           h(Button, { small: true, disabled: searchDraft.trim() === '', onClick: () => props.onSearch(searchDraft.trim()) }, '检索'),
           h(Button, { small: true, onClick: list.reload }, '刷新')),
-        h('div', { className: 'eng-split' },
+        h('div', { className: 'eng-split', 'data-open': selected === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
             rows.length === 0 ? h(Empty, null, list.loading ? '读取中…' : '没有符合条件的经验') : h('div', { className: 'eng-list' }, rows.map((row) => {
               const [label, tone] = outcomeOf(row.outcome)
@@ -339,8 +347,8 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
             }))),
-          h('div', { className: 'eng-card' },
-            selected === null ? h(Empty, null, '选一条经验看详情') : detail.data === null ? h(Empty, null, '读取中…') : detail.error ? h(Banner, { bad: true }, detail.error) : (() => {
+          h('div', { className: 'eng-card eng-detail-card', ref: detailRef },
+            selected === null ? h(Empty, null, '选一条经验看详情') : detail.error ? h(Banner, { bad: true }, detail.error) : detail.data === null || !detail.data.row ? h(Empty, null, '读取中…') : (() => {
               const row = detail.data.row
               const [label, tone] = outcomeOf(row.outcome)
               return h('div', { className: 'eng-detail' },
@@ -357,7 +365,8 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-actions', style: { marginTop: 14 } },
                   h(Button, { small: true, onClick: () => send('helped') }, '有帮助'),
                   h(Button, { small: true, onClick: () => send('hurt') }, '没帮上'),
-                  h(Button, { small: true, onClick: () => send('neutral') }, '中性')))
+                  h(Button, { small: true, onClick: () => send('neutral') }, '中性'),
+                  h(Button, { small: true, onClick: () => setSelected(null) }, '收起')))
             }))))
     }
 
@@ -501,7 +510,7 @@ window.__ModuleLoader__.load({
       return h('div', null,
         skills.error ? h(Banner, { bad: true }, skills.error) : null,
         notice ? h(Banner, null, notice) : null,
-        h('div', { className: 'eng-split' },
+        h('div', { className: 'eng-split', 'data-open': current === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
             rows.length === 0 ? h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀') : rows.map((row) => {
               const [label, tone] = skillStateOf(row.status)
@@ -526,7 +535,7 @@ window.__ModuleLoader__.load({
               validation.data && validation.data.problems && validation.data.problems.length > 0
                 ? validation.data.problems.map((item) => h('div', { key: item.slug, className: 'eng-muted', style: { marginBottom: 6 } }, `${item.slug}：${item.problems.join('；')}`))
                 : h('div', { className: 'eng-muted' }, '全部健康')),
-            current === null ? h('div', { className: 'eng-card' }, h(Empty, null, '选一个技能看正文')) : h('div', { className: 'eng-card' },
+            current === null ? h('div', { className: 'eng-card eng-detail-card' }, h(Empty, null, '选一个技能看正文')) : h('div', { className: 'eng-card eng-detail-card' },
               h('div', { className: 'eng-detail' },
                 h('h3', { className: 'eng-detail-title' }, current.name),
                 h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
