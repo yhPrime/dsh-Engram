@@ -16,8 +16,8 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { codedError, emptyStore, skillRowOf } from './data-source.js'
-import { createEngine } from '../kernel/engine.js'
-import { readSettings, resolveEngramDataDir } from '../kernel/settings.js'
+import { createEngine } from './engine.js'
+import { readSettings, resolveEngramDataDir } from './settings.js'
 
 /** 展开 `~`，返回绝对路径；空配置返回 ''。 */
 export function resolveLiveDataDir(config = {}) {

@@ -5,14 +5,14 @@
  * 只通过 `/exp-ui/api/*` 访问数据；mock 与 live 返回形状一致。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-exp-ui',
+  id: 'dsh-engram-ui',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useRef, useState } = React
 
     const PANEL_ID = 'exp-ui'
-    const PACKAGE_NAME = 'dsh-exp-ui'
+    const PACKAGE_NAME = 'dsh-engram'
     const TITLE = '经验库'
     const API = '/exp-ui/api'
 
@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
       primitives = null
     }
 
-    const STYLE_ID = 'dsh-exp-ui/styles'
+    const STYLE_ID = 'dsh-engram/styles'
     const PANEL_CSS = `
 .eng-app, .eng-app *, .eng-app *::before, .eng-app *::after { box-sizing: border-box; }
 .eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; width: 100%; max-width: 100%; box-sizing: border-box; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; container-type: inline-size; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
@@ -124,6 +124,149 @@ window.__ModuleLoader__.load({
 .eng-graph-edge { stroke: var(--dsw-alias-border-l1); fill: none; }
 .eng-graph-edge-derived { stroke-dasharray: 4 4; animation: eng-dash 1.5s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .eng-nav-item, .eng-row, .eng-skill-row { transition: none; } }
+/* ---- Cyberpunk skin ---- */
+.eng-app {
+  --eng-bg: #04060c;
+  --eng-panel: #080d18;
+  --eng-line: rgba(0, 240, 255, .16);
+  --eng-text: #d7e6ff;
+  --eng-dim: #7486ad;
+  --eng-cyan: #00f0ff;
+  --eng-magenta: #ff2bd6;
+  --eng-lime: #a6ff00;
+  --eng-amber: #ffb800;
+  --eng-red: #ff3b5c;
+  position: relative;
+  background:
+    radial-gradient(1100px 560px at 88% -12%, rgba(255, 43, 214, .16), transparent 62%),
+    radial-gradient(900px 520px at -8% 108%, rgba(0, 240, 255, .13), transparent 60%),
+    linear-gradient(180deg, #04060c 0%, #070b14 100%);
+  color: var(--eng-text);
+  font-family: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.eng-app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .025) 0 1px, transparent 1px 3px);
+  mix-blend-mode: screen;
+}
+.eng-app > * { position: relative; z-index: 1; }
+.eng-rail {
+  background: linear-gradient(180deg, rgba(6, 10, 20, .96), rgba(3, 5, 10, .99));
+  border-right: 1px solid var(--eng-line);
+  box-shadow: inset -1px 0 0 rgba(255, 43, 214, .12);
+}
+.eng-brand-mark {
+  color: var(--eng-cyan);
+  background: rgba(0, 240, 255, .08);
+  border: 1px solid rgba(0, 240, 255, .45);
+  box-shadow: 0 0 18px rgba(0, 240, 255, .28);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.eng-brand-name { color: var(--eng-cyan); text-shadow: 0 0 12px rgba(0, 240, 255, .6); letter-spacing: .12em; }
+.eng-brand-sub { color: var(--eng-magenta); letter-spacing: .32em; text-shadow: 0 0 10px rgba(255, 43, 214, .55); }
+.eng-nav-item { color: var(--eng-dim); border-left: 2px solid transparent; border-radius: 2px; }
+.eng-nav-item:hover { color: var(--eng-cyan); background: rgba(0, 240, 255, .06); border-left-color: rgba(0, 240, 255, .5); }
+.eng-nav-item[data-active="true"] {
+  color: var(--eng-cyan);
+  background: linear-gradient(90deg, rgba(0, 240, 255, .14), rgba(255, 43, 214, .06));
+  border-left-color: var(--eng-cyan);
+  box-shadow: inset 0 0 0 1px rgba(0, 240, 255, .18), 0 0 18px rgba(0, 240, 255, .10);
+  text-shadow: 0 0 10px rgba(0, 240, 255, .6);
+}
+.eng-nav-count { color: var(--eng-magenta); opacity: .95; }
+.eng-rail-foot { color: var(--eng-dim); border-top-color: var(--eng-line); }
+.eng-top {
+  background: rgba(4, 7, 13, .78);
+  border-bottom: 1px solid var(--eng-line);
+  box-shadow: 0 1px 0 rgba(255, 43, 214, .12);
+}
+.eng-title { color: var(--eng-text); font-size: 15px; letter-spacing: .34em; text-transform: uppercase; text-shadow: 0 0 14px rgba(0, 240, 255, .45); }
+.eng-sub { color: var(--eng-dim); letter-spacing: .08em; }
+.eng-card {
+  background: linear-gradient(150deg, rgba(11, 18, 33, .94), rgba(5, 8, 15, .97));
+  border: 1px solid var(--eng-line);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .035), 0 0 0 1px rgba(0, 0, 0, .35);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.eng-card:hover { border-color: rgba(0, 240, 255, .28); }
+.eng-kpi-label { color: var(--eng-cyan); letter-spacing: .18em; }
+.eng-kpi-value { color: #f2f8ff; text-shadow: 0 0 18px rgba(0, 240, 255, .35); }
+.eng-kpi-unit { color: var(--eng-magenta); }
+.eng-section-title { color: var(--eng-cyan); letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+.eng-muted { color: var(--eng-dim); }
+.eng-btn {
+  background: rgba(0, 240, 255, .04);
+  border: 1px solid rgba(0, 240, 255, .35);
+  border-radius: 2px;
+  color: var(--eng-cyan);
+  letter-spacing: .06em;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.eng-btn:hover { background: rgba(0, 240, 255, .12); border-color: var(--eng-cyan); box-shadow: 0 0 16px rgba(0, 240, 255, .22); }
+.eng-btn-primary { background: linear-gradient(90deg, var(--eng-magenta), #b13bff 55%, var(--eng-cyan)); border-color: transparent; color: #04060c; font-weight: 700; box-shadow: 0 0 22px rgba(255, 43, 214, .35); }
+.eng-btn-primary:hover { filter: brightness(1.12); box-shadow: 0 0 28px rgba(255, 43, 214, .5); }
+.eng-btn-danger { color: var(--eng-red); border-color: rgba(255, 59, 92, .5); }
+.eng-input, .eng-select, .eng-textarea {
+  background: rgba(0, 240, 255, .035);
+  border: 1px solid rgba(0, 240, 255, .22);
+  color: var(--eng-text);
+  border-radius: 2px;
+  font-family: inherit;
+}
+.eng-input::placeholder, .eng-textarea::placeholder { color: rgba(116, 134, 173, .65); }
+.eng-input:focus, .eng-select:focus, .eng-textarea:focus { outline: none; border-color: var(--eng-cyan); box-shadow: 0 0 0 1px rgba(0, 240, 255, .35), 0 0 18px rgba(0, 240, 255, .18); }
+.eng-label { color: var(--eng-cyan); letter-spacing: .1em; text-transform: uppercase; }
+.eng-badge { border-radius: 2px; border: 1px solid currentColor; background: rgba(0, 0, 0, .35); letter-spacing: .04em; text-shadow: 0 0 10px currentColor; }
+.eng-row { border-bottom-color: rgba(0, 240, 255, .10); }
+.eng-row:hover { background: rgba(0, 240, 255, .06); }
+.eng-row[data-on="true"] { background: linear-gradient(90deg, rgba(255, 43, 214, .10), rgba(0, 240, 255, .06)); box-shadow: inset 2px 0 0 var(--eng-magenta); }
+.eng-row-intent { color: #eaf4ff; }
+.eng-row-sub { color: var(--eng-dim); }
+.eng-table th { color: var(--eng-cyan); border-bottom-color: rgba(0, 240, 255, .22); letter-spacing: .12em; text-transform: uppercase; }
+.eng-table td { border-bottom-color: rgba(0, 240, 255, .08); color: var(--eng-text); }
+.eng-table tr:hover td { background: rgba(0, 240, 255, .04); }
+.eng-pre { background: rgba(0, 0, 0, .45); border-color: rgba(0, 240, 255, .22); color: #b9ffe9; }
+.eng-banner { background: rgba(0, 240, 255, .05); border-color: rgba(0, 240, 255, .2); color: var(--eng-dim); }
+.eng-banner-bad { border-color: rgba(255, 59, 92, .45); color: var(--eng-red); background: rgba(255, 59, 92, .06); }
+.eng-empty { color: var(--eng-dim); }
+.eng-kv dt { color: var(--eng-cyan); }
+.eng-kv dd { color: var(--eng-text); }
+.eng-mono { color: #9ff7ff; text-shadow: 0 0 8px rgba(0, 240, 255, .35); }
+.eng-graph {
+  background:
+    radial-gradient(620px 420px at 50% 42%, rgba(255, 43, 214, .14), transparent 66%),
+    radial-gradient(760px 520px at 18% 84%, rgba(0, 240, 255, .12), transparent 62%),
+    #03050b;
+  border-color: rgba(255, 43, 214, .26);
+  overflow: hidden;
+}
+.eng-graph::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 240, 255, .07) 49%, transparent 50%);
+  background-size: 100% 220px;
+  animation: eng-scan 6s linear infinite;
+  opacity: .5;
+}
+@keyframes eng-scan { from { background-position: 0 -220px; } to { background-position: 0 680px; } }
+.eng-graph-head strong { color: var(--eng-magenta); letter-spacing: .16em; text-transform: uppercase; text-shadow: 0 0 12px rgba(255, 43, 214, .5); }
+.eng-graph-legend { color: var(--eng-dim); }
+.eng-graph-edge { stroke: rgba(0, 240, 255, .3); }
+.eng-graph-edge-derived { stroke: var(--eng-magenta); }
+.eng-graph-label { fill: #d7e6ff; stroke: #03050b; }
+.eng-graph-label-sub { fill: var(--eng-dim); }
+.eng-graph-node circle, .eng-graph-node rect { transition: filter .16s ease, transform .16s ease; transform-box: fill-box; transform-origin: center; }
+.eng-graph-node:hover circle, .eng-graph-node:hover rect { filter: drop-shadow(0 0 8px currentColor) drop-shadow(0 0 16px currentColor); transform: scale(1.18); }
+.eng-graph-ring { fill: none; stroke: var(--eng-cyan); opacity: .35; transform-box: fill-box; transform-origin: center; animation: eng-pulse 3.2s ease-out infinite; }
+.eng-graph-ring-2 { stroke: var(--eng-magenta); animation-delay: 1.2s; }
+@keyframes eng-pulse { 0% { transform: scale(.8); opacity: .45; } 70% { transform: scale(1.25); opacity: 0; } 100% { transform: scale(1.25); opacity: 0; } }
+
 `
     function ensureStyles() {
       try {
@@ -643,12 +786,12 @@ window.__ModuleLoader__.load({
         pos.set(skill.id, { x: center.x + Math.cos(base) * radius, y: center.y + Math.sin(base) * radius })
       })
       const colorOf = (node) => {
-        if (node.kind === 'type') return 'var(--dsw-alias-brand-primary)'
-        if (node.kind === 'skill') return '#d9a13b'
-        if (node.outcome === 'success' || node.outcome === 'accepted') return '#1f9d63'
-        if (node.outcome === 'partial') return '#c08312'
-        if (node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected') return '#d24b45'
-        return '#8b8f98'
+        if (node.kind === 'type') return '#00f0ff'
+        if (node.kind === 'skill') return '#ff2bd6'
+        if (node.outcome === 'success' || node.outcome === 'accepted') return '#39ff88'
+        if (node.outcome === 'partial') return '#ffd166'
+        if (node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected') return '#ff3b5c'
+        return '#6c7a99'
       }
       const pathOf = (edge) => {
         const from = edge.source === 'root' ? center : pos.get(edge.source)
@@ -672,14 +815,18 @@ window.__ModuleLoader__.load({
             h('span', { className: 'eng-muted' }, `${data.summary.types} 类型 · ${data.summary.experiences} 经验 · ${data.summary.skills} 技能`)),
           h('svg', { viewBox: '0 0 900 620', role: 'img', 'aria-label': '经验关系图' },
             h('defs', null,
-              h('radialGradient', { id: 'engRootGlow' }, h('stop', { offset: '0%', stopColor: 'var(--dsw-alias-brand-primary)', stopOpacity: '0.55' }), h('stop', { offset: '100%', stopColor: 'var(--dsw-alias-brand-primary)', stopOpacity: '0' }))),
+              h('radialGradient', { id: 'engRootGlow' }, h('stop', { offset: '0%', stopColor: 'var(--eng-cyan)', stopOpacity: '0.55' }), h('stop', { offset: '100%', stopColor: 'var(--eng-magenta)', stopOpacity: '0' })),
+              h('pattern', { id: 'engGrid', width: 40, height: 40, patternUnits: 'userSpaceOnUse' }, h('path', { d: 'M40 0H0V40', fill: 'none', stroke: 'rgba(0, 240, 255, .08)', strokeWidth: 1 }))),
+            h('rect', { x: 0, y: 0, width: 900, height: 620, fill: 'url(#engGrid)', opacity: 0.65 }),
+            h('circle', { className: 'eng-graph-ring', cx: center.x, cy: center.y, r: 46, strokeWidth: 1 }),
+            h('circle', { className: 'eng-graph-ring eng-graph-ring-2', cx: center.x, cy: center.y, r: 62, strokeWidth: 1 }),
             h('circle', { cx: center.x, cy: center.y, r: 74, fill: 'url(#engRootGlow)' }),
-            h('circle', { cx: center.x, cy: center.y, r: 26, fill: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent)', stroke: 'var(--dsw-alias-brand-primary)', strokeWidth: 1.4 }),
+            h('circle', { cx: center.x, cy: center.y, r: 26, fill: 'rgba(0, 240, 255, .10)', stroke: 'var(--eng-cyan)', strokeWidth: 1.4, style: { filter: 'drop-shadow(0 0 8px rgba(0,240,255,.6))' } }),
             h('text', { x: center.x, y: center.y + 4, textAnchor: 'middle', className: 'eng-graph-label', style: { fontSize: 11, fontWeight: 650 } }, '经验库'),
             (data.edges || []).map((edge, index) => {
               const path = pathOf(edge)
               if (!path) return null
-              return h('path', { key: `e${index}`, d: path, className: `eng-graph-edge${edge.kind === 'derived' ? ' eng-graph-edge-derived' : ''}`, strokeWidth: edge.kind === 'derived' ? 1.2 : 0.9, opacity: 0.55 })
+              return h('path', { key: `e${index}`, d: path, className: `eng-graph-edge${edge.kind === 'derived' ? ' eng-graph-edge-derived' : ''}`, strokeWidth: edge.kind === 'derived' ? 1.4 : 0.9, opacity: edge.kind === 'derived' ? 0.8 : 0.55, style: edge.kind === 'derived' ? { stroke: 'var(--eng-magenta)' } : edge.kind === 'root' ? { stroke: 'rgba(255, 43, 214, .30)' } : { stroke: 'rgba(0, 240, 255, .32)' } })
             }),
             nodes.map((node) => {
               const point = pos.get(node.id)
@@ -688,24 +835,24 @@ window.__ModuleLoader__.load({
               const isActive = active === node.id
               if (node.kind === 'type') {
                 const radius = 12 + Math.min(9, Number(node.count) || 0)
-                return h('g', { key: node.id, className: 'eng-graph-node', onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
+                return h('g', { key: node.id, className: 'eng-graph-node', style: { color }, onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
                   h('circle', { r: radius + 5, fill: color, opacity: 0.12 }),
-                  h('circle', { r: radius, fill: 'var(--dsw-alias-bg-layer-1)', stroke: color, strokeWidth: isActive ? 2.2 : 1.3 }),
+                  h('circle', { r: radius, fill: 'rgba(4, 8, 16, .92)', stroke: color, strokeWidth: isActive ? 2.4 : 1.4, style: { filter: 'drop-shadow(0 0 10px currentColor)' } }),
                   h('text', { y: radius + 13, textAnchor: 'middle', className: 'eng-graph-label' }, node.label))
               }
               if (node.kind === 'skill') {
-                return h('g', { key: node.id, className: 'eng-graph-node', onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
+                return h('g', { key: node.id, className: 'eng-graph-node', style: { color }, onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
                   h('rect', { x: -7, y: -7, width: 14, height: 14, rx: 3, transform: 'rotate(45)', fill: color, opacity: isActive ? 1 : 0.9 }),
                   h('text', { y: 23, textAnchor: 'middle', className: 'eng-graph-label' }, node.label))
               }
               const radius = 4.5 + Math.min(2.5, Math.abs(Number(node.G) || 0) * 2)
-              return h('g', { key: node.id, className: 'eng-graph-node', onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
-                h('circle', { r: isActive ? radius + 3 : radius, fill: color, stroke: 'var(--dsw-alias-bg-layer-1)', strokeWidth: 1 }),
+              return h('g', { key: node.id, className: 'eng-graph-node', style: { color }, onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
+                h('circle', { r: isActive ? radius + 3 : radius, fill: color, stroke: '#03050b', strokeWidth: 1, style: { filter: 'drop-shadow(0 0 8px currentColor)' } }),
                 isActive ? h('text', { y: -10, textAnchor: 'middle', className: 'eng-graph-label' }, node.label) : null)
             })),
           h('div', { className: 'eng-graph-legend' },
-            [['成功', '#1f9d63'], ['部分', '#c08312'], ['失败', '#d24b45'], ['未标', '#8b8f98']].map(([label, color]) => h('span', { key: label, style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, borderRadius: 99, background: color, display: 'inline-block' } }), label)),
-            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, background: '#d9a13b', transform: 'rotate(45deg)', display: 'inline-block' } }), '技能'))),
+            [['成功', '#39ff88'], ['部分', '#ffd166'], ['失败', '#ff3b5c'], ['未标', '#6c7a99']].map(([label, color]) => h('span', { key: label, style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, borderRadius: 99, background: color, display: 'inline-block' } }), label)),
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, background: '#ff2bd6', transform: 'rotate(45deg)', display: 'inline-block' } }), '技能'))),
         selected === null
           ? h('div', { className: 'eng-muted' }, '点击节点查看详情；虚线表示技能由哪些经验沉淀而来。')
           : h('div', { className: 'eng-card eng-detail' },
@@ -959,16 +1106,16 @@ window.__ModuleLoader__.load({
         }
         try {
           disposers.push(ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 45, label: () => TITLE }, PanelGlyph)))
-        } catch (error) { console.error('[exp-ui] panellist registration failed', error) }
+        } catch (error) { console.error('[engram] panellist registration failed', error) }
         try {
           disposers.push(ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, Console)))
-        } catch (error) { console.error('[exp-ui] main panel registration failed', error) }
+        } catch (error) { console.error('[engram] main panel registration failed', error) }
         try {
           disposers.push(ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE_NAME }, BundleCard)))
-        } catch (error) { console.error('[exp-ui] bundle card registration failed', error) }
+        } catch (error) { console.error('[engram] bundle card registration failed', error) }
         ctx.effect(() => () => {
           for (const dispose of disposers.reverse()) {
-            try { dispose() } catch (error) { console.error('[exp-ui] dispose failed', error) }
+            try { dispose() } catch (error) { console.error('[engram] dispose failed', error) }
           }
         })
       },

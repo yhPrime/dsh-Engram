@@ -4,5 +4,3 @@ _tmp/
 *.tgz
 *.log
 .exp/
-.exp-lib/
-usage.jsonl

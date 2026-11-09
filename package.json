@@ -1,0 +1,86 @@
+{
+  "name": "dsh-engram",
+  "version": "0.7.1",
+  "description": "Engram（记忆痕迹）：经验与技能引擎 + 经验库控制台（标准 DSH 插件）",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./plugin": "./plugin.js",
+    "./ui": "./ui.js",
+    "./client": "./client.js",
+    "./engine": "./engine.js",
+    "./core": "./core.js",
+    "./store": "./store.js",
+    "./tools": "./tools.js",
+    "./retrieval": "./retrieval.js",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "plugin.js",
+    "ui.js",
+    "client.js",
+    "core.js",
+    "engine.js",
+    "settings.js",
+    "store.js",
+    "kernel.js",
+    "retrieval.js",
+    "cluster.js",
+    "skills.js",
+    "tools.js",
+    "shell.js",
+    "live.js",
+    "mock.js",
+    "data-source.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md",
+    "RELEASES.md",
+    "API.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.2 || >=0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "*",
+    "dsh-mnemon-source-memory-spaces": "^0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-ui-primitives": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "dsh-mnemon-source-memory-spaces": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "experience",
+    "skills",
+    "console"
+  ],
+  "license": "MIT",
+  "author": "yhPrime"
+}

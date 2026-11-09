@@ -1,0 +1,9 @@
+- insert:
+    - id: engram
+      name: dsh-engram/plugin
+      config:
+        hint: true
+    - id: engram-ui
+      name: dsh-engram/ui
+      config:
+        source: live

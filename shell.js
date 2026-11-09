@@ -28,7 +28,7 @@ import {
 } from './data-source.js'
 import fs from 'node:fs'
 
-import { readEngineConfig, readSettings, readUiConfig, setCurrentRoot, writeEngineConfig, writeUiConfig } from '../kernel/settings.js'
+import { readEngineConfig, readSettings, readUiConfig, setCurrentRoot, writeEngineConfig, writeUiConfig } from './settings.js'
 
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
