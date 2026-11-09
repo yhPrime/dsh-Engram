@@ -29,9 +29,11 @@ import {
 import fs from 'node:fs'
 
 import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
+import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
+import { spawn } from 'node:child_process'
 
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
@@ -123,6 +125,34 @@ let clientProbes = []
 
 /** 设备码登录的临时会话（只存在内存，不落盘；成功换到 token 才写 settings）。 */
 let deviceSession = null
+
+/** 打开系统浏览器（尽力而为，失败不影响登录流程）。 */
+function openExternal(url) {
+  try {
+    const command = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open'
+    const child = spawn(command, [url], { detached: true, stdio: 'ignore', windowsHide: true })
+    child.unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 把验证码写进系统剪贴板（Windows 用 clip.exe；其他平台尽力而为）。 */
+function copyToClipboard(text) {
+  return new Promise((resolve) => {
+    try {
+      const command = process.platform === 'win32' ? 'clip' : process.platform === 'darwin' ? 'pbcopy' : 'xclip'
+      const args = process.platform === 'linux' ? ['-selection', 'clipboard'] : []
+      const child = spawn(command, args, { windowsHide: true })
+      child.on('error', () => resolve(false))
+      child.on('close', (code) => resolve(code === 0))
+      child.stdin.end(text)
+    } catch {
+      resolve(false)
+    }
+  })
+}
 
 /** 同一 config 复用同一个 data source（mock 的反馈状态才不会每请求丢一次）。 */
 const sources = new Map()
@@ -410,6 +440,12 @@ export async function handleRequest(req, res, source) {
     const method = String(req.method || 'GET').toUpperCase()
     const active = source || createSource({})
 
+    if (route === '/icons') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(galleryHtml())
+      return
+    }
     if (route === '/health') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       // 客户端半加载后会带 ?client=1 回打一次：用来区分「客户端没加载」与「加载了但没注册」。
@@ -543,6 +579,9 @@ export async function handleRequest(req, res, source) {
       if (action === 'device-start') {
         const flow = await startDeviceFlow({ clientId: readGitConfig().oauthClientId })
         deviceSession = { deviceCode: flow.deviceCode, expiresAt: Date.now() + flow.expiresIn * 1000, interval: flow.interval }
+        // 自动打开浏览器 + 自动复制验证码（都尽力而为，失败不阻断）
+        const opened = openExternal(flow.verificationUri)
+        const copied = await copyToClipboard(flow.userCode)
         return json(res, 200, {
           ok: true,
           data: {
@@ -550,6 +589,8 @@ export async function handleRequest(req, res, source) {
             verificationUri: flow.verificationUri,
             expiresIn: flow.expiresIn,
             interval: flow.interval,
+            opened,
+            copied,
           },
         })
       }

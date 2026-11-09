@@ -10,6 +10,7 @@ import path from 'node:path'
 import { API_PREFIX, handleRequest, pluginVersion } from '../shell.js'
 import { createMockSource } from '../mock.js'
 import { createLiveSource } from '../live.js'
+import { galleryHtml } from '../icons-gallery.js'
 
 let passed = 0
 let failed = 0
@@ -538,6 +539,15 @@ await check('GET /sync：未初始化也返回完整状态；未知动作 400', 
   assert.equal(bad.status, 400)
   assert.equal(bad.payload.ok, false)
   assert.equal(bad.payload.error.code, 'bad-action')
+})
+
+await check('图标候选页：6 个候选、每个三种尺寸、能给侧栏用的 currentColor 描边', () => {
+  const html = galleryHtml()
+  assert.match(html, /图标候选/)
+  assert.equal((html.match(/<article/g) || []).length, 6)
+  for (const key of ['A', 'B', 'C', 'D', 'E', 'F']) assert.match(html, new RegExp(`<span class="key">${key}</span>`))
+  assert.match(html, /stroke="currentColor"/)
+  assert.ok(html.length > 5000)
 })
 
 await check('POST /github：设备码没开始时轮询 400（不用 token）；没 token 登录 400；未知动作 400', async () => {
