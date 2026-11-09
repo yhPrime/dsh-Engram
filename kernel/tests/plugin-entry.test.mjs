@@ -9,6 +9,7 @@
  * Run: node kernel/tests/plugin-entry.test.mjs
  */
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -70,6 +71,15 @@ await check('入口形状：name=dsh-engram，inject 声明 tools/systemPrompt�
   assert.equal(entry.name, 'dsh-engram')
   assert.deepEqual([...entry.inject], ['tools', 'systemPrompt'])
   assert.equal(typeof entry.apply, 'function')
+})
+
+await check('包清单可从 exports 解析：./package.json / ./client 都要在（DSH 靠它加载客户端半）', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  assert.equal(pkg.exports['./package.json'], './package.json')
+  assert.equal(pkg.exports['./client'], './client.js')
+  assert.ok(fs.existsSync(path.join(root, pkg.exports['./client'])), '客户端半文件不存在')
+  assert.equal(pkg.icon, './icon.svg')
+  assert.ok(fs.existsSync(path.join(root, 'icon.svg')), '图标不存在')
 })
 
 await check('apply 不直接读 ctx.webServer（Cordis 会报 without inject）', async () => {

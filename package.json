@@ -9,6 +9,7 @@
     "./plugin": "./plugin.js",
     "./client": "./client.js",
     "./icon": "./icon.svg",
+    "./package.json": "./package.json",
     "./engine": "./kernel/engine.js",
     "./core": "./kernel/core.js",
     "./store": "./kernel/store.js",

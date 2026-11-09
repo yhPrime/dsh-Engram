@@ -108,7 +108,7 @@ export function pluginVersion() {
 }
 
 /** 客户端半最近一次回打（诊断用；每次插件重载清空）。 */
-let clientProbe = null
+let clientProbes = []
 
 /** 同一 config 复用同一个 data source（mock 的反馈状态才不会每请求丢一次）。 */
 const sources = new Map()
@@ -400,12 +400,15 @@ export async function handleRequest(req, res, source) {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       // 客户端半加载后会带 ?client=1 回打一次：用来区分「客户端没加载」与「加载了但没注册」。
       if (url.searchParams.get('client') === '1') {
-        clientProbe = {
+        clientProbes.push({
           at: new Date().toISOString(),
+          phase: String(url.searchParams.get('phase') || ''),
           id: String(url.searchParams.get('id') || ''),
           panels: Number(url.searchParams.get('panels')) || 0,
           errors: String(url.searchParams.get('errors') || ''),
-        }
+          note: String(url.searchParams.get('note') || '').slice(0, 500),
+        })
+        if (clientProbes.length > 8) clientProbes = clientProbes.slice(-8)
       }
       return json(res, 200, {
         ok: true,
@@ -415,7 +418,7 @@ export async function handleRequest(req, res, source) {
           version: pluginVersion(),
           source: active.id,
           readOnly: active.readOnly === true,
-          client: clientProbe,
+          client: clientProbes,
         },
       })
     }
