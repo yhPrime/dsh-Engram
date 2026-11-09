@@ -1021,12 +1021,11 @@ window.__ModuleLoader__.load({
               ctx.save()
               ctx.translate(entry.screenX + offsetX, entry.screenY + offsetY)
               ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
-              const isType = node.kind === 'type'
               ctx.shadowBlur = 0
               ctx.shadowColor = 'transparent'
-              ctx.fillStyle = isType ? (palette.ringFill || 'rgba(255,255,255,.6)') : color
-              ctx.strokeStyle = isType ? color : palette.highlight
-              ctx.lineWidth = isType ? 1.7 : isSelected ? 1.6 : 0.6
+              ctx.fillStyle = color
+              ctx.strokeStyle = palette.highlight
+              ctx.lineWidth = isSelected ? 1.6 : 0.7
               ctx.scale(breathing, breathing)
               drawGraphShape(ctx, screenRadius, theme)
               if (node.kind === 'skill') {
