@@ -12,6 +12,11 @@ import { buildTools } from './tools.js'
 import { listSkills, readSkillBySlug, validateAllSkills } from './skills.js'
 import { renderHint } from './store.js'
 
+/** 构建工具面（适配器与 headless 共用同一套配置解析）。 */
+export function createTools(config = {}, defineTool = (definition) => definition) {
+  return buildTools(defineTool, config)
+}
+
 export function createEngine(options = {}) {
   const dataDir = String(options.dataDir || '').trim()
   if (dataDir === '') throw new Error('createEngine 需要 dataDir（.exp 根目录）')
@@ -21,7 +26,7 @@ export function createEngine(options = {}) {
     // 独立运行时没有 DSH Provider 状态文件，显式清空，避免误读 ~/.dsh。
     providerStateFile: '',
   }
-  const tools = buildTools((definition) => definition, config)
+  const tools = createTools(config, options.defineTool)
   const call = (name, args = {}) => {
     const tool = tools.find((item) => item.name === name)
     if (tool === undefined) throw new Error(`未知工具：${name}`)

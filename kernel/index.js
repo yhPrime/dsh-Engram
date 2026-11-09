@@ -13,6 +13,7 @@ import { PROVIDER_ID, buildProvider } from './provider.js'
 
 export { PROVIDER_ID, buildProvider } from './provider.js'
 export { buildTools } from './tools.js'
+export { createEngine, createTools } from './engine.js'
 export { SPACE_DESCRIPTION, SPACE_NAME } from './store.js'
 
 export const id = PROVIDER_ID

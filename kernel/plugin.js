@@ -8,7 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { buildTools } from './tools.js'
+import { createTools } from './engine.js'
 import { renderHint, resolveToolDataDir } from './store.js'
 
 export const name = 'dsh-exp-lib-provider'
@@ -36,7 +36,7 @@ export async function apply(ctx, config = {}) {
   }
 
   const register = (target) => {
-    for (const tool of buildTools(defineTool, config)) target.tools.register(tool)
+    for (const tool of createTools(config, defineTool)) target.tools.register(tool)
   }
 
   // 每轮提示层：把类型目录与用法写进系统提示段；禁用插件即消失，不动记忆组合。
