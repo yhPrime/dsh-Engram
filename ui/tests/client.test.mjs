@@ -130,8 +130,8 @@ function makeCtx() {
 const loaded = loadClient()
 const { moduleConfig, module } = loaded
 
-check('loader id 是 dsh-exp-ui，模块声明 slots / layout 依赖', () => {
-  assert.equal(moduleConfig.id, 'dsh-exp-ui')
+check('loader id 是 dsh-engram，模块声明 slots / layout 依赖', () => {
+  assert.equal(moduleConfig.id, 'dsh-engram')
   assert.equal(module.inject.join(','), 'slots,layout')
   assert.equal(typeof module.apply, 'function')
 })
@@ -160,12 +160,17 @@ check('侧栏 id 与主面板 key 都是 exp-ui，label 是「经验库」', () 
   assert.equal(panellist.registration.label(), '经验库')
 })
 
-check('侧栏那格只放图标：用宿主图标族、按 size 传参、没有按钮/点击', () => {
+check('侧栏那格只放自己的 16 栅格标记：按 size 透传、没有按钮/点击', () => {
   const panellist = registrations.find((entry) => entry.registration.name === 'sidebar.panellist')
   const element = panellist.component({ size: 18, active: true })
-  // 有 primitives 时直接用宿主图标组件，尺寸原样透传（宽栏 16 / 收起 18）。
-  assert.equal(element.type, primitivesStub.IconChecklistOutlineRegular)
-  assert.equal(element.props.size, 18)
+  // 自绘标记（经验库自己的记忆弧），不再借用宿主图标族。
+  assert.equal(typeof element.type, 'function')
+  const svg = element.type(element.props)
+  assert.equal(svg.type, 'svg')
+  assert.equal(svg.props.width, 18)
+  assert.equal(svg.props.height, 18)
+  assert.equal(svg.props.viewBox, '0 0 16 16')
+  assert.equal(svg.props.stroke, 'currentColor')
   // 不能是按钮：点击、label、aria 都由宿主那一行负责。
   assert.notEqual(element.type, 'button')
   assert.equal(element.props.onClick, undefined)
@@ -173,23 +178,24 @@ check('侧栏那格只放图标：用宿主图标族、按 size 传参、没有�
   assert.equal(wide.props.size, 16)
 })
 
-check('拿不到宿主图标族时退回自绘 16 栅格图标，尺寸仍然对齐', () => {
+check('标记不依赖宿主图标族：拿不到 primitives 也画得出来', () => {
   const fallbackLoaded = loadClient({ primitives: false })
   const { ctx: fallbackCtx, registrations: fallbackRegs } = makeCtx()
   fallbackLoaded.module.apply(fallbackCtx)
   const panellist = fallbackRegs.find((entry) => entry.registration.name === 'sidebar.panellist')
   const element = panellist.component({ size: 16, active: true })
-  assert.equal(element.type, 'svg')
-  assert.equal(element.props.width, 16)
-  assert.equal(element.props.height, 16)
-  assert.equal(element.props.viewBox, '0 0 16 16')
-  assert.equal(element.props.stroke, 'currentColor')
-  assert.ok(element.children.length >= 4)
+  const svg = element.type(element.props)
+  assert.equal(svg.type, 'svg')
+  assert.equal(svg.props.width, 16)
+  assert.equal(svg.props.height, 16)
+  assert.equal(svg.props.viewBox, '0 0 16 16')
+  assert.equal(svg.props.stroke, 'currentColor')
+  assert.ok(svg.children.length >= 4)
 })
 
-check('插件页卡片挂在自己的包名上（dsh-exp-ui）', () => {
+check('插件页卡片挂在自己的包名上（dsh-engram）', () => {
   const card = registrations.find((entry) => entry.registration.name === 'plugins.bundle.config')
-  assert.equal(card.registration.key, 'dsh-exp-ui')
+  assert.equal(card.registration.key, 'dsh-engram')
   const element = card.component()
   assert.equal(typeof element.type, 'string')
   assert.ok(JSON.stringify(element).includes('经验库'))
@@ -218,22 +224,23 @@ check('客户端不弹窗（无 alert / confirm / prompt）', () => {
   assert.equal(/(^|[^\w.])prompt\s*\(/u.test(loaded.source), false)
 })
 
-check('manifest：客户端半、图标、本地化、宿主图标族 peer 声明齐全', () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-  assert.equal(manifest.name, 'dsh-exp-ui')
+check('manifest：单包（dsh-engram）同时声明 bundle 与 client、图标、本地化', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, '..', 'package.json'), 'utf8'))
+  assert.equal(manifest.name, 'dsh-engram')
+  assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(manifest.dsh.client.platform, 'web')
-  assert.equal(manifest.exports['./client'], './client.js')
+  assert.equal(manifest.exports['./client'], './ui/client.js')
+  assert.equal(manifest.exports['./plugin'], './plugin.js')
   assert.equal(manifest.exports['./icon'], './icon.svg')
-  for (const file of ['client.js', 'shell.js', 'mock.js', 'live.js', 'data-source.js', 'API.md', 'icon.svg']) {
+  for (const file of ['index.js', 'plugin.js', 'cordis.patch.yml', 'icon.svg', 'ui/client.js', 'ui/shell.js', 'ui/mock.js', 'ui/live.js', 'ui/data-source.js', 'ui/API.md']) {
     assert.ok(manifest.files.includes(file), `files 缺少 ${file}`)
   }
   assert.ok(manifest.peerDependencies['@deepseek-ai/dsh-client-ui-primitives'])
-  assert.equal(manifest.peerDependenciesMeta['@deepseek-ai/dsh-client-ui-primitives'].optional, true)
-  const icon = fs.statSync(path.join(root, 'icon.svg'))
+  const icon = fs.statSync(path.join(root, '..', 'icon.svg'))
   assert.ok(icon.size > 0 && icon.size < 256 * 1024)
   for (const locale of ['zh', 'en']) {
     const dict = JSON.parse(fs.readFileSync(path.join(root, 'locale', `${locale}.json`), 'utf8'))
-    assert.equal(dict.meta.title, '经验库')
+    assert.equal(dict.meta.title, locale === 'zh' ? '经验库' : 'Engram')
     assert.ok(dict.meta.description.length > 10)
   }
 })

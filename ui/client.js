@@ -1,29 +1,22 @@
 /**
- * 经验库控制台（dsh-exp-ui client）
+ * 经验库控制台（dsh-engram client 半）
  *
  * 八个页面覆盖内核全部能力：概览 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置。
  * 只通过 `/exp-ui/api/*` 访问数据；mock 与 live 返回形状一致。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-exp-ui',
+  id: 'dsh-engram',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useRef, useState } = React
 
     const PANEL_ID = 'exp-ui'
-    const PACKAGE_NAME = 'dsh-exp-ui'
+    const PACKAGE_NAME = 'dsh-engram'
     const TITLE = '经验库'
     const API = '/exp-ui/api'
 
-    let primitives = null
-    try {
-      primitives = require('@deepseek-ai/dsh-client-ui-primitives')
-    } catch {
-      primitives = null
-    }
-
-    const STYLE_ID = 'dsh-exp-ui/styles'
+    const STYLE_ID = 'dsh-engram/styles'
     const PANEL_CSS = `
 .eng-app, .eng-app *, .eng-app *::before, .eng-app *::after { box-sizing: border-box; }
 .eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; width: 100%; max-width: 100%; box-sizing: border-box; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; container-type: inline-size; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
@@ -213,6 +206,28 @@ window.__ModuleLoader__.load({
     function Empty(props) {
       return h('div', { className: 'eng-empty' }, props.children || '暂无数据')
     }
+    /** 经验库自己的标记：双侧记忆弧 + 中心节点（侧栏、品牌位、卡片共用一套）。 */
+    function EngramGlyph(props) {
+      const size = props && Number(props.size) > 0 ? Number(props.size) : 16
+      return h('svg', {
+        width: size,
+        height: size,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.25,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        style: { display: 'block', flex: '0 0 auto' },
+      },
+        h('path', { d: 'M8 3.6C5.3 3.6 3.9 5.1 3.9 8s1.4 4.4 4.1 4.4' }),
+        h('path', { d: 'M8 3.6c2.7 0 4.1 1.5 4.1 4.4s-1.4 4.4-4.1 4.4' }),
+        h('circle', { cx: 8, cy: 8, r: 1.5, fill: 'currentColor', stroke: 'none' }),
+        h('circle', { cx: 3.9, cy: 8, r: 0.85, fill: 'currentColor', stroke: 'none' }),
+        h('circle', { cx: 12.1, cy: 8, r: 0.85, fill: 'currentColor', stroke: 'none' }))
+    }
+
     function NavIcon(props) {
       const paths = {
         overview: 'M2 7.2 8 2l6 5.2V14H9.8v-4H6.2v4H2V7.2Z',
@@ -1355,9 +1370,7 @@ window.__ModuleLoader__.load({
         'data-active': tab === id ? 'true' : 'false',
         onClick: () => setTab(id),
       }, h(NavIcon, { name: icon }), label, counts[id] === null || counts[id] === undefined ? null : h('span', { className: 'eng-nav-count' }, String(counts[id])))
-      const brandMark = primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function'
-        ? h(primitives.IconChecklistOutlineRegular, { size: 18 })
-        : h('span', { style: { fontSize: 15 } }, '≡')
+      const brandMark = h(EngramGlyph, { size: 18 })
       return h('div', { className: 'eng-app', ref: rootRef, style: fitHeight === null ? undefined : { height: `${fitHeight}px` } },
         h('aside', { className: 'eng-rail' },
           h('div', { className: 'eng-brand' },
@@ -1386,15 +1399,7 @@ window.__ModuleLoader__.load({
         ensureStyles()
         const disposers = []
         function PanelGlyph(props) {
-          const size = props && Number(props.size) > 0 ? Number(props.size) : 16
-          if (primitives !== null && typeof primitives.IconChecklistOutlineRegular === 'function') return h(primitives.IconChecklistOutlineRegular, { size })
-          const active = Boolean(props && props.active)
-          return h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: active ? 1.3 : 1.1, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { display: 'block' } },
-            h('rect', { x: 1.75, y: 2.5, width: 12.5, height: 11, rx: 2 }),
-            h('path', { d: 'M4.4 6.1 L5.7 7.4 L8.1 4.9' }),
-            h('path', { d: 'M9.4 6.2 H12.1' }),
-            h('path', { d: 'M4.4 9.6 L5.7 10.9 L8.1 8.4' }),
-            h('path', { d: 'M9.4 9.7 H12.1' }))
+          return h(EngramGlyph, { size: props && Number(props.size) > 0 ? Number(props.size) : 16 })
         }
         function BundleCard() {
           return h('div', { className: 'eng-card', style: { padding: 16 } },
@@ -1404,16 +1409,16 @@ window.__ModuleLoader__.load({
         }
         try {
           disposers.push(ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 45, label: () => TITLE }, PanelGlyph)))
-        } catch (error) { console.error('[exp-ui] panellist registration failed', error) }
+        } catch (error) { console.error('[engram] panellist registration failed', error) }
         try {
           disposers.push(ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID }, Console)))
-        } catch (error) { console.error('[exp-ui] main panel registration failed', error) }
+        } catch (error) { console.error('[engram] main panel registration failed', error) }
         try {
           disposers.push(ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE_NAME }, BundleCard)))
-        } catch (error) { console.error('[exp-ui] bundle card registration failed', error) }
+        } catch (error) { console.error('[engram] bundle card registration failed', error) }
         ctx.effect(() => () => {
           for (const dispose of disposers.reverse()) {
-            try { dispose() } catch (error) { console.error('[exp-ui] dispose failed', error) }
+            try { dispose() } catch (error) { console.error('[engram] dispose failed', error) }
           }
         })
       },

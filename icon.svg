@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="经验库">
+  <defs>
+    <linearGradient id="engram-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="17" fill="url(#engram-bg)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.95">
+    <path d="M32 19.5c-10.4 0-15 5.8-15 12.5s4.6 12.5 15 12.5"/>
+    <path d="M32 19.5c10.4 0 15 5.8 15 12.5s-4.6 12.5-15 12.5"/>
+  </g>
+  <circle cx="32" cy="32" r="5.4" fill="#ffffff"/>
+  <circle cx="32" cy="32" r="2.2" fill="#0f766e"/>
+  <circle cx="17.6" cy="32" r="2.7" fill="#ffffff" fill-opacity="0.9"/>
+  <circle cx="46.4" cy="32" r="2.7" fill="#ffffff" fill-opacity="0.9"/>
+</svg>

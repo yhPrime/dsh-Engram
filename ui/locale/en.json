@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "经验库",
-    "description": "The experience library UI shell. It runs on built-in sample data so the panel can be reviewed before the real library is connected; it never touches real experience data."
+    "title": "Engram",
+    "description": "Console for the experience and skill engine: overview, relationship graph, experience list and details, recall, recording, skill consolidation and validation, types, usage log, settings — reading and writing the live library."
   }
 }

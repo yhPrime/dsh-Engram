@@ -1,0 +1,100 @@
+{
+  "name": "dsh-engram",
+  "version": "0.11.0",
+  "description": "Engram（记忆痕迹）：经验与技能引擎 + 经验库控制台，一个标准 DSH 插件。",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./plugin": "./plugin.js",
+    "./client": "./ui/client.js",
+    "./icon": "./icon.svg",
+    "./engine": "./kernel/engine.js",
+    "./core": "./kernel/core.js",
+    "./store": "./kernel/store.js",
+    "./tools": "./kernel/tools.js",
+    "./retrieval": "./kernel/retrieval.js",
+    "./skills": "./kernel/skills.js",
+    "./settings": "./kernel/settings.js",
+    "./shell": "./ui/shell.js",
+    "./live": "./ui/live.js",
+    "./mock": "./ui/mock.js",
+    "./data-source": "./ui/data-source.js",
+    "./locale/*.json": "./ui/locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "plugin.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "kernel/*.js",
+    "kernel/LICENSE",
+    "kernel/THIRD-PARTY-NOTICES.md",
+    "ui/client.js",
+    "ui/shell.js",
+    "ui/live.js",
+    "ui/mock.js",
+    "ui/data-source.js",
+    "ui/locale/*.json",
+    "ui/API.md",
+    "README.md",
+    "RELEASES.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "scripts": {
+    "test": "node kernel/tests/kernel.test.mjs && node kernel/tests/recall.test.mjs && node kernel/tests/store.test.mjs && node kernel/tests/cluster.test.mjs && node kernel/tests/feedback.test.mjs && node kernel/tests/feedback-replay.test.mjs && node kernel/tests/feedback-decay.test.mjs && node kernel/tests/retire.test.mjs && node kernel/tests/feedback-ledger.test.mjs && node kernel/tests/audit-migration.test.mjs && node kernel/tests/tools.test.mjs && node kernel/tests/plugin.test.mjs && node kernel/tests/type-tool.test.mjs && node kernel/tests/fix-residue.test.mjs && node kernel/tests/usage.test.mjs && node kernel/tests/sim-agent.test.mjs && node kernel/tests/sim-multistep.test.mjs && node kernel/tests/task-steps.test.mjs && node kernel/tests/lifecycle.test.mjs && node kernel/tests/lifecycle-evidence.test.mjs && node kernel/tests/consolidation.test.mjs && node kernel/tests/agent-workflow.test.mjs && node kernel/tests/prediction-error.test.mjs && node kernel/tests/context.test.mjs && node kernel/tests/retrieval-practice.test.mjs && node kernel/tests/agent-workday.test.mjs && node kernel/tests/skills.test.mjs && node kernel/tests/skill-tools.test.mjs && node kernel/tests/skill-consolidate.test.mjs && node kernel/tests/induction.test.mjs && node kernel/tests/induction-scale.test.mjs && node kernel/tests/patch-memory-spaces-footer.test.mjs && node kernel/tests/core-boundary.test.mjs && node kernel/tests/engine-headless.test.mjs && node kernel/tests/adapter-boundary.test.mjs && node kernel/tests/settings.test.mjs && node ui/tests/mock.test.mjs && node ui/tests/shell.test.mjs && node ui/tests/client.test.mjs && node ui/tests/contract.test.mjs && node ui/tests/render.test.mjs && node ui/tests/live.test.mjs && node ui/tests/pages-smoke.test.mjs",
+    "test:kernel": "node kernel/tests/kernel.test.mjs && node kernel/tests/recall.test.mjs && node kernel/tests/store.test.mjs && node kernel/tests/cluster.test.mjs && node kernel/tests/feedback.test.mjs && node kernel/tests/feedback-replay.test.mjs && node kernel/tests/feedback-decay.test.mjs && node kernel/tests/retire.test.mjs && node kernel/tests/feedback-ledger.test.mjs && node kernel/tests/audit-migration.test.mjs && node kernel/tests/tools.test.mjs && node kernel/tests/plugin.test.mjs && node kernel/tests/type-tool.test.mjs && node kernel/tests/fix-residue.test.mjs && node kernel/tests/usage.test.mjs && node kernel/tests/sim-agent.test.mjs && node kernel/tests/sim-multistep.test.mjs && node kernel/tests/task-steps.test.mjs && node kernel/tests/lifecycle.test.mjs && node kernel/tests/lifecycle-evidence.test.mjs && node kernel/tests/consolidation.test.mjs && node kernel/tests/agent-workflow.test.mjs && node kernel/tests/prediction-error.test.mjs && node kernel/tests/context.test.mjs && node kernel/tests/retrieval-practice.test.mjs && node kernel/tests/agent-workday.test.mjs && node kernel/tests/skills.test.mjs && node kernel/tests/skill-tools.test.mjs && node kernel/tests/skill-consolidate.test.mjs && node kernel/tests/induction.test.mjs && node kernel/tests/induction-scale.test.mjs && node kernel/tests/patch-memory-spaces-footer.test.mjs && node kernel/tests/core-boundary.test.mjs && node kernel/tests/engine-headless.test.mjs && node kernel/tests/adapter-boundary.test.mjs && node kernel/tests/settings.test.mjs",
+    "test:ui": "node ui/tests/mock.test.mjs && node ui/tests/shell.test.mjs && node ui/tests/client.test.mjs && node ui/tests/contract.test.mjs && node ui/tests/render.test.mjs && node ui/tests/live.test.mjs && node ui/tests/pages-smoke.test.mjs",
+    "audit": "node kernel/tools/audit.mjs",
+    "release": "node tools/build-release.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.2.0-rc.2 || >=0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "*",
+    "dsh-mnemon-source-memory-spaces": "^0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-ui-primitives": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "dsh-mnemon-source-memory-spaces": {
+      "optional": true
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "experience",
+    "skills",
+    "console",
+    "memory"
+  ],
+  "license": "MIT",
+  "author": "yhPrime",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yhPrime/dsh-Engram.git"
+  },
+  "homepage": "https://github.com/yhPrime/dsh-Engram#readme",
+  "bugs": {
+    "url": "https://github.com/yhPrime/dsh-Engram/issues"
+  }
+}
