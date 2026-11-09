@@ -112,6 +112,17 @@ window.__ModuleLoader__.load({
 @container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
+@keyframes eng-dash { to { stroke-dashoffset: -10; } }
+.eng-graph { position: relative; padding: 10px 12px 8px; background: radial-gradient(760px 460px at 50% 42%, color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent), transparent 72%), var(--dsw-alias-bg-layer-2); }
+.eng-graph svg { width: 100%; height: auto; display: block; }
+.eng-graph-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 2px 6px 6px; }
+.eng-graph-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 4px 8px 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.eng-graph-node { cursor: pointer; }
+.eng-graph-node:hover circle, .eng-graph-node:hover rect { filter: drop-shadow(0 0 7px currentColor); }
+.eng-graph-label { fill: var(--dsw-alias-label-primary); font-size: 10px; paint-order: stroke; stroke: var(--dsw-alias-bg-layer-1); stroke-width: 3px; }
+.eng-graph-label-sub { fill: var(--dsw-alias-label-secondary); font-size: 9px; }
+.eng-graph-edge { stroke: var(--dsw-alias-border-l1); fill: none; }
+.eng-graph-edge-derived { stroke-dasharray: 4 4; animation: eng-dash 1.5s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .eng-nav-item, .eng-row, .eng-skill-row { transition: none; } }
 `
     function ensureStyles() {
@@ -214,6 +225,7 @@ window.__ModuleLoader__.load({
         spark: 'M8 1.8l1.7 4.1 4.4.4-3.4 2.9 1 4.3L8 11.4l-3.7 2.1 1-4.3L1.9 6.3l4.4-.4L8 1.8Z',
         tag: 'M2 3h5.6l6.4 6.4-4.6 4.6L3 7.6V3Zm2.6 2.4h.01',
         clock: 'M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12Zm0-9v3.4l2.3 1.4',
+        graph: 'M3 3h3v3H3V3Zm7 7h3v3h-3v-3ZM3 13h3v3H3v-3Zm4-9h3M6 6l3 3m2 4h3M14 10l-3-3',
         gear: 'M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Zm5.4-2.2c0-.5-.1-.9-.2-1.3l1.5-1.1-1.4-2.4-1.8.7c-.6-.5-1.3-.9-2-1.2L9.2 1H6.8l-.3 1.7c-.7.3-1.4.7-2 1.2l-1.8-.7L1.3 5.6l1.5 1.1c-.1.4-.2.8-.2 1.3s.1.9.2 1.3L1.3 10.4l1.4 2.4 1.8-.7c.6.5 1.3.9 2 1.2l.3 1.7h2.4l.3-1.7c.7-.3 1.4-.7 2-1.2l1.8.7 1.4-2.4-1.5-1.1c.1-.4.2-.8.2-1.3Z',
       }
       return h('svg', { width: 15, height: 15, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { flex: '0 0 auto', opacity: .9 } },
@@ -592,6 +604,124 @@ window.__ModuleLoader__.load({
             h('td', null, row.feedback || (row.ok === false ? '失败' : 'ok'))))))))
     }
 
+    function Graph() {
+      const graph = useLoad(useCallback(() => request('/graph'), []))
+      const [active, setActive] = useState(null)
+      if (graph.error) return h(Banner, { bad: true }, graph.error)
+      const data = graph.data
+      if (!data) return h('div', { className: 'eng-card' }, h(Empty, null, '读取关系数据…'))
+      const nodes = (data.nodes || []).filter((node) => node.kind !== 'root')
+      const types = nodes.filter((node) => node.kind === 'type')
+      const experiences = nodes.filter((node) => node.kind === 'experience')
+      const skills = nodes.filter((node) => node.kind === 'skill')
+      const center = { x: 450, y: 310 }
+      const pos = new Map()
+      const angles = new Map()
+      types.forEach((type, index) => {
+        const angle = (-90 + (index * 360) / Math.max(1, types.length)) * (Math.PI / 180)
+        pos.set(type.id, { x: center.x + Math.cos(angle) * 150, y: center.y + Math.sin(angle) * 150 })
+        angles.set(type.id, angle)
+      })
+      const groups = new Map()
+      for (const experience of experiences) {
+        const key = experience.typeId || 'ty_other'
+        if (!groups.has(key)) groups.set(key, [])
+        groups.get(key).push(experience)
+      }
+      groups.forEach((list, typeId) => {
+        const base = angles.has(typeId) ? angles.get(typeId) : 0
+        const spread = Math.min(1.1, 0.22 * list.length)
+        list.forEach((experience, index) => {
+          const angle = base + (list.length === 1 ? 0 : -spread / 2 + (spread * index) / (list.length - 1))
+          pos.set(experience.id, { x: center.x + Math.cos(angle) * 238, y: center.y + Math.sin(angle) * 238 })
+        })
+      })
+      skills.forEach((skill, index) => {
+        const derived = (data.edges || []).filter((edge) => edge.kind === 'derived' && edge.target === skill.id && pos.has(edge.source)).map((edge) => pos.get(edge.source))
+        const base = derived.length > 0 ? Math.atan2(derived[0].y - center.y, derived[0].x - center.x) : (-90 + (index * 360) / Math.max(1, skills.length)) * (Math.PI / 180)
+        const radius = 312 + (index % 3) * 16
+        pos.set(skill.id, { x: center.x + Math.cos(base) * radius, y: center.y + Math.sin(base) * radius })
+      })
+      const colorOf = (node) => {
+        if (node.kind === 'type') return 'var(--dsw-alias-brand-primary)'
+        if (node.kind === 'skill') return '#d9a13b'
+        if (node.outcome === 'success' || node.outcome === 'accepted') return '#1f9d63'
+        if (node.outcome === 'partial') return '#c08312'
+        if (node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected') return '#d24b45'
+        return '#8b8f98'
+      }
+      const pathOf = (edge) => {
+        const from = edge.source === 'root' ? center : pos.get(edge.source)
+        const to = pos.get(edge.target)
+        if (!from || !to) return null
+        const midX = (from.x + to.x) / 2
+        const midY = (from.y + to.y) / 2
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const length = Math.hypot(dx, dy) || 1
+        const bend = edge.kind === 'derived' ? 26 : 12
+        const controlX = midX - (dy / length) * bend
+        const controlY = midY + (dx / length) * bend
+        return `M${from.x},${from.y} Q${controlX},${controlY} ${to.x},${to.y}`
+      }
+      const selected = active === null ? null : nodes.find((node) => node.id === active) || null
+      return h('div', { className: 'eng-stack' },
+        h('div', { className: 'eng-card eng-graph' },
+          h('div', { className: 'eng-graph-head' },
+            h('strong', null, '类型 → 经验 → 技能'),
+            h('span', { className: 'eng-muted' }, `${data.summary.types} 类型 · ${data.summary.experiences} 经验 · ${data.summary.skills} 技能`)),
+          h('svg', { viewBox: '0 0 900 620', role: 'img', 'aria-label': '经验关系图' },
+            h('defs', null,
+              h('radialGradient', { id: 'engRootGlow' }, h('stop', { offset: '0%', stopColor: 'var(--dsw-alias-brand-primary)', stopOpacity: '0.55' }), h('stop', { offset: '100%', stopColor: 'var(--dsw-alias-brand-primary)', stopOpacity: '0' }))),
+            h('circle', { cx: center.x, cy: center.y, r: 74, fill: 'url(#engRootGlow)' }),
+            h('circle', { cx: center.x, cy: center.y, r: 26, fill: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent)', stroke: 'var(--dsw-alias-brand-primary)', strokeWidth: 1.4 }),
+            h('text', { x: center.x, y: center.y + 4, textAnchor: 'middle', className: 'eng-graph-label', style: { fontSize: 11, fontWeight: 650 } }, '经验库'),
+            (data.edges || []).map((edge, index) => {
+              const path = pathOf(edge)
+              if (!path) return null
+              return h('path', { key: `e${index}`, d: path, className: `eng-graph-edge${edge.kind === 'derived' ? ' eng-graph-edge-derived' : ''}`, strokeWidth: edge.kind === 'derived' ? 1.2 : 0.9, opacity: 0.55 })
+            }),
+            nodes.map((node) => {
+              const point = pos.get(node.id)
+              if (!point) return null
+              const color = colorOf(node)
+              const isActive = active === node.id
+              if (node.kind === 'type') {
+                const radius = 12 + Math.min(9, Number(node.count) || 0)
+                return h('g', { key: node.id, className: 'eng-graph-node', onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
+                  h('circle', { r: radius + 5, fill: color, opacity: 0.12 }),
+                  h('circle', { r: radius, fill: 'var(--dsw-alias-bg-layer-1)', stroke: color, strokeWidth: isActive ? 2.2 : 1.3 }),
+                  h('text', { y: radius + 13, textAnchor: 'middle', className: 'eng-graph-label' }, node.label))
+              }
+              if (node.kind === 'skill') {
+                return h('g', { key: node.id, className: 'eng-graph-node', onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
+                  h('rect', { x: -7, y: -7, width: 14, height: 14, rx: 3, transform: 'rotate(45)', fill: color, opacity: isActive ? 1 : 0.9 }),
+                  h('text', { y: 23, textAnchor: 'middle', className: 'eng-graph-label' }, node.label))
+              }
+              const radius = 4.5 + Math.min(2.5, Math.abs(Number(node.G) || 0) * 2)
+              return h('g', { key: node.id, className: 'eng-graph-node', onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
+                h('circle', { r: isActive ? radius + 3 : radius, fill: color, stroke: 'var(--dsw-alias-bg-layer-1)', strokeWidth: 1 }),
+                isActive ? h('text', { y: -10, textAnchor: 'middle', className: 'eng-graph-label' }, node.label) : null)
+            })),
+          h('div', { className: 'eng-graph-legend' },
+            [['成功', '#1f9d63'], ['部分', '#c08312'], ['失败', '#d24b45'], ['未标', '#8b8f98']].map(([label, color]) => h('span', { key: label, style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, borderRadius: 99, background: color, display: 'inline-block' } }), label)),
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, background: '#d9a13b', transform: 'rotate(45deg)', display: 'inline-block' } }), '技能'))),
+        selected === null
+          ? h('div', { className: 'eng-muted' }, '点击节点查看详情；虚线表示技能由哪些经验沉淀而来。')
+          : h('div', { className: 'eng-card eng-detail' },
+              h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone: selected.kind === 'skill' ? 'warn' : selected.kind === 'type' ? 'brand' : outcomeOf(selected.outcome)[1] }, selected.kind === 'type' ? '类型' : selected.kind === 'skill' ? '技能' : '经验')),
+              h('h3', { className: 'eng-detail-title' }, selected.label || selected.id),
+              h('dl', { className: 'eng-kv' },
+                selected.kind === 'type' ? h('dt', null, '经验数') : null,
+                selected.kind === 'type' ? h('dd', null, String(selected.count || 0)) : null,
+                selected.kind === 'skill' ? h('dt', null, '使用') : null,
+                selected.kind === 'skill' ? h('dd', null, `uses ${selected.uses || 0} · helped ${selected.helped || 0} · hurt ${selected.hurt || 0}`) : null,
+                selected.kind === 'experience' ? h('dt', null, '结果') : null,
+                selected.kind === 'experience' ? h('dd', null, `${outcomeOf(selected.outcome)[0]} · G ${fmtNumber(selected.G)}`) : null,
+                selected.kind === 'experience' ? h('dt', null, 'id') : null,
+                selected.kind === 'experience' ? h('dd', { className: 'eng-mono' }, selected.id.replace(/^exp:/, '')) : null)))
+    }
+
     function Settings(props) {
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const validation = useLoad(useCallback(() => request('/validate'), []))
@@ -688,6 +818,7 @@ window.__ModuleLoader__.load({
 
     const NAV = [
       ['overview', '概览', 'overview'],
+      ['graph', '关系图', 'graph'],
       ['experiences', '经验', 'book'],
       ['recall', '检索', 'search'],
       ['record', '记录', 'plus'],
@@ -762,6 +893,7 @@ window.__ModuleLoader__.load({
       const go = (next) => setTab(next)
       const content = (() => {
         if (tab === 'overview') return h(Overview, { state, onGo: go, onOpen: (id) => { setTab('experiences') } })
+        if (tab === 'graph') return h(Graph)
         if (tab === 'experiences') return h(Experiences, { state, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
         if (tab === 'recall') return h(Recall, { seed: recallSeed })
         if (tab === 'record') return h(Record)

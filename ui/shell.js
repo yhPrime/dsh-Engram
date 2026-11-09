@@ -20,6 +20,8 @@ import {
   listOf,
   numberParam,
   recallOf,
+  rowOf,
+  visibleOf,
   statsOf,
   typesOf,
   usageSummary,
@@ -297,6 +299,50 @@ export function buildSettings(source) {
   }
 }
 
+/** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
+export function buildGraph(source) {
+  const read = source.read() || {}
+  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
+  const rows = visibleOf(store).map(rowOf)
+  const types = typesOf(store)
+  const skills = typeof source.skills === 'function' ? source.skills() : []
+  const nodes = [{ id: 'root', kind: 'root', label: '经验库' }]
+  const edges = []
+  const knownTypes = new Set()
+  for (const type of types) {
+    nodes.push({ id: `type:${type.id}`, kind: 'type', label: type.name, count: type.count || 0, system: type.system === true })
+    edges.push({ source: 'root', target: `type:${type.id}`, kind: 'root' })
+    knownTypes.add(type.id)
+  }
+  const expIds = new Set()
+  for (const row of rows) {
+    const typeId = row.typeId || 'ty_other'
+    if (!knownTypes.has(typeId)) {
+      nodes.push({ id: `type:${typeId}`, kind: 'type', label: row.typeName || '未分类', count: 0 })
+      edges.push({ source: 'root', target: `type:${typeId}`, kind: 'root' })
+      knownTypes.add(typeId)
+    }
+    nodes.push({ id: `exp:${row.id}`, kind: 'experience', label: row.intent || row.action || row.id, action: row.action || '', outcome: row.outcome, G: row.G, typeId })
+    edges.push({ source: `type:${typeId}`, target: `exp:${row.id}`, kind: 'type' })
+    expIds.add(row.id)
+  }
+  for (const skill of skills) {
+    const id = String(skill.id || '')
+    nodes.push({ id: `skill:${id}`, kind: 'skill', label: skill.name, status: skill.status, uses: skill.uses || 0, helped: skill.helped || 0, hurt: skill.hurt || 0 })
+    const derived = Array.isArray(skill.derivedFrom) ? skill.derivedFrom : []
+    const linked = derived.filter((experienceId) => expIds.has(String(experienceId)))
+    for (const experienceId of linked) edges.push({ source: `exp:${experienceId}`, target: `skill:${id}`, kind: 'derived' })
+    if (linked.length === 0) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived' })
+  }
+  return {
+    notice: String(read.notice || ''),
+    nodes,
+    edges,
+    summary: { types: types.length, experiences: rows.length, skills: skills.length },
+    updatedAt: String(read.updatedAt || ''),
+  }
+}
+
 /** 统一 JSON 回执。 */
 function json(res, status, payload) {
   const body = JSON.stringify(payload)
@@ -411,6 +457,10 @@ export async function handleRequest(req, res, source) {
     if (route === '/type') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       return json(res, 200, { ok: true, data: buildTypeOp(active, await readBody(req)) })
+    }
+    if (route === '/graph') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      return json(res, 200, { ok: true, data: buildGraph(active) })
     }
     if (route === '/validate') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

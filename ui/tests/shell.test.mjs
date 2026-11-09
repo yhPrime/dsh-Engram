@@ -492,6 +492,20 @@ await check('POST /settings：内核参数落盘、可清空', async () => {
   }
 })
 
+
+await check('GET /graph：根/类型/经验/技能节点与边齐全', async () => {
+  const source = createMockSource()
+  const { status, payload } = await call(source, '/graph')
+  assert.equal(status, 200)
+  const data = payload.data
+  assert.ok(data.nodes.some((node) => node.kind === 'root'))
+  assert.ok(data.nodes.some((node) => node.kind === 'type'))
+  assert.ok(data.nodes.some((node) => node.kind === 'experience'))
+  assert.ok(data.nodes.some((node) => node.kind === 'skill'))
+  assert.ok(data.edges.some((edge) => edge.kind === 'derived'))
+  assert.equal(data.summary.experiences, 12)
+})
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
 

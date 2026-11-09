@@ -375,3 +375,6 @@ body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结�
 
 ### `GET /settings`
 → `{ source, dataDir, file, exists, bytes, updatedAt, currentRoot, version }`
+
+### GET /graph&#10;→ { nodes, edges, summary, notice, updatedAt }。节点 kind：root/type/experience/skill；边 kind：root/type/derived。供「关系图」页渲染。
+
