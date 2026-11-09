@@ -601,6 +601,32 @@ window.__ModuleLoader__.load({
     }
 
     const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
+    function lightenColor(color, amount = 0.55) {
+      const text = String(color || '').trim()
+      let r = 0
+      let g = 0
+      let b = 0
+      let a = 1
+      const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+      const rgb = text.match(/^rgba?\(([^)]+)\)$/i)
+      if (hex) {
+        const value = hex[1].length === 3 ? hex[1].split('').map((ch) => ch + ch).join('') : hex[1]
+        r = parseInt(value.slice(0, 2), 16)
+        g = parseInt(value.slice(2, 4), 16)
+        b = parseInt(value.slice(4, 6), 16)
+      } else if (rgb) {
+        const parts = rgb[1].split(/[\s,\/]+/).filter(Boolean)
+        r = Number(parts[0]) || 0
+        g = Number(parts[1]) || 0
+        b = Number(parts[2]) || 0
+        a = parts[3] === undefined ? 1 : Number(parts[3])
+      } else {
+        return color
+      }
+      const mix = (channel) => Math.round(channel + (255 - channel) * amount)
+      return `rgba(${mix(r)}, ${mix(g)}, ${mix(b)}, ${a})`
+    }
+
     const GRAPH_PALETTES = {
       dsh: {},
       cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', ok: '#39ff88', bad: '#ff3b5c', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
@@ -689,6 +715,7 @@ window.__ModuleLoader__.load({
         bg: bgInner,
         bgInner: bg,
         node: brand,
+        nodeLight: lightenColor(brand, 0.58),
         node2: deep,
         edge: read('--dsw-alias-border-l3', dark ? '#64748b' : '#94a3b8'),
         highlight: brand,
@@ -718,7 +745,10 @@ window.__ModuleLoader__.load({
         const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
         let palette = paletteKey === 'dsh'
           ? readDshGraphPalette(canvas)
-          : { ...GRAPH_PALETTES[paletteKey], node2: GRAPH_PALETTES[paletteKey].node, highlight: GRAPH_PALETTES[paletteKey].node }
+          : (() => {
+              const base = GRAPH_PALETTES[paletteKey]
+              return { ...base, node2: base.node, highlight: base.node, nodeLight: lightenColor(base.node, 0.5) }
+            })()
         const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
@@ -983,8 +1013,8 @@ window.__ModuleLoader__.load({
             const bright = store.selected !== null && (edgeState.edge.source === store.selected || edgeState.edge.target === store.selected)
             ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1))
             const gradient = ctx.createLinearGradient(from.screenX, from.screenY, to.screenX, to.screenY)
-            gradient.addColorStop(0, edgeState.edge.kind === 'derived' ? palette.node2 : palette.node)
-            gradient.addColorStop(1, palette.edge)
+            gradient.addColorStop(0, palette.nodeLight || palette.node)
+            gradient.addColorStop(1, palette.edge || palette.node)
             ctx.strokeStyle = gradient
             ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : 1.7)) * near
             ctx.shadowBlur = bloom ? (4 + strength * 10) * near : 0
@@ -1023,7 +1053,10 @@ window.__ModuleLoader__.load({
               ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
               ctx.shadowBlur = 0
               ctx.shadowColor = 'transparent'
-              ctx.fillStyle = color
+              const fill = ctx.createRadialGradient(-screenRadius * 0.35, -screenRadius * 0.35, screenRadius * 0.12, 0, 0, screenRadius * 1.15)
+              fill.addColorStop(0, palette.nodeLight || color)
+              fill.addColorStop(1, color)
+              ctx.fillStyle = fill
               ctx.strokeStyle = palette.highlight
               ctx.lineWidth = isSelected ? 1.6 : 0.7
               ctx.scale(breathing, breathing)
