@@ -329,7 +329,7 @@ export function buildGraph(source) {
       knownTypes.add(typeId)
     }
     const lastSeen = Date.parse(String(row.lastSeenAt || row.ts || '')) || 0
-    nodes.push({ id: `exp:${row.id}`, kind: 'experience', label: row.intent || row.action || row.id, action: row.action || '', outcome: row.outcome, G: row.G, typeId, weight: Math.min(1, 0.3 + Math.abs(Number(row.G) || 0) * 0.35), recent: lastSeen > 0 && Date.now() - lastSeen < 7 * 24 * 3600 * 1000 })
+    nodes.push({ id: `exp:${row.id}`, kind: 'experience', label: row.intent || row.action || row.id, action: row.action || '', outcome: row.outcome, G: row.G, typeId, lastSeenAt: row.lastSeenAt || row.ts || '', weight: Math.min(1, 0.3 + Math.abs(Number(row.G) || 0) * 0.35), recent: lastSeen > 0 && Date.now() - lastSeen < 7 * 24 * 3600 * 1000 })
     edges.push({ source: `type:${typeId}`, target: `exp:${row.id}`, kind: 'type', strength: 0.25 + Math.min(0.5, Math.abs(Number(row.G) || 0) * 0.25) })
     expIds.add(row.id)
   }
