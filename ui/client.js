@@ -115,6 +115,11 @@ window.__ModuleLoader__.load({
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: transparent; }
 .eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+.eng-content-full { padding: 0; max-width: none; overflow: hidden; display: flex; }
+.eng-content-full .eng-graph-canvas-wrap { flex: 1 1 auto; height: 100%; min-height: 0; aspect-ratio: auto; border-radius: 0; }
+.eng-graph-detail { position: absolute; right: 14px; bottom: 14px; z-index: 2; width: min(320px, 72%); padding: 12px 14px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.14); }
+.eng-graph-detail-title { font-size: 13px; font-weight: 650; margin: 0 0 6px; word-break: break-word; }
+.eng-graph-detail-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 `
     function ensureStyles() {
       try {
@@ -598,7 +603,7 @@ window.__ModuleLoader__.load({
     const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
     const GRAPH_PALETTES = {
       dsh: {},
-      cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
+      cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', ok: '#39ff88', bad: '#ff3b5c', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
       aurora: { bg: '#010208', bgInner: '#06101a', node: '#7dffd4', node2: '#b892ff', edge: '#7cc7ff', highlight: '#c9b6ff', warn: '#ffe3a3', glow: '#9dffdf', dust: '#bfffe9', bloom: 18 },
       blackgold: { bg: '#060504', bgInner: '#141006', node: '#ffcc66', node2: '#ff9f2e', edge: '#b9852f', highlight: '#ffe3a3', warn: '#ffcf7a', glow: '#ffb84d', dust: '#ffe3a3', bloom: 16 },
       steampunk: { bg: '#0a0604', bgInner: '#1a0f08', node: '#d9a441', node2: '#b85c2a', edge: '#8a4b22', highlight: '#ffb35c', warn: '#e8c07a', glow: '#ffb35c', dust: '#e0b07a', bloom: 14 },
@@ -681,6 +686,8 @@ window.__ModuleLoader__.load({
         bgInner: bg,
         node: brand,
         node2: secondary,
+        ok: read('--dsw-alias-success-primary', '#0f9d8a'),
+        bad: read('--dsw-alias-error-primary', '#d1435b'),
         edge: read('--dsw-alias-border-l1', '#3a4150'),
         highlight: brand,
         warn: read('--dsw-alias-warning-primary', '#c08312'),
@@ -694,6 +701,7 @@ window.__ModuleLoader__.load({
       const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const canvasRef = useRef(null)
+      const [selection, setSelection] = useState(null)
       const stateRef = useRef({
         nodes: new Map(), edges: new Map(), dust: [],
         cam: { yaw: -0.42, pitch: -0.24, dist: 1420 },
@@ -740,9 +748,9 @@ window.__ModuleLoader__.load({
         }
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
-          if (node.kind === 'type') return 7 + Math.pow(w, 0.85) * 15
-          if (node.kind === 'skill') return 4 + Math.pow(w, 0.9) * 7
-          return 2 + Math.pow(w, 0.9) * 6
+          if (node.kind === 'type') return 5 + Math.pow(w, 0.85) * 10
+          if (node.kind === 'skill') return 3 + Math.pow(w, 0.9) * 4.5
+          return 1.2 + Math.pow(w, 0.9) * 3.6
         }
         const project = (entry, time) => {
           const wx = entry.x + Math.sin(time / 3200 + entry.phase) * 7
@@ -893,6 +901,7 @@ window.__ModuleLoader__.load({
             const hit = pick(event.clientX, event.clientY)
             store.selected = hit === null ? null : hit.node.id
             store.pulse = 0
+            setSelection(hit === null ? null : hit.node)
           }
           store.dragging = null
           canvas.style.cursor = 'grab'
@@ -918,16 +927,6 @@ window.__ModuleLoader__.load({
           const cx = width / 2
           const cy = height / 2
           ctx.clearRect(0, 0, width, height)
-          const background = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) * 0.72)
-          background.addColorStop(0, palette.bgInner)
-          background.addColorStop(1, palette.bg)
-          ctx.fillStyle = background
-          ctx.fillRect(0, 0, width, height)
-          const vignette = ctx.createRadialGradient(cx, cy, Math.min(width, height) * 0.22, cx, cy, Math.max(width, height) * 0.8)
-          vignette.addColorStop(0, 'rgba(0,0,0,0)')
-          vignette.addColorStop(1, 'rgba(0,0,0,.52)')
-          ctx.fillStyle = vignette
-          ctx.fillRect(0, 0, width, height)
           for (const particle of store.dust) {
             particle.x += particle.vx * dt
             particle.y += particle.vy * dt
@@ -962,12 +961,12 @@ window.__ModuleLoader__.load({
             if (strength < 0.02 || from.alpha < 0.1 || to.alpha < 0.1) continue
             const near = (from.screenF + to.screenF) * 0.5
             const bright = store.selected !== null && (edgeState.edge.source === store.selected || edgeState.edge.target === store.selected)
-            ctx.globalAlpha = Math.min(1, (0.035 + strength * 0.5) * near * (bright ? 1.9 : 1))
+            ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1))
             const gradient = ctx.createLinearGradient(from.screenX, from.screenY, to.screenX, to.screenY)
             gradient.addColorStop(0, edgeState.edge.kind === 'derived' ? palette.node2 : palette.node)
             gradient.addColorStop(1, palette.edge)
             ctx.strokeStyle = gradient
-            ctx.lineWidth = (0.25 + strength * (bright ? 3.2 : 2.4)) * near
+            ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : 1.7)) * near
             ctx.shadowBlur = bloom ? (4 + strength * 10) * near : 0
             ctx.shadowColor = edgeState.edge.kind === 'derived' ? palette.node2 : palette.glow
             ctx.beginPath()
@@ -995,8 +994,9 @@ window.__ModuleLoader__.load({
             const isSelected = store.selected !== null && store.selected === node.id
             const color = node.kind === 'type' ? palette.node
               : node.kind === 'skill' ? palette.node2
-                : node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected' ? palette.highlight
-                  : node.outcome === 'partial' ? palette.warn : palette.node
+                : node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected' ? (palette.bad || palette.highlight)
+                  : node.outcome === 'partial' ? palette.warn
+                    : node.outcome === 'success' || node.outcome === 'accepted' ? (palette.ok || palette.node) : palette.node2
             const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.09 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
             const nearFactor = Math.min(1.6, Math.max(0.35, entry.screenF))
             const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing
@@ -1005,7 +1005,7 @@ window.__ModuleLoader__.load({
               ctx.save()
               ctx.translate(entry.screenX + offsetX, entry.screenY + offsetY)
               ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
-              ctx.shadowBlur = bloom ? palette.bloom * (0.2 + entry.currentWeight) * nearFactor : 0
+              ctx.shadowBlur = bloom ? (4 + palette.bloom * 0.35 * entry.currentWeight) * nearFactor : 0
               ctx.shadowColor = color
               ctx.fillStyle = color
               ctx.strokeStyle = palette.highlight
@@ -1047,7 +1047,19 @@ window.__ModuleLoader__.load({
           canvas.removeEventListener('wheel', onWheel)
         }
       }, [graph.data, settings.data])
-      return h('div', { className: 'eng-graph-canvas-wrap' }, h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '3D 记忆海' }))
+      return h('div', { className: 'eng-graph-canvas-wrap' },
+        h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '3D 记忆海' }),
+        selection === null ? null : h('div', { className: 'eng-graph-detail' },
+          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'type' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'type' ? '类型' : selection.kind === 'skill' ? '技能' : '经验')),
+          h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
+          h('dl', { className: 'eng-kv' },
+            selection.kind === 'experience' ? h('dt', null, '结果') : null,
+            selection.kind === 'experience' ? h('dd', null, `${outcomeOf(selection.outcome)[0]} · G ${fmtNumber(selection.G)}`) : null,
+            selection.kind === 'skill' ? h('dt', null, '使用') : null,
+            selection.kind === 'skill' ? h('dd', null, `uses ${selection.uses || 0} · helped ${selection.helped || 0} · hurt ${selection.hurt || 0}`) : null,
+            selection.kind === 'type' ? h('dt', null, '经验数') : null,
+            selection.kind === 'type' ? h('dd', null, String(selection.count || 0)) : null,
+            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, String(selection.id || '').replace(/^(exp|skill|type):/, '')))))
     }
 
     function Settings(props) {
@@ -1257,7 +1269,7 @@ window.__ModuleLoader__.load({
               source ? h(Badge, { tone: source.mode === 'mock' ? 'warn' : 'ok' }, source.mode === 'mock' ? '示例数据' : `数据：${source.label}`) : null,
               state ? h('span', { className: 'eng-muted' }, `v${state.version}`) : null,
               h(Button, { small: true, onClick: loadState }, '刷新'))),
-          h('div', { className: 'eng-content' },
+          h('div', { className: tab === 'graph' ? 'eng-content eng-content-full' : 'eng-content' },
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
             h(PageBoundary, { key: tab }, content))))
