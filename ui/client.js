@@ -395,7 +395,7 @@ window.__ModuleLoader__.load({
     }
 
     function Record() {
-      const [form, setForm] = useState({ intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', expectedG: '', skillId: '', blockedBy: '' })
+      const [form, setForm] = useState({ intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', expectedG: '', expectedOutcome: '', skillId: '', blockedBy: '' })
       const [receipt, setReceipt] = useState(null)
       const [error, setError] = useState('')
       const [busy, setBusy] = useState(false)
@@ -415,6 +415,7 @@ window.__ModuleLoader__.load({
             if (form.stepTotal !== '') body.stepTotal = Number(form.stepTotal)
           }
           if (form.expectedG !== '') body.expectedG = Number(form.expectedG)
+          if (form.expectedOutcome !== '') body.expectedOutcome = form.expectedOutcome
           if (form.skillId.trim() !== '') body.skillId = form.skillId.trim()
           if (form.blockedBy.trim() !== '') body.blockedBy = form.blockedBy.trim()
           setReceipt(await request('/record', { method: 'POST', body }))
@@ -434,6 +435,7 @@ window.__ModuleLoader__.load({
           h(Field, { label: '类型' }, h('input', { className: 'eng-input', value: form.type, onChange: update('type'), placeholder: 'PPT / 课件' })),
           h(Field, { label: '情境（逗号分隔）' }, h('input', { className: 'eng-input', value: form.context, onChange: update('context'), placeholder: 'windows, powerpoint' })),
           h(Field, { label: '预期 G（可选）' }, h('input', { className: 'eng-input', type: 'number', step: '0.05', value: form.expectedG, onChange: update('expectedG'), placeholder: '0.8' })),
+          h(Field, { label: '预期结果（可选）' }, h('select', { className: 'eng-select', value: form.expectedOutcome, onChange: update('expectedOutcome') }, h('option', { value: '' }, '不设置'), ['accepted','success','partial','unknown','failed','corrected','aborted'].map((key) => h('option', { key, value: key }, OUTCOMES[key] ? OUTCOMES[key][0] : key)))),
           h(Field, { label: '任务 id（可选）' }, h('input', { className: 'eng-input', value: form.taskId, onChange: update('taskId') })),
           h(Field, { label: '粒度' }, h('select', { className: 'eng-select', value: form.kind, onChange: update('kind') }, h('option', { value: 'task' }, '整条任务'), h('option', { value: 'step' }, '任务步骤'))),
           h(Field, { label: '步骤序号（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepIndex, onChange: update('stepIndex') })),
@@ -449,6 +451,7 @@ window.__ModuleLoader__.load({
       const validation = useLoad(useCallback(() => request('/validate'), []))
       const [selected, setSelected] = useState(null)
       const [intent, setIntent] = useState('')
+      const [context, setContext] = useState('')
       const [notice, setNotice] = useState('')
       const rows = skills.data ? skills.data.skills || [] : []
       const current = selected === null ? null : rows.find((row) => row.id === selected) || null
@@ -482,7 +485,8 @@ window.__ModuleLoader__.load({
             h('div', { className: 'eng-card', style: { padding: 15 } },
               h('h3', { className: 'eng-section-title', style: { marginBottom: 8 } }, '沉淀技能'),
               h(Field, { label: '同族意图' }, h('input', { className: 'eng-input', value: intent, onChange: (event) => setIntent(event.target.value), placeholder: '例如：给 PPT 插页' })),
-              h(Button, { kind: 'primary', disabled: intent.trim() === '', onClick: () => act(async () => { const out = await request('/consolidate', { method: 'POST', body: { intent } }); return `沉淀结果：${out.action}${out.slug ? `（${out.slug}）` : ''}` }) }, '沉淀')),
+              h(Field, { label: '情境（逗号分隔，可选）' }, h('input', { className: 'eng-input', value: context, onChange: (event) => setContext(event.target.value) })),
+              h(Button, { kind: 'primary', disabled: intent.trim() === '', onClick: () => act(async () => { const out = await request('/consolidate', { method: 'POST', body: { intent, context: context.trim() === '' ? [] : context.split(/[,，]/).map((item) => item.trim()).filter(Boolean) } }); return `沉淀结果：${out.action}${out.slug ? `（${out.slug}）` : ''}` }) }, '沉淀')),
             h('div', { className: 'eng-card', style: { padding: 15 } },
               h('h3', { className: 'eng-section-title', style: { marginBottom: 8 } }, '技能校验'),
               validation.data && validation.data.problems && validation.data.problems.length > 0
@@ -494,7 +498,8 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上')),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
                 h('pre', { className: 'eng-pre' }, current.body || '（空）'))))))
     }
 
@@ -503,19 +508,24 @@ window.__ModuleLoader__.load({
       const [name, setName] = useState('')
       const [description, setDescription] = useState('')
       const [notice, setNotice] = useState('')
+      const [selected, setSelected] = useState('')
+      const [newName, setNewName] = useState('')
+      const [mergeInto, setMergeInto] = useState('')
+      const rows = types.data ? types.data.types || [] : []
+      const current = rows.find((row) => row.id === selected) || null
       const op = async (body) => {
         try {
-          setNotice(await request('/type', { method: 'POST', body }))
+          const out = await request('/type', { method: 'POST', body })
+          setNotice(`已执行：${out.action || '类型操作'}`)
           await types.reload()
           props.onChanged()
         } catch (caught) {
           setNotice(caught.message || String(caught))
         }
       }
-      const rows = types.data ? types.data.types || [] : []
       return h('div', null,
         types.error ? h(Banner, { bad: true }, types.error) : null,
-        notice ? h(Banner, null, typeof notice === 'string' ? notice : `已执行：${notice.action || '类型操作'}`) : null,
+        notice ? h(Banner, null, notice) : null,
         h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14 } },
           h('div', { className: 'eng-form-grid' },
             h(Field, { label: '新类型名称' }, h('input', { className: 'eng-input', value: name, onChange: (event) => setName(event.target.value) })),
@@ -523,16 +533,23 @@ window.__ModuleLoader__.load({
           h(Button, { kind: 'primary', disabled: name.trim() === '', onClick: () => op({ action: 'create', name: name.trim(), description: description.trim() }) }, '新建类型')),
         h('div', { className: 'eng-card' },
           h('table', { className: 'eng-table' },
-            h('thead', null, h('tr', null, h('th', null, '名称'), h('th', null, 'id'), h('th', null, '条数'), h('th', null, '操作'))),
-            h('tbody', null, rows.map((row) => h('tr', { key: row.id },
+            h('thead', null, h('tr', null, h('th', null, '名称'), h('th', null, 'id'), h('th', null, '条数'), h('th', null, '类型'))),
+            h('tbody', null, rows.map((row) => h('tr', { key: row.id, style: { cursor: row.system ? 'default' : 'pointer' }, onClick: () => { if (!row.system) { setSelected(row.id); setNewName(row.name); setMergeInto('') } } },
               h('td', null, row.name),
               h('td', { className: 'eng-mono' }, row.id),
               h('td', null, String(row.count || 0)),
-              h('td', null, row.system
-                ? h('span', { className: 'eng-muted' }, '系统类型')
-                : h('div', { className: 'eng-actions' },
-                  h(Button, { small: true, onClick: () => op({ action: 'rename', id: row.id, name: `${row.name}·改` }) }, '改名'),
-                  h(Button, { small: true, onClick: () => op({ action: 'delete', id: row.id }) }, '删除')))))))))
+              h('td', null, row.system ? h('span', { className: 'eng-muted' }, '系统') : (selected === row.id ? h(Badge, { tone: 'brand' }, '管理中') : h('span', { className: 'eng-muted' }, '点击管理')))))))),
+        current === null ? null : h('div', { className: 'eng-card eng-detail', style: { marginTop: 14 } },
+          h('h3', { className: 'eng-detail-title' }, `管理：${current.name}`),
+          h('div', { className: 'eng-form-grid' },
+            h(Field, { label: '新名称' }, h('input', { className: 'eng-input', value: newName, onChange: (event) => setNewName(event.target.value) })),
+            h(Field, { label: '合并到' }, h('select', { className: 'eng-select', value: mergeInto, onChange: (event) => setMergeInto(event.target.value) },
+              h('option', { value: '' }, '选择目标类型'),
+              rows.filter((row) => row.id !== current.id && !row.system).map((row) => h('option', { key: row.id, value: row.name }, row.name))))),
+          h('div', { className: 'eng-actions' },
+            h(Button, { small: true, disabled: newName.trim() === '', onClick: () => op({ action: 'rename', name: current.name, newName: newName.trim() }) }, '改名'),
+            h(Button, { small: true, disabled: mergeInto === '', onClick: () => op({ action: 'merge', names: [current.name, mergeInto], newName: mergeInto }) }, '合并'),
+            h(Button, { small: true, kind: 'danger', onClick: () => op({ action: 'delete', name: current.name }) }, '删除'))))
     }
 
     function Usage() {
