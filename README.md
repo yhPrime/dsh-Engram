@@ -29,6 +29,15 @@ dsh plugin --profile <profile> add ./dsh-engram-0.11.0.tgz
 - `source`：`live`（默认）或 `mock`（仅演示）
 - 内核参数：`hint`、`usageLog`、`feedbackEta`、`routing`、`maxTypes` 等，全部可在控制台「设置」页修改。
 
+## Git 备份
+
+控制台「设置 → Git 仓库备份」里填远端，库就是一个普通 git 仓库（`<dataDir>/.git`）：
+
+- **远端**：`https://…` / `ssh://…` / `git@host:path` / 本机绝对路径；地址里不要写账号密码，https 用单独的 **token** 字段（只存在本机 `settings.json`，推送时走 `http.extraHeader`，错误信息里打码）。
+- **动作**：初始化仓库（`git init` + 设 `origin`）、提交并推送（`add -A -- .` → commit → push）、拉取（只做 `--ff-only`，有分叉不自动合并）。
+- **自动备份**：`autoBackupMinutes` 大于 0 时按间隔自动提交推送（最小 15 分钟；没有改动会跳过）。
+- API：`GET /exp-ui/api/sync` 看状态，`POST /exp-ui/api/sync` 带 `{action:"init"|"push"|"pull"|"status"}`。
+
 ## 借鉴与致谢
 
 这个插件是长期迭代出来的，不少设计来自公开项目与 DSH 生态。写清楚借了什么，免得以后当成原创：

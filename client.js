@@ -90,7 +90,10 @@ window.__ModuleLoader__.load({
 .eng-table th { padding: 8px 10px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-table td { padding: 8px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
 .eng-table tr:last-child td { border-bottom: 0; }
-.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.eng-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
+.eng-tip:hover, .eng-tip:focus-visible { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); outline: none; }
+.eng-tip-bubble { display: none; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 30; width: max-content; max-width: 300px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 96%, transparent); color: var(--dsw-alias-label-primary); font-size: 11px; line-height: 1.55; box-shadow: 0 8px 24px rgba(0,0,0,.18); pointer-events: none; }
+.eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .eng-banner { margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .eng-banner-bad { border-color: color-mix(in srgb, var(--eng-bad) 40%, var(--dsw-alias-border-l1)); color: var(--eng-bad); }
 .eng-detail { padding: 16px; }
@@ -210,9 +213,17 @@ window.__ModuleLoader__.load({
       const kind = props.kind === 'primary' ? 'eng-btn eng-btn-primary' : props.kind === 'danger' ? 'eng-btn eng-btn-danger' : 'eng-btn'
       return h('button', { type: 'button', className: `${kind}${props.small ? ' eng-btn-sm' : ''}`, disabled: props.disabled, onClick: props.onClick, title: props.title }, props.children)
     }
+    /** 悬浮说明：问号图标，悬停/键盘聚焦时弹气泡（用于有歧义的设置项）。 */
+    function Tip(props) {
+      const text = String(props.text || '')
+      if (text === '') return null
+      return h('span', { className: 'eng-tip', tabIndex: 0, role: 'note', 'aria-label': text },
+        '?',
+        h('span', { className: 'eng-tip-bubble', role: 'tooltip' }, text))
+    }
     function Field(props) {
       return h('div', { className: 'eng-field', style: props.wide ? { gridColumn: '1 / -1' } : undefined },
-        props.label ? h('label', { className: 'eng-label' }, props.label) : null,
+        props.label ? h('label', { className: 'eng-label' }, props.label, props.tip ? h(Tip, { text: props.tip }) : null) : null,
         props.children,
         props.hint ? h('span', { className: 'eng-muted' }, props.hint) : null)
     }
@@ -1214,12 +1225,29 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false)
       const [configDraft, setConfigDraft] = useState({})
       const [uiDraft, setUiDraft] = useState({})
+      const [gitDraft, setGitDraft] = useState({})
+      const [syncNotice, setSyncNotice] = useState('')
+      const sync = useLoad(useCallback(() => request('/sync'), []))
       useEffect(() => {
         if (!settings.data) return
         setRootInput(settings.data.currentRoot || settings.data.dataDir || '')
         setConfigDraft(settings.data.config || {})
         setUiDraft(settings.data.ui || {})
+        setGitDraft(settings.data.git || {})
       }, [settings.data])
+      const syncAction = async (action, label) => {
+        setBusy(true); setSyncNotice('')
+        try {
+          const result = await request('/sync', { method: 'POST', body: { action } })
+          await sync.reload()
+          const reason = result && typeof result.reason === 'string' ? result.reason : ''
+          setSyncNotice(reason === '' ? `${label}完成` : `${label}：${reason}`)
+        } catch (caught) {
+          setSyncNotice(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
       const post = async (payload) => {
         setBusy(true); setNotice('')
         try {
@@ -1264,11 +1292,11 @@ window.__ModuleLoader__.load({
         } else {
           control = h('input', { className: 'eng-input', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
         }
-        return h(Field, { key: field.key, label: field.label, hint: field.hint }, control)
+        return h(Field, { key: field.key, label: field.label, hint: field.hint, tip: field.tip }, control)
       })
       if (settings.error) return h(Banner, { bad: true }, settings.error)
       const data = settings.data || {}
-      const spec = data.spec || { config: [], ui: [] }
+      const spec = data.spec || { config: [], ui: [], git: [] }
       return h('div', { className: 'eng-stack' },
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '存储位置'),
@@ -1284,6 +1312,27 @@ window.__ModuleLoader__.load({
             h('dt', null, '经验库文件'), h('dd', { className: 'eng-mono' }, data.file || '—'),
             h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
             h('dt', null, '版本'), h('dd', null, data.version || '—'))),
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, 'Git 仓库备份'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '把经验库当普通 git 仓库提交并推送到远端：只提交当前数据目录，拉取只做 fast-forward，冲突交回给人。'),
+          h('div', { className: 'eng-form-grid' }, renderFields(spec.git, gitDraft, setGitDraft)),
+          h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
+            h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ git: gitDraft }) }, '保存 Git 设置'),
+            h(Button, { disabled: busy, onClick: sync.reload }, '检查状态'),
+            h(Button, { disabled: busy, onClick: () => syncAction('init', '初始化') }, '初始化仓库'),
+            h(Button, { disabled: busy, onClick: () => syncAction('push', '推送') }, '提交并推送'),
+            h(Button, { disabled: busy, onClick: () => syncAction('pull', '拉取') }, '拉取')),
+          syncNotice ? h(Banner, null, syncNotice) : null,
+          sync.error ? h(Banner, { bad: true }, sync.error) : null,
+          h('dl', { className: 'eng-kv' },
+            h('dt', null, '仓库'), h('dd', null, sync.data ? (sync.data.isRepo ? '已初始化' : '未初始化（点「初始化仓库」）') : '读取中…'),
+            h('dt', null, '分支'), h('dd', { className: 'eng-mono' }, sync.data && sync.data.branch ? sync.data.branch : (sync.data && sync.data.targetBranch) || '—'),
+            h('dt', null, '远端'), h('dd', { className: 'eng-mono' }, sync.data && sync.data.remote ? sync.data.remote : (sync.data && sync.data.configured ? '已填地址，未初始化' : '未配置')),
+            h('dt', null, '未提交'), h('dd', null, sync.data ? `${sync.data.dirtyCount} 个改动` : '—'),
+            h('dt', null, '领先 / 落后'), h('dd', null, sync.data ? `${sync.data.ahead} / ${sync.data.behind}` : '—'),
+            h('dt', null, '最近提交'), h('dd', null, sync.data && sync.data.lastCommitAt ? `${fmtTime(sync.data.lastCommitAt)} ${sync.data.lastCommitSubject}` : '—'),
+            h('dt', null, '自动备份'), h('dd', null, sync.data && sync.data.autoBackupMinutes ? `每 ${sync.data.autoBackupMinutes} 分钟` : '关闭'),
+            sync.data && sync.data.error ? h('dt', null, '错误') : null, sync.data && sync.data.error ? h('dd', { className: 'eng-mono' }, sync.data.error) : null)),
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '界面与关系图'),
           h('div', { className: 'eng-form-grid' }, renderFields(spec.ui, uiDraft, setUiDraft)),

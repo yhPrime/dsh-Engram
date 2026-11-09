@@ -28,7 +28,8 @@ import {
 } from './data-source.js'
 import fs from 'node:fs'
 
-import { readEngineConfig, readSettings, readUiConfig, setCurrentRoot, writeEngineConfig, writeUiConfig } from '../kernel/settings.js'
+import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
+import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 
 /** 客户端调用前缀（与 client.js 拼的 URL 一致）。 */
 export const API_PREFIX = '/exp-ui/api'
@@ -41,32 +42,40 @@ const MAX_LIMIT = 300
 /** 设置页可编辑项（全部都在这里，未知键不落盘）。 */
 export const SETTINGS_SPEC = {
   config: [
-    { key: 'hint', label: '每轮提示段', type: 'boolean', hint: '关闭后不再向系统提示写经验库用法' },
-    { key: 'usageLog', label: '用法日志', type: 'boolean', hint: '记录 exp_* 调用，用于使用记录页' },
-    { key: 'usageLogMaxBytes', label: '日志上限（字节）', type: 'number' },
-    { key: 'feedbackEta', label: '反馈学习率 η', type: 'number', hint: '0~1，默认 0.35' },
-    { key: 'feedbackDecayDays', label: '反馈衰减（天）', type: 'number' },
-    { key: 'routing', label: '簇路由', type: 'enum', values: ['on', 'shadow', 'off'] },
-    { key: 'autoAssign', label: '自动归族', type: 'boolean' },
-    { key: 'consolidation', label: '沉淀候选', type: 'boolean' },
-    { key: 'consolidationMinSamples', label: '沉淀最少样本', type: 'number' },
-    { key: 'induction', label: '归纳提示', type: 'boolean' },
-    { key: 'inductionMinSamples', label: '归纳最少样本', type: 'number' },
-    { key: 'maxTypes', label: '类型上限', type: 'number' },
-    { key: 'newTypesPerDay', label: '每日新类型上限', type: 'number' },
-    { key: 'mergeThreshold', label: '类型合并阈值', type: 'number' },
-    { key: 'replaceThreshold', label: '经验取代阈值', type: 'number' },
-    { key: 'typeSimilarity', label: '类型相似度阈值', type: 'number' },
+    { key: 'hint', label: '每轮提示段', type: 'boolean', hint: '关闭后不再向系统提示写经验库用法', tip: '开启时，每轮系统提示里会多一段以「【经验库】」开头的说明（条数/类型目录/用法）。关掉后要重载插件才会撤掉已经注册的那一段——保存后提示段不会立刻消失。' },
+    { key: 'usageLog', label: '用法日志', type: 'boolean', hint: '记录 exp_* 调用，用于使用记录页', tip: '把每次 exp_record / exp_recall / exp_feedback 的调用写进 <数据目录>/usage.jsonl，零 token 开销；关掉后「使用记录」页就没有新数据。' },
+    { key: 'usageLogMaxBytes', label: '日志上限（字节）', type: 'number', tip: 'usage.jsonl 超过这个大小就轮转成 usage.jsonl.1（只保留一份旧文件）。内部有 1024 字节下限：填 1 也按 1024 生效。' },
+    { key: 'feedbackEta', label: '反馈学习率 η', type: 'number', hint: '0~1，默认 0.35', tip: '每次「有帮助/没帮上」把 G 往 +1 / -1 拉的幅度。η 越大改得越快；默认 0.35。' },
+    { key: 'feedbackDecayDays', label: '反馈衰减（天）', type: 'number', tip: '它不是「G 随时间自然衰减」，而是「超过天数的旧反馈事件折叠进基准 GOutcome」——折叠后 G 值不变，只是日志变短（压缩）。填 0 表示不折叠。' },
+    { key: 'routing', label: '簇路由', type: 'enum', values: ['on', 'shadow', 'off'], tip: 'on：召回先用簇路由收窄候选；shadow：只记录路由结果不实际收窄（用来对比效果）；off：全库检索。' },
+    { key: 'autoAssign', label: '自动归族', type: 'boolean', tip: '记录经验时没写类型，就按簇路由自动归到某个类型；关掉后一律落「未分类」。' },
+    { key: 'consolidation', label: '沉淀候选', type: 'boolean', tip: '召回结果里附带一条「候选规则」：同族样本够多、且正负对照都有时才给，用来提示可以沉淀成技能。不写库、不花 token。' },
+    { key: 'consolidationMinSamples', label: '沉淀最少样本', type: 'number', tip: '同族至少多少条才给「候选规则」（默认 3，且必须同时有正回报和负回报）。' },
+    { key: 'induction', label: '归纳提示', type: 'boolean', tip: '召回到同族多条时，额外给一段「原料」让模型自己归纳共性；它明确写着「别当结论」，只是提示。' },
+    { key: 'inductionMinSamples', label: '归纳最少样本', type: 'number', tip: '同族至少多少条才给归纳提示（默认 3）。' },
+    { key: 'maxTypes', label: '类型上限', type: 'number', tip: '用户类型最多几个（不含系统「未分类」）。超限后新类型名会归到「未分类」并把原因写进 exp_record 的回执。' },
+    { key: 'newTypesPerDay', label: '每日新类型上限', type: 'number', tip: '一天最多新建几个类型，防止类型爆炸；超了同样归「未分类」。' },
+    { key: 'mergeThreshold', label: '类型合并阈值', type: 'number', tip: '重记一条「没写类型」的经验时，若同做法的旧经验相似度达到这个阈值，就继承它的类型。注意：类型名互相包含（如「文档写作」/「文档写作文案」）会直接合并，不受这个阈值影响。' },
+    { key: 'replaceThreshold', label: '经验取代阈值', type: 'number', tip: '新记录与旧经验意图相似度达到这个阈值时，旧条标记为「被取代」（保留历史但不再参与召回）。' },
+    { key: 'typeSimilarity', label: '类型相似度阈值', type: 'number', tip: '新建类型时，名字与已有类型的相似度（二元组 Jaccard）达到这个值就并入已有类型，不新建。' },
   ],
   ui: [
-    { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示' },
-    { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根' },
-    { key: 'graphTheme', label: '关系图主题', type: 'enum', values: ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration'], labels: { personal: '个人记忆碎片', dream: '梦境记忆轨迹', knowledge: '知识概念关联', emotion: '情绪记忆链路', spacetime: '时空记忆时间线', collective: '集体共享记忆', inspiration: '灵感思绪蛛网' } },
-    { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['dsh', 'cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { dsh: '跟随 DSH 主题', cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' } },
-    { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭' },
-    { key: 'graphBloom', label: '泛光 bloom', type: 'boolean' },
-    { key: 'graphGlitch', label: '色散/毛刺', type: 'boolean' },
-    { key: 'graphDust', label: '浮尘数量', type: 'number', hint: '0~240' },
+    { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示', tip: 'live：读真实经验库；mock：读内置示例数据（只用于看界面效果，不写真实库）。' },
+    { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根', tip: '只影响「控制台读哪份库」，不影响工具写入。工具始终写到「存储位置」里的当前根；两边可以指向不同目录——看起来「数据不一致」时先来这里检查。' },
+    { key: 'graphTheme', label: '关系图主题', type: 'enum', values: ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration'], labels: { personal: '个人记忆碎片', dream: '梦境记忆轨迹', knowledge: '知识概念关联', emotion: '情绪记忆链路', spacetime: '时空记忆时间线', collective: '集体共享记忆', inspiration: '灵感思绪蛛网' }, tip: '只改关系图的外形（布局密度、节点形状、漂移方式），不改颜色。' },
+    { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['dsh', 'cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { dsh: '跟随 DSH 主题', cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' }, tip: '默认「跟随 DSH 主题」会实时读取当前主题色（换主题自动变）；选其他配色则固定那套色。' },
+    { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭', tip: '关系图自动旋转的速度（弧度/秒）；0 = 不转。拖动时暂停，松手继续。' },
+    { key: 'graphBloom', label: '泛光 bloom', type: 'boolean', tip: '给亮节点叠一层柔光，暗色主题下更明显；关掉更省绘制。' },
+    { key: 'graphGlitch', label: '色散/毛刺', type: 'boolean', tip: '给高亮节点/连线加一点 RGB 分离的故障感；关掉更干净。' },
+    { key: 'graphDust', label: '浮尘数量', type: 'number', hint: '0~240', tip: '背景里漂浮的尘埃粒子数量（0~240）；太吃性能就调低。' },
+  ],
+  git: [
+    { key: 'repoUrl', label: '远端仓库', type: 'string', hint: 'https://… 或 git@host:path 或本机绝对路径', tip: '经验库会以这个仓库为备份目标。https 推公开/私有仓库都行；地址里不要写账号密码，token 填在下面。' },
+    { key: 'branch', label: '分支', type: 'string', hint: '默认 main', tip: '推送到哪个分支；不存在会自动建。' },
+    { key: 'token', label: '访问 token', type: 'string', hint: '可选，仅 https 用；保存在本机 settings.json', tip: '给 https 远端用（GitHub 的 Personal Access Token）。它只存在本机 ~/.dsh/engram/settings.json，不会写进仓库；推送时通过 http.extraHeader 传入，失败信息里会打码。' },
+    { key: 'authorName', label: '提交作者名', type: 'string', hint: '留空用全局 git 身份', tip: '写进 commit 的作者名；留空就用你机器上的 git 全局配置。' },
+    { key: 'authorEmail', label: '提交作者邮箱', type: 'string', hint: '留空用全局 git 身份', tip: '写进 commit 的邮箱；留空用全局 git 配置。' },
+    { key: 'autoBackupMinutes', label: '自动备份间隔（分钟）', type: 'number', hint: '0 = 关闭；最小 15', tip: '开启后插件会按这个间隔自动 commit + push（没有改动就跳过）。0 表示只手动推送；最小 15 分钟，避免频繁推。' },
   ],
 }
 
@@ -501,11 +510,25 @@ export async function handleRequest(req, res, source) {
         if (body && Object.prototype.hasOwnProperty.call(body, 'currentRoot')) setCurrentRoot(String(body.currentRoot || '').trim())
         if (body && body.config !== undefined) writeEngineConfig(sanitizeSettings(body.config, SETTINGS_SPEC.config))
         if (body && body.ui !== undefined) writeUiConfig(sanitizeSettings(body.ui, SETTINGS_SPEC.ui))
+        if (body && body.git !== undefined) writeGitConfig(sanitizeSettings(body.git, SETTINGS_SPEC.git))
         resetSourceCache()
         return json(res, 200, { ok: true, data: { action: 'saved' } })
       }
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET/POST')
-      return json(res, 200, { ok: true, data: { ...buildSettings(active), config: readEngineConfig(), ui: readUiConfig(), spec: SETTINGS_SPEC } })
+      return json(res, 200, { ok: true, data: { ...buildSettings(active), config: readEngineConfig(), ui: readUiConfig(), git: readGitConfig(), spec: SETTINGS_SPEC } })
+    }
+    if (route === '/sync') {
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      const config = readGitConfig()
+      if (method === 'GET') return json(res, 200, { ok: true, data: await gitStatus(dataDir, config) })
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 GET/POST')
+      const body = await readBody(req)
+      const action = String((body && body.action) || 'push').trim().toLowerCase()
+      if (!['init', 'push', 'pull', 'status'].includes(action)) return fail(res, 400, 'bad-action', `未知动作：${action}`)
+      if (action === 'status') return json(res, 200, { ok: true, data: await gitStatus(dataDir, config) })
+      if (action === 'init') return json(res, 200, { ok: true, data: await gitInit(dataDir, config) })
+      if (action === 'pull') return json(res, 200, { ok: true, data: await gitPull(dataDir, config) })
+      return json(res, 200, { ok: true, data: await gitPush(dataDir, config, { message: body && body.message }) })
     }
     if (route === '/feedback') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
