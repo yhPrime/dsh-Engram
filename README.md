@@ -34,6 +34,7 @@ dsh plugin --profile <profile> add ./dsh-engram-0.11.0.tgz
 控制台「设置 → Git 仓库备份」里填远端，库就是一个普通 git 仓库（`<dataDir>/.git`）：
 
 - **远端**：`https://…` / `ssh://…` / `git@host:path` / 本机绝对路径；地址里不要写账号密码，https 用单独的 **token** 字段（只存在本机 `settings.json`，推送时走 `http.extraHeader`，错误信息里打码）。
+- **网络**：GitHub 请求先走 Node fetch；如果机器装了 TLS 拦截代理（Node 自带 CA 验不过，界面会显示 etch failed），会自动导出 Windows 根证书并按需缓存到 ~/.dsh/engram/system-ca.pem 后重试。
 - **GitHub 账号**：直接「用 GitHub 登录（免 token）」走 OAuth 设备码——浏览器打开验证页、输入一次性代码即可，token 自动存进本机设置（**不用手贴 PAT**；token 字段只作后备）→「加载我的仓库」→ 列表里点「用这个」，自动保存地址、初始化并推送；列表里没有合适的，就填个新仓库名，「新建仓库并推送」（GitHub 上建**空**仓库，不会撞初始提交）。
 - **动作**：初始化仓库（`git init` + 设 `origin`）、提交并推送（`add -A -- .` → commit → push）、拉取（只做 `--ff-only`，有分叉不自动合并）。
 - **自动备份**：`autoBackupMinutes` 大于 0 时按间隔自动提交推送（最小 15 分钟；没有改动会跳过）。

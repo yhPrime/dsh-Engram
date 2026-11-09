@@ -8,8 +8,9 @@
  *
  * token 只在请求头里出现，错误信息里打码；不做任何本地落盘（落盘由 settings 的 git.token 负责）。
  */
+import { requestJson } from './github-transport.js'
+
 const API_ROOT = 'https://api.github.com'
-const REQUEST_TIMEOUT_MS = 20000
 const REPO_NAME_PATTERN = /^[A-Za-z0-9._-]{1,100}$/u
 
 export function validateRepoName(value) {
@@ -50,42 +51,26 @@ function normalizeRepo(entry) {
 }
 
 async function request(path, { token, method = 'GET', body, fetchImpl }) {
-  const doFetch = fetchImpl || globalThis.fetch
-  if (typeof doFetch !== 'function') throw new Error('当前运行环境没有 fetch，无法访问 GitHub')
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  try {
-    const response = await doFetch(`${API_ROOT}${path}`, {
-      method,
-      headers: {
-        accept: 'application/vnd.github+json',
-        authorization: `Bearer ${token}`,
-        'user-agent': 'dsh-engram',
-        'x-github-api-version': '2022-11-28',
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: controller.signal,
-    })
-    let payload = null
-    try {
-      payload = await response.json()
-    } catch {
-      payload = null
-    }
-    if (!response.ok) {
-      const message = payload && payload.message ? String(payload.message) : `HTTP ${response.status}`
-      const error = fail(mask(`GitHub 请求失败：${message}`, token))
-      error.status = response.status
-      throw error
-    }
-    return payload
-  } catch (error) {
-    if (error && error.name === 'AbortError') throw fail('GitHub 请求超时（20 秒）')
+  const { status, payload } = await requestJson({
+    url: `${API_ROOT}${path}`,
+    method,
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${token}`,
+      'user-agent': 'dsh-engram',
+      'x-github-api-version': '2022-11-28',
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    fetch: fetchImpl,
+  })
+  if (status < 200 || status >= 300) {
+    const message = payload && payload.message ? String(payload.message) : `HTTP ${status}`
+    const error = fail(mask(`GitHub 请求失败：${message}`, token))
+    error.status = status
     throw error
-  } finally {
-    clearTimeout(timer)
   }
+  return payload
 }
 
 /** 登录校验：token 有效就返回账号信息。 */

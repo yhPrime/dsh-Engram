@@ -8,6 +8,8 @@
  *
  * token 由调用方（shell）落盘；本模块不写任何文件。
  */
+import { requestJson } from './github-transport.js'
+
 const DEVICE_CODE_URL = 'https://github.com/login/device/code'
 const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 
@@ -15,49 +17,27 @@ const ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token'
 export const DEFAULT_CLIENT_ID = 'Ov23lil51OhGc9CesSML'
 export const DEFAULT_SCOPE = 'repo'
 
-const REQUEST_TIMEOUT_MS = 20000
-
 async function postForm(url, fields, { fetchImpl } = {}) {
-  const doFetch = fetchImpl || globalThis.fetch
-  if (typeof doFetch !== 'function') throw new Error('当前运行环境没有 fetch，无法访问 GitHub')
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  try {
-    const response = await doFetch(url, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': 'dsh-engram',
-      },
-      body: new URLSearchParams(fields).toString(),
-      signal: controller.signal,
-    })
-    let payload = null
-    try {
-      payload = await response.json()
-    } catch {
-      payload = null
-    }
-    if (!response.ok) {
-      const message = payload && payload.error_description
-        ? String(payload.error_description)
-        : (payload && payload.error ? String(payload.error) : `HTTP ${response.status}`)
-      const error = new Error(`GitHub 登录请求失败：${message}`)
-      error.code = 'github'
-      throw error
-    }
-    return payload || {}
-  } catch (error) {
-    if (error && error.name === 'AbortError') {
-      const timeout = new Error('GitHub 登录请求超时（20 秒）')
-      timeout.code = 'github'
-      throw timeout
-    }
+  const { status, payload } = await requestJson({
+    url,
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/x-www-form-urlencoded',
+      'user-agent': 'dsh-engram',
+    },
+    body: new URLSearchParams(fields).toString(),
+    fetch: fetchImpl,
+  })
+  if (status < 200 || status >= 300) {
+    const message = payload && payload.error_description
+      ? String(payload.error_description)
+      : (payload && payload.error ? String(payload.error) : `HTTP ${status}`)
+    const error = new Error(`GitHub 登录请求失败：${message}`)
+    error.code = 'github'
     throw error
-  } finally {
-    clearTimeout(timer)
   }
+  return payload || {}
 }
 
 /**
