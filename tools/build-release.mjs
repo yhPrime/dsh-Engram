@@ -41,7 +41,7 @@ function readRewrite(file, replacements) {
 
 // 清理旧的发布结构（保留 .git）
 for (const entry of fs.readdirSync(releaseRoot)) {
-  if (entry === '.git') continue
+  if (entry === '.git' || entry === 'RELEASES.md') continue
   fs.rmSync(path.join(releaseRoot, entry), { recursive: true, force: true })
 }
 

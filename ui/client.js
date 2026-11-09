@@ -265,6 +265,8 @@ window.__ModuleLoader__.load({
 .eng-graph-node:hover circle, .eng-graph-node:hover rect { filter: drop-shadow(0 0 8px currentColor) drop-shadow(0 0 16px currentColor); transform: scale(1.18); }
 .eng-graph-ring { fill: none; stroke: var(--eng-cyan); opacity: .35; transform-box: fill-box; transform-origin: center; animation: eng-pulse 3.2s ease-out infinite; }
 .eng-graph-ring-2 { stroke: var(--eng-magenta); animation-delay: 1.2s; }
+.eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: #03040a; }
+.eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
 @keyframes eng-pulse { 0% { transform: scale(.8); opacity: .45; } 70% { transform: scale(1.25); opacity: 0; } 100% { transform: scale(1.25); opacity: 0; } }
 
 `
@@ -747,126 +749,332 @@ window.__ModuleLoader__.load({
             h('td', null, row.feedback || (row.ok === false ? '失败' : 'ok'))))))))
     }
 
+    const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
+    const GRAPH_PALETTES = {
+      cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
+      aurora: { bg: '#010208', bgInner: '#06101a', node: '#7dffd4', node2: '#b892ff', edge: '#7cc7ff', highlight: '#c9b6ff', warn: '#ffe3a3', glow: '#9dffdf', dust: '#bfffe9', bloom: 18 },
+      blackgold: { bg: '#060504', bgInner: '#141006', node: '#ffcc66', node2: '#ff9f2e', edge: '#b9852f', highlight: '#ffe3a3', warn: '#ffcf7a', glow: '#ffb84d', dust: '#ffe3a3', bloom: 16 },
+      steampunk: { bg: '#0a0604', bgInner: '#1a0f08', node: '#d9a441', node2: '#b85c2a', edge: '#8a4b22', highlight: '#ffb35c', warn: '#e8c07a', glow: '#ffb35c', dust: '#e0b07a', bloom: 14 },
+      qingmo: { bg: '#060909', bgInner: '#0c1614', node: '#8fd6c9', node2: '#c85a4a', edge: '#5f9e93', highlight: '#c85a4a', warn: '#d9c7a7', glow: '#a7e8dd', dust: '#cfe8e0', bloom: 12 },
+      minimal: { bg: '#020305', bgInner: '#0a1017', node: '#bfe9ff', node2: '#9fb3c8', edge: '#5c7c99', highlight: '#dff4ff', warn: '#d5dee8', glow: '#a8d8ff', dust: '#9fb3c8', bloom: 6 },
+      lava: { bg: '#080302', bgInner: '#1c0805', node: '#ff7a18', node2: '#ff2d2d', edge: '#8a2b12', highlight: '#ffc27a', warn: '#ffb347', glow: '#ff9a3c', dust: '#ffc27a', bloom: 24 },
+    }
+
+    function drawGraphShape(ctx, radius, theme) {
+      if (radius <= 0.2) return
+      ctx.beginPath()
+      if (theme === 'knowledge') {
+        for (let i = 0; i < 6; i += 1) {
+          const angle = (Math.PI / 3) * i - Math.PI / 6
+          const x = Math.cos(angle) * radius
+          const y = Math.sin(angle) * radius
+          if (i === 0) ctx.moveTo(x, y)
+          else ctx.lineTo(x, y)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        return
+      }
+      if (theme === 'dream') {
+        ctx.ellipse(0, 0, radius * 1.35, radius * 0.72, 0, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        return
+      }
+      if (theme === 'inspiration') {
+        for (let i = 0; i < 8; i += 1) {
+          const angle = (Math.PI / 4) * i
+          const length = i % 2 === 0 ? radius * 1.7 : radius * 0.62
+          const x = Math.cos(angle) * length
+          const y = Math.sin(angle) * length
+          if (i === 0) ctx.moveTo(x, y)
+          else ctx.lineTo(x, y)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        return
+      }
+      if (theme === 'spacetime') {
+        ctx.arc(0, 0, radius, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(0, -radius * 1.9)
+        ctx.lineTo(0, radius * 1.9)
+        ctx.strokeStyle = 'rgba(255,255,255,.22)'
+        ctx.stroke()
+        return
+      }
+      ctx.arc(0, 0, radius, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.stroke()
+      if (theme === 'collective') {
+        ctx.beginPath()
+        ctx.arc(0, 0, radius * 1.7, 0, Math.PI * 2)
+        ctx.stroke()
+      } else if (theme === 'emotion') {
+        ctx.beginPath()
+        ctx.arc(radius * 1.35, -radius * 0.6, radius * 0.28, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+
     function Graph() {
       const graph = useLoad(useCallback(() => request('/graph'), []))
-      const [active, setActive] = useState(null)
-      if (graph.error) return h(Banner, { bad: true }, graph.error)
-      const data = graph.data
-      if (!data) return h('div', { className: 'eng-card' }, h(Empty, null, '读取关系数据…'))
-      const nodes = (data.nodes || []).filter((node) => node.kind !== 'root')
-      const types = nodes.filter((node) => node.kind === 'type')
-      const experiences = nodes.filter((node) => node.kind === 'experience')
-      const skills = nodes.filter((node) => node.kind === 'skill')
-      const center = { x: 450, y: 310 }
-      const pos = new Map()
-      const angles = new Map()
-      types.forEach((type, index) => {
-        const angle = (-90 + (index * 360) / Math.max(1, types.length)) * (Math.PI / 180)
-        pos.set(type.id, { x: center.x + Math.cos(angle) * 150, y: center.y + Math.sin(angle) * 150 })
-        angles.set(type.id, angle)
-      })
-      const groups = new Map()
-      for (const experience of experiences) {
-        const key = experience.typeId || 'ty_other'
-        if (!groups.has(key)) groups.set(key, [])
-        groups.get(key).push(experience)
-      }
-      groups.forEach((list, typeId) => {
-        const base = angles.has(typeId) ? angles.get(typeId) : 0
-        const spread = Math.min(1.1, 0.22 * list.length)
-        list.forEach((experience, index) => {
-          const angle = base + (list.length === 1 ? 0 : -spread / 2 + (spread * index) / (list.length - 1))
-          pos.set(experience.id, { x: center.x + Math.cos(angle) * 238, y: center.y + Math.sin(angle) * 238 })
-        })
-      })
-      skills.forEach((skill, index) => {
-        const derived = (data.edges || []).filter((edge) => edge.kind === 'derived' && edge.target === skill.id && pos.has(edge.source)).map((edge) => pos.get(edge.source))
-        const base = derived.length > 0 ? Math.atan2(derived[0].y - center.y, derived[0].x - center.x) : (-90 + (index * 360) / Math.max(1, skills.length)) * (Math.PI / 180)
-        const radius = 312 + (index % 3) * 16
-        pos.set(skill.id, { x: center.x + Math.cos(base) * radius, y: center.y + Math.sin(base) * radius })
-      })
-      const colorOf = (node) => {
-        if (node.kind === 'type') return '#00f0ff'
-        if (node.kind === 'skill') return '#ff2bd6'
-        if (node.outcome === 'success' || node.outcome === 'accepted') return '#39ff88'
-        if (node.outcome === 'partial') return '#ffd166'
-        if (node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected') return '#ff3b5c'
-        return '#6c7a99'
-      }
-      const pathOf = (edge) => {
-        const from = edge.source === 'root' ? center : pos.get(edge.source)
-        const to = pos.get(edge.target)
-        if (!from || !to) return null
-        const midX = (from.x + to.x) / 2
-        const midY = (from.y + to.y) / 2
-        const dx = to.x - from.x
-        const dy = to.y - from.y
-        const length = Math.hypot(dx, dy) || 1
-        const bend = edge.kind === 'derived' ? 26 : 12
-        const controlX = midX - (dy / length) * bend
-        const controlY = midY + (dx / length) * bend
-        return `M${from.x},${from.y} Q${controlX},${controlY} ${to.x},${to.y}`
-      }
-      const selected = active === null ? null : nodes.find((node) => node.id === active) || null
-      return h('div', { className: 'eng-stack' },
-        h('div', { className: 'eng-card eng-graph' },
-          h('div', { className: 'eng-graph-head' },
-            h('strong', null, '类型 → 经验 → 技能'),
-            h('span', { className: 'eng-muted' }, `${data.summary.types} 类型 · ${data.summary.experiences} 经验 · ${data.summary.skills} 技能`)),
-          h('svg', { viewBox: '0 0 900 620', role: 'img', 'aria-label': '经验关系图' },
-            h('defs', null,
-              h('radialGradient', { id: 'engRootGlow' }, h('stop', { offset: '0%', stopColor: 'var(--eng-cyan)', stopOpacity: '0.55' }), h('stop', { offset: '100%', stopColor: 'var(--eng-magenta)', stopOpacity: '0' })),
-              h('pattern', { id: 'engGrid', width: 40, height: 40, patternUnits: 'userSpaceOnUse' }, h('path', { d: 'M40 0H0V40', fill: 'none', stroke: 'rgba(0, 240, 255, .08)', strokeWidth: 1 }))),
-            h('rect', { x: 0, y: 0, width: 900, height: 620, fill: 'url(#engGrid)', opacity: 0.65 }),
-            h('circle', { className: 'eng-graph-ring', cx: center.x, cy: center.y, r: 46, strokeWidth: 1 }),
-            h('circle', { className: 'eng-graph-ring eng-graph-ring-2', cx: center.x, cy: center.y, r: 62, strokeWidth: 1 }),
-            h('circle', { cx: center.x, cy: center.y, r: 74, fill: 'url(#engRootGlow)' }),
-            h('circle', { cx: center.x, cy: center.y, r: 26, fill: 'rgba(0, 240, 255, .10)', stroke: 'var(--eng-cyan)', strokeWidth: 1.4, style: { filter: 'drop-shadow(0 0 8px rgba(0,240,255,.6))' } }),
-            h('text', { x: center.x, y: center.y + 4, textAnchor: 'middle', className: 'eng-graph-label', style: { fontSize: 11, fontWeight: 650 } }, '经验库'),
-            (data.edges || []).map((edge, index) => {
-              const path = pathOf(edge)
-              if (!path) return null
-              return h('path', { key: `e${index}`, d: path, className: `eng-graph-edge${edge.kind === 'derived' ? ' eng-graph-edge-derived' : ''}`, strokeWidth: edge.kind === 'derived' ? 1.4 : 0.9, opacity: edge.kind === 'derived' ? 0.8 : 0.55, style: edge.kind === 'derived' ? { stroke: 'var(--eng-magenta)' } : edge.kind === 'root' ? { stroke: 'rgba(255, 43, 214, .30)' } : { stroke: 'rgba(0, 240, 255, .32)' } })
-            }),
-            nodes.map((node) => {
-              const point = pos.get(node.id)
-              if (!point) return null
-              const color = colorOf(node)
-              const isActive = active === node.id
-              if (node.kind === 'type') {
-                const radius = 12 + Math.min(9, Number(node.count) || 0)
-                return h('g', { key: node.id, className: 'eng-graph-node', style: { color }, onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
-                  h('circle', { r: radius + 5, fill: color, opacity: 0.12 }),
-                  h('circle', { r: radius, fill: 'rgba(4, 8, 16, .92)', stroke: color, strokeWidth: isActive ? 2.4 : 1.4, style: { filter: 'drop-shadow(0 0 10px currentColor)' } }),
-                  h('text', { y: radius + 13, textAnchor: 'middle', className: 'eng-graph-label' }, node.label))
-              }
-              if (node.kind === 'skill') {
-                return h('g', { key: node.id, className: 'eng-graph-node', style: { color }, onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
-                  h('rect', { x: -7, y: -7, width: 14, height: 14, rx: 3, transform: 'rotate(45)', fill: color, opacity: isActive ? 1 : 0.9 }),
-                  h('text', { y: 23, textAnchor: 'middle', className: 'eng-graph-label' }, node.label))
-              }
-              const radius = 4.5 + Math.min(2.5, Math.abs(Number(node.G) || 0) * 2)
-              return h('g', { key: node.id, className: 'eng-graph-node', style: { color }, onClick: () => setActive(node.id), transform: `translate(${point.x},${point.y})` },
-                h('circle', { r: isActive ? radius + 3 : radius, fill: color, stroke: '#03050b', strokeWidth: 1, style: { filter: 'drop-shadow(0 0 8px currentColor)' } }),
-                isActive ? h('text', { y: -10, textAnchor: 'middle', className: 'eng-graph-label' }, node.label) : null)
-            })),
-          h('div', { className: 'eng-graph-legend' },
-            [['成功', '#39ff88'], ['部分', '#ffd166'], ['失败', '#ff3b5c'], ['未标', '#6c7a99']].map(([label, color]) => h('span', { key: label, style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, borderRadius: 99, background: color, display: 'inline-block' } }), label)),
-            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, h('i', { style: { width: 8, height: 8, background: '#ff2bd6', transform: 'rotate(45deg)', display: 'inline-block' } }), '技能'))),
-        selected === null
-          ? h('div', { className: 'eng-muted' }, '点击节点查看详情；虚线表示技能由哪些经验沉淀而来。')
-          : h('div', { className: 'eng-card eng-detail' },
-              h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone: selected.kind === 'skill' ? 'warn' : selected.kind === 'type' ? 'brand' : outcomeOf(selected.outcome)[1] }, selected.kind === 'type' ? '类型' : selected.kind === 'skill' ? '技能' : '经验')),
-              h('h3', { className: 'eng-detail-title' }, selected.label || selected.id),
-              h('dl', { className: 'eng-kv' },
-                selected.kind === 'type' ? h('dt', null, '经验数') : null,
-                selected.kind === 'type' ? h('dd', null, String(selected.count || 0)) : null,
-                selected.kind === 'skill' ? h('dt', null, '使用') : null,
-                selected.kind === 'skill' ? h('dd', null, `uses ${selected.uses || 0} · helped ${selected.helped || 0} · hurt ${selected.hurt || 0}`) : null,
-                selected.kind === 'experience' ? h('dt', null, '结果') : null,
-                selected.kind === 'experience' ? h('dd', null, `${outcomeOf(selected.outcome)[0]} · G ${fmtNumber(selected.G)}`) : null,
-                selected.kind === 'experience' ? h('dt', null, 'id') : null,
-                selected.kind === 'experience' ? h('dd', { className: 'eng-mono' }, selected.id.replace(/^exp:/, '')) : null)))
+      const settings = useLoad(useCallback(() => request('/settings'), []))
+      const canvasRef = useRef(null)
+      const stateRef = useRef({ nodes: new Map(), edges: new Map(), dust: [], angle: 0, selected: null, pulse: 0, t: 0 })
+      useEffect(() => {
+        const canvas = canvasRef.current
+        if (!canvas || !graph.data) return undefined
+        const ui = (settings.data && settings.data.ui) || {}
+        const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'cyberpunk'
+        const palette = GRAPH_PALETTES[paletteKey]
+        const theme = GRAPH_THEMES.includes(ui.graphTheme) ? ui.graphTheme : 'personal'
+        const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
+        const bloom = ui.graphBloom !== false
+        const glitch = ui.graphGlitch !== false
+        const dustCount = Math.max(0, Math.min(240, Number(ui.graphDust) || 70))
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return undefined
+        const store = stateRef.current
+        let width = 0
+        let height = 0
+        let dpr = 1
+        let raf = 0
+        let last = performance.now()
+        const resize = () => {
+          const rect = canvas.getBoundingClientRect()
+          width = Math.max(320, rect.width)
+          height = Math.max(320, rect.height)
+          dpr = Math.min(2, window.devicePixelRatio || 1)
+          canvas.width = Math.round(width * dpr)
+          canvas.height = Math.round(height * dpr)
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        }
+        const nodeRadiusOf = (node) => {
+          const weight = Math.max(0.15, Math.min(1, Number(node.weight) || 0.3))
+          if (node.kind === 'type') return 11 + weight * 15
+          if (node.kind === 'skill') return 6 + weight * 7
+          return 3 + weight * 6
+        }
+        const layout = (data) => {
+          const types = data.nodes.filter((node) => node.kind === 'type')
+          const experiences = data.nodes.filter((node) => node.kind === 'experience')
+          const skills = data.nodes.filter((node) => node.kind === 'skill')
+          const typeAngle = new Map()
+          types.forEach((node, index) => typeAngle.set(node.id, -Math.PI / 2 + (index * Math.PI * 2) / Math.max(1, types.length)))
+          const positions = new Map()
+          const groups = new Map()
+          for (const node of experiences) {
+            const key = `type:${node.typeId}`
+            if (!groups.has(key)) groups.set(key, [])
+            groups.get(key).push(node)
+          }
+          for (const [key, list] of groups) {
+            const base = typeAngle.has(key) ? typeAngle.get(key) : 0
+            const spread = Math.min(0.95, 0.22 * list.length)
+            list.forEach((node, index) => {
+              positions.set(node.id, { angle: base + (list.length === 1 ? 0 : -spread / 2 + (spread * index) / (list.length - 1)), radius: 0.62 })
+            })
+          }
+          for (const node of types) if (!positions.has(node.id)) positions.set(node.id, { angle: typeAngle.get(node.id) || 0, radius: 0.34 })
+          skills.forEach((node, index) => {
+            const derived = data.edges.filter((edge) => edge.target === node.id && edge.kind === 'derived').map((edge) => positions.get(edge.source)).filter(Boolean)
+            const angle = derived.length > 0 ? derived[0].angle : -Math.PI / 2 + (index * Math.PI * 2) / Math.max(1, skills.length)
+            positions.set(node.id, { angle, radius: 0.92 + (index % 3) * 0.035 })
+          })
+          return positions
+        }
+        const sync = (data) => {
+          const positions = layout(data)
+          const seen = new Set()
+          for (const node of data.nodes) {
+            if (node.kind === 'root') continue
+            seen.add(node.id)
+            const shape = positions.get(node.id) || { angle: 0, radius: 0.5 }
+            const existing = store.nodes.get(node.id)
+            if (existing) {
+              existing.node = node
+              existing.baseAngle = shape.angle
+              existing.baseRadius = shape.radius
+              existing.targetWeight = Number(node.weight) || 0.3
+              existing.targetAlpha = 1
+            } else {
+              store.nodes.set(node.id, {
+                node, baseAngle: shape.angle, baseRadius: shape.radius,
+                x: 0, y: 0, screenX: 0, screenY: 0, r: 0, alpha: 0, targetAlpha: 1,
+                currentWeight: 0.12, targetWeight: Number(node.weight) || 0.3,
+                phase: Math.random() * Math.PI * 2, speed: 0.25 + Math.random() * 0.5,
+                z: 0.55 + Math.random() * 0.45,
+              })
+            }
+          }
+          for (const [id, entry] of store.nodes) if (!seen.has(id)) entry.targetAlpha = 0
+          const seenEdges = new Set()
+          for (const edge of data.edges) {
+            const key = `${edge.source}->${edge.target}`
+            seenEdges.add(key)
+            const existing = store.edges.get(key)
+            if (existing) {
+              existing.edge = edge
+              existing.targetStrength = Number(edge.strength) || 0.3
+            } else {
+              store.edges.set(key, {
+                edge, currentStrength: 0, targetStrength: Number(edge.strength) || 0.3,
+                particles: Array.from({ length: 2 + Math.round((Number(edge.strength) || 0.3) * 3) }, () => Math.random()),
+              })
+            }
+          }
+          for (const [key, edge] of store.edges) if (!seenEdges.has(key)) edge.targetStrength = 0
+          while (store.dust.length < dustCount) {
+            store.dust.push({
+              x: Math.random(), y: Math.random(),
+              vx: (Math.random() - 0.5) * 0.008, vy: (Math.random() - 0.5) * 0.006,
+              size: 0.5 + Math.random() * 1.3, alpha: 0.04 + Math.random() * 0.16,
+            })
+          }
+          store.dust.length = Math.min(store.dust.length, dustCount)
+        }
+        const onPointer = (event) => {
+          const rect = canvas.getBoundingClientRect()
+          const x = event.clientX - rect.left
+          const y = event.clientY - rect.top
+          let best = null
+          let bestDistance = 30
+          for (const [, entry] of store.nodes) {
+            const distance = Math.hypot(entry.screenX - x, entry.screenY - y)
+            if (distance < bestDistance) { best = entry; bestDistance = distance }
+          }
+          store.selected = best === null ? null : best.node.id
+          store.pulse = 0
+        }
+        resize()
+        sync(graph.data)
+        window.addEventListener('resize', resize)
+        canvas.addEventListener('pointerdown', onPointer)
+        const draw = (now) => {
+          const dt = Math.min(0.05, (now - last) / 1000)
+          last = now
+          store.t += dt
+          store.pulse += dt * 1.5
+          store.angle += rotation * dt
+          const R = Math.min(width, height) * 0.46
+          const cx = width / 2
+          const cy = height / 2
+          ctx.clearRect(0, 0, width, height)
+          const background = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) * 0.72)
+          background.addColorStop(0, palette.bgInner)
+          background.addColorStop(1, palette.bg)
+          ctx.fillStyle = background
+          ctx.fillRect(0, 0, width, height)
+          for (const particle of store.dust) {
+            particle.x += particle.vx * dt
+            particle.y += particle.vy * dt
+            if (particle.x < 0) particle.x += 1
+            if (particle.x > 1) particle.x -= 1
+            if (particle.y < 0) particle.y += 1
+            if (particle.y > 1) particle.y -= 1
+            ctx.globalAlpha = particle.alpha
+            ctx.fillStyle = palette.dust
+            ctx.beginPath()
+            ctx.arc(particle.x * width, particle.y * height, particle.size, 0, Math.PI * 2)
+            ctx.fill()
+          }
+          ctx.globalAlpha = 1
+          for (const [, entry] of store.nodes) {
+            entry.currentWeight += (entry.targetWeight - entry.currentWeight) * Math.min(1, dt * 5)
+            entry.alpha += (entry.targetAlpha - entry.alpha) * Math.min(1, dt * 4)
+            entry.r += (nodeRadiusOf(entry.node) * (0.65 + entry.z * 0.35) - entry.r) * Math.min(1, dt * 6)
+            const angle = entry.baseAngle + store.angle + Math.sin(store.t * entry.speed + entry.phase) * 0.012
+            entry.x = cx + Math.cos(angle) * entry.baseRadius * R + Math.cos(store.t * entry.speed * 1.7 + entry.phase) * 3
+            entry.y = cy + Math.sin(angle) * entry.baseRadius * R + Math.sin(store.t * entry.speed * 1.3 + entry.phase * 1.8) * 3
+            entry.screenX = entry.x
+            entry.screenY = entry.y
+          }
+          for (const [key, edge] of store.edges) {
+            edge.currentStrength += (edge.targetStrength - edge.currentStrength) * Math.min(1, dt * 3)
+            const from = store.nodes.get(edge.edge.source)
+            const to = store.nodes.get(edge.edge.target)
+            if (!from || !to) continue
+            const strength = edge.currentStrength
+            if (strength < 0.02 && edge.targetStrength === 0) { store.edges.delete(key); continue }
+            const mx = (from.x + to.x) / 2 - ((to.y - from.y) / (Math.hypot(to.x - from.x, to.y - from.y) || 1)) * (edge.edge.kind === 'derived' ? 24 : 12)
+            const my = (from.y + to.y) / 2 + ((to.x - from.x) / (Math.hypot(to.x - from.x, to.y - from.y) || 1)) * (edge.edge.kind === 'derived' ? 24 : 12)
+            const bright = store.selected !== null && (edge.edge.source === store.selected || edge.edge.target === store.selected)
+            ctx.globalAlpha = Math.min(1, 0.14 + strength * 0.55) * (bright ? 1.7 : 1)
+            const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y)
+            gradient.addColorStop(0, edge.edge.kind === 'derived' ? palette.node2 : palette.node)
+            gradient.addColorStop(1, palette.edge)
+            ctx.strokeStyle = gradient
+            ctx.lineWidth = 0.4 + strength * (bright ? 3 : 2)
+            ctx.shadowBlur = bloom ? 6 + strength * 12 : 0
+            ctx.shadowColor = edge.edge.kind === 'derived' ? palette.node2 : palette.glow
+            ctx.beginPath()
+            ctx.moveTo(from.x, from.y)
+            ctx.quadraticCurveTo(mx, my, to.x, to.y)
+            ctx.stroke()
+            for (let index = 0; index < edge.particles.length; index += 1) {
+              edge.particles[index] = (edge.particles[index] + dt * (0.08 + strength * 0.5)) % 1
+              const progress = edge.particles[index]
+              const px = (1 - progress) * (1 - progress) * from.x + 2 * (1 - progress) * progress * mx + progress * progress * to.x
+              const py = (1 - progress) * (1 - progress) * from.y + 2 * (1 - progress) * progress * my + progress * progress * to.y
+              ctx.globalAlpha = 0.3 + strength * 0.6
+              ctx.fillStyle = palette.highlight
+              ctx.beginPath()
+              ctx.arc(px, py, 0.8 + strength * 1.5, 0, Math.PI * 2)
+              ctx.fill()
+            }
+          }
+          for (const [, entry] of store.nodes) {
+            if (entry.alpha <= 0.01) { if (entry.targetAlpha === 0) store.nodes.delete(entry.node.id); continue }
+            const node = entry.node
+            const isSelected = store.selected !== null && store.selected === node.id
+            const color = node.kind === 'type' ? palette.node
+              : node.kind === 'skill' ? palette.node2
+                : node.outcome === 'failed' || node.outcome === 'corrected' || node.outcome === 'rejected' ? palette.highlight
+                  : node.outcome === 'partial' ? palette.warn : palette.node
+            const alphaBase = entry.alpha * (0.55 + entry.z * 0.45) * (node.recent ? 0.75 + Math.sin(store.t * 3.2 + entry.phase) * 0.25 : 1)
+            const paint = (offsetX, offsetY, alphaMultiplier) => {
+              ctx.save()
+              ctx.translate(entry.x + offsetX, entry.y + offsetY)
+              ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
+              ctx.shadowBlur = bloom ? palette.bloom * (0.35 + entry.currentWeight) : 0
+              ctx.shadowColor = color
+              ctx.fillStyle = color
+              ctx.strokeStyle = palette.highlight
+              ctx.lineWidth = isSelected ? 1.8 : 0.7
+              drawGraphShape(ctx, entry.r, theme)
+              ctx.restore()
+            }
+            paint(0, 0, 1)
+            if (glitch && node.recent) paint(1.6, 0, 0.2)
+            if (isSelected) {
+              const phase = store.pulse % 1
+              ctx.save()
+              ctx.globalAlpha = (1 - phase) * 0.7
+              ctx.strokeStyle = palette.highlight
+              ctx.lineWidth = 1.2
+              ctx.beginPath()
+              ctx.arc(entry.x, entry.y, entry.r + 8 + phase * 48, 0, Math.PI * 2)
+              ctx.stroke()
+              ctx.restore()
+            }
+          }
+          ctx.globalAlpha = 1
+          ctx.shadowBlur = 0
+          raf = requestAnimationFrame(draw)
+        }
+        raf = requestAnimationFrame(draw)
+        return () => {
+          cancelAnimationFrame(raf)
+          window.removeEventListener('resize', resize)
+          canvas.removeEventListener('pointerdown', onPointer)
+        }
+      }, [graph.data, settings.data])
+      return h('div', { className: 'eng-graph-canvas-wrap' }, h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '记忆关系网络' }))
     }
 
     function Settings(props) {
@@ -921,7 +1129,7 @@ window.__ModuleLoader__.load({
         } else if (field.type === 'enum') {
           control = h('select', { className: 'eng-select', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) },
             h('option', { value: '' }, '默认'),
-            (field.values || []).map((option) => h('option', { key: option, value: option }, option)))
+            (field.values || []).map((option) => h('option', { key: option, value: option }, (field.labels && field.labels[option]) || option)))
         } else if (field.type === 'number') {
           control = h('input', { className: 'eng-input', type: 'number', step: 'any', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
         } else {
@@ -948,12 +1156,12 @@ window.__ModuleLoader__.load({
             h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
             h('dt', null, '版本'), h('dd', null, data.version || '—'))),
         h('div', { className: 'eng-card eng-detail' },
-          h('h3', { className: 'eng-detail-title' }, '数据源（界面）'),
+          h('h3', { className: 'eng-detail-title' }, '界面与关系图'),
           h('div', { className: 'eng-form-grid' }, renderFields(spec.ui, uiDraft, setUiDraft)),
           h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ ui: uiDraft }) }, '保存数据源'))),
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '内核参数'),
-          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '保存后写入 settings.json；DSH 插件下次读取即用新值，语义参数可立即生效。'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '关系图主题/配色/旋转/泛光/浮尘都在「界面与关系图」里切换；内核算力参数保存后动态生效。'),
           h('div', { className: 'eng-form-grid' }, renderFields(spec.config, configDraft, setConfigDraft)),
           h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ config: configDraft }) }, '保存内核参数'))),
         h('div', { className: 'eng-card eng-detail' },
