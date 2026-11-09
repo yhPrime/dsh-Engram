@@ -122,7 +122,9 @@ test('真文件副本：补丁后语法正确、断开硬链接、二次运行�
 
   const root = path.dirname(fileURLToPath(import.meta.url))
   const workspaceRoot = path.resolve(root, '..', '..')
-  const scratch = fs.mkdtempSync(path.join(workspaceRoot, '_tmp', 'patch-memory-spaces-'))
+  const scratchParent = path.join(workspaceRoot, '_tmp')
+  fs.mkdirSync(scratchParent, { recursive: true })
+  const scratch = fs.mkdtempSync(path.join(scratchParent, 'patch-memory-spaces-'))
   const copy = path.join(scratch, 'client.js')
 
   // 已安装副本可能已经打过补丁（本机就是），先按逆变换还原成未打补丁的样子再测。
