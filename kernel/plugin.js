@@ -45,7 +45,16 @@ export async function apply(ctx, rawConfig = {}) {
   }
 
   const register = (target) => {
-    for (const tool of createTools(config, defineTool)) target.tools.register(tool)
+    const tools = createTools(config, defineTool)
+    // 一次性把「宿主转换后的 JSON Schema」记进审计日志：provider 严格校验报错时（如
+    // exp_consolidate 的 anyOf 报错）只能从真实 schema 定位，不能靠猜。
+    try {
+      const probe = tools.find((tool) => tool.name === 'exp_consolidate')
+      if (probe) audit(config, `apply: exp_consolidate schema ${JSON.stringify(probe.parameters).slice(0, 1500)}`)
+    } catch {
+      // 探测失败不影响注册。
+    }
+    for (const tool of tools) target.tools.register(tool)
   }
 
   // 每轮提示层：把类型目录与用法写进系统提示段；禁用插件即消失，不动记忆组合。

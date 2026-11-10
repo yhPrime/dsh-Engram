@@ -55,7 +55,8 @@ export function buildTools(defineTool, config = {}) {
       intent: { type: 'string', required: true, description: '要做的任务/意图。' },
       action: { type: 'string', required: true, description: '采取的做法或方案名。' },
       outcome: { type: 'string', enum: ['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'], description: '结果；影响回报 G。' },
-      type: { type: 'string', description: '类型名（可选）。不填归「未分类」；填了新名字会按需新建类型（受上限与近似合并限制）。' },
+      // 不叫 type：与 JSON Schema 的 type 关键字同名时，provider 严格校验会把参数当关键字读。
+      typeName: { type: 'string', description: '类型名（可选）。不填归「未分类」；填了新名字会按需新建类型（受上限与近似合并限制）。' },
       typeDescription: { type: 'string', description: '新建类型时的描述（≤120 字）：这个类型收什么、召回时怎么用。复用已有类型时忽略。' },
       note: { type: 'string', description: '关键步骤、为什么有效、踩了什么坑。' },
       taskId: { type: 'string', description: '可选：多步任务的任务 id。同 taskId 的步骤会归到同一任务，统计按任务算一次。' },
@@ -77,7 +78,7 @@ export function buildTools(defineTool, config = {}) {
       const store = readStore(dataDir)
       // 没给类型时按簇路由自动归族（config.routing='off' 或 autoAssign=false 可关）；落不进任何簇就保持「未分类」。
       const autoAssign = config.autoAssign !== false && config.routing !== 'off'
-      let typeName = args.type
+      let typeName = args.typeName !== undefined ? args.typeName : args.type
       let routedCluster = null
       if ((typeName === undefined || typeName === null || String(typeName).trim() === '') && autoAssign) {
         const route = routeCluster(store, String(args.intent || ''))
@@ -362,7 +363,9 @@ export function buildTools(defineTool, config = {}) {
     description: '把同族经验沉淀成技能：同族 ≥3 条且 ≥2 正 1 负时，生成 .exp/skills/<slug>/（SKILL.md 标准模板 + skill.json 账本）；相同 slug 再次沉淀会更新定义。可传 body 写正文、files 挂脚本（复制进 scripts/ 并在 SKILL.md 生成「## 脚本」清单）。技能归经验库自己管：不复制到 DSH skills 目录，召回时按需以技能形态返回。技能仍由 Â/障碍计数管理。',
     parameters: {
       intent: { type: 'string', required: true, description: '要沉淀的技能对应的任务意图（与 exp_recall 同一口径）。' },
-      type: { type: 'string', description: '可选：技能名（默认「类型：共同词」）。' },
+      // 参数名不能叫 type：它和 JSON Schema 的 type 关键字同名，provider 严格校验会把它
+      // 当成 schema 关键字读，报 "is not valid under any of the schemas listed in the anyOf"。
+      skillName: { type: 'string', description: '可选：技能名（默认「类型：共同词」）。' },
       context: { type: 'array', description: '可选：技能的情境线索（写入 skill.json 与匹配）。' },
       minSamples: { type: 'number', description: '可选：最少同族条数，默认 3。' },
       body: { type: 'string', description: '可选：手写 SKILL.md 正文（覆盖自动生成模板；脚本用法/步骤写这里）。' },
@@ -456,7 +459,8 @@ export function buildTools(defineTool, config = {}) {
       newName: { type: 'string', description: 'rename 的新名；merge 的目标类型名（不存在会新建）。' },
       names: { type: 'array', description: 'merge 时的来源类型名/id 列表。' },
       id: { type: 'string', description: 'assign 时的经验 id（exp_recall 证据里的 id）。' },
-      description: { type: 'string', description: 'create/rename 时可选写描述（≤120 字）。' },
+      // 不叫 description：与 JSON Schema 的 description 关键字同名，provider 严格校验会误读。
+      typeDescription: { type: 'string', description: 'create/rename 时可选写描述（≤120 字）。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
@@ -467,13 +471,13 @@ export function buildTools(defineTool, config = {}) {
       if (action === 'list') {
         result = { action, types: listTypes(store) }
       } else if (action === 'create') {
-        const type = createType(store, args.name, args.description)
+        const type = createType(store, args.name, args.typeDescription !== undefined ? args.typeDescription : args.description)
         result = { action, created: type.name, typeId: type.id }
       } else if (action === 'rename') {
-        const renamed = renameType(store, args.name, args.newName, args.description)
+        const renamed = renameType(store, args.name, args.newName, args.typeDescription !== undefined ? args.typeDescription : args.description)
         result = { action, from: renamed.oldName, to: renamed.type.name }
       } else if (action === 'merge') {
-        result = { action, ...mergeTypes(store, args.names, args.newName, args.description) }
+        result = { action, ...mergeTypes(store, args.names, args.newName, args.typeDescription !== undefined ? args.typeDescription : args.description) }
       } else if (action === 'delete') {
         result = { action, ...deleteType(store, args.name) }
       } else if (action === 'assign') {
