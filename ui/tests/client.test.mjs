@@ -380,8 +380,12 @@ check('设置页：二级菜单分屏，默认只露出「存储位置」一档'
 })
 check('设置页：每一档都能单独渲染出自己的内容', () => {
   const render = (section) => JSON.stringify(module.Settings({ section }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
-  assert.ok(render('backup').includes('Git 仓库备份'))
+  assert.ok(render('backup').includes('Git 同步'))
   assert.ok(render('backup').includes('用 GitHub 登录'))
+  assert.ok(render('backup').includes('立即同步'))
+  assert.ok(render('backup').includes('断开'))
+  assert.ok(render('backup').includes('新建并连接'))
+  assert.equal(render('backup').includes('用这个'), false, '还留着「用这个」二次确认')
   assert.ok(render('kernel').includes('内核算力参数保存后动态生效'))
   assert.ok(render('ui').includes('保存数据源'))
   assert.ok(render('maintenance').includes('技能校验'))

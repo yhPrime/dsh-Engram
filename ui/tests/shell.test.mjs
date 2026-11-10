@@ -548,6 +548,18 @@ await check('GET /sync：未初始化也返回完整状态；未知动作 400', 
   assert.equal(bad.payload.error.code, 'bad-action')
 })
 
+await check('POST /sync {action:"disconnect"}：只清仓库地址，本地库里什么都不会被删', async () => {
+  const dir = tempDir()
+  const source = createLiveSource({ dataDir: dir })
+  const before = await call(source, '/sync', { method: 'POST', body: { action: 'disconnect' } })
+  assert.equal(before.status, 200)
+  assert.equal(before.payload.data.disconnected, true)
+  const status = await call(source, '/sync')
+  assert.equal(status.payload.data.configured, false)
+  assert.equal(fs.existsSync(dir), true, '数据目录不该被删')
+  const bad = await call(source, '/sync', { method: 'POST', body: { action: 'nope' } })
+  assert.equal(bad.status, 400)
+})
 await check('图标候选页：6 个候选、每个三种尺寸、能给侧栏用的 currentColor 描边', () => {
   const html = galleryHtml()
   assert.match(html, /图标候选/)
