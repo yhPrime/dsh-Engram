@@ -646,8 +646,8 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性'),
-                  h(Button, { small: true, onClick: () => act(async () => { const out = await request('/skill-install', { method: 'POST', body: { slug: current.id } }); return `已装到 ${out.targetDir}` }) }, '装到 DSH')),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
+                h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } }, '这个技能归经验库自己管：不写进 DSH 的 skills 目录，召回时按需以技能形态交给模型。'),
                 Array.isArray(current.files) && current.files.length > 0
                   ? h('div', { style: { marginBottom: 10 } }, h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '脚本附件'), current.files.map((file) => h('div', { key: file, className: 'eng-mono eng-muted' }, file)))
                   : null,
