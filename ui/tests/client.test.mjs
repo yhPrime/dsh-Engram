@@ -290,7 +290,20 @@ check('关系图配色：多层背景只取 linear 那层；浅色停靠点压�
     const luminance = luminanceOf(color)
     assert.ok(luminance <= 0.66, `浅色主题停靠点仍然太亮：${color} (${luminance.toFixed(2)})`)
     assert.ok(luminance >= 0.2, `浅色主题停靠点被压得太黑：${color} (${luminance.toFixed(2)})`)
+    assert.ok(module.colorSaturation(color) >= 0.4, `停靠点被压成灰色了：${color}（sat ${module.colorSaturation(color).toFixed(2)}）`)
   }
+
+  // 主题背景是「接近纯白的粉 + radial 光斑」时，要取有颜色的那几个，而不是把白色压成灰
+  const blobs = [
+    'radial-gradient(1100px 760px at 12% -6%, rgba(255,196,226,.95), rgba(255,196,226,0) 62%)',
+    'radial-gradient(900px 700px at 88% 4%, rgba(206,190,255,.8), rgba(206,190,255,0) 60%)',
+    'radial-gradient(760px 620px at 76% 96%, rgba(178,220,255,.65), rgba(178,220,255,0) 62%)',
+    'linear-gradient(158deg, #fff8fc 0%, #ffeef7 34%, #f7ecff 68%, #eef6ff 100%)',
+  ].join(', ')
+  const vividStops = module.parseAllGradientStops(blobs).filter((color) => module.colorSaturation(color) >= 0.2)
+  assert.ok(vividStops.length >= 3, `主题里有颜色的停靠点没取到：${JSON.stringify(vividStops)}`)
+  const pink = module.vividColor('rgb(255, 248, 252)', false)
+  assert.ok(module.colorSaturation(pink) >= 0.4, `近白粉色处理后仍是灰色：${pink}`)
 
   const codex = module.GRAPH_PALETTES.codex
   assert.ok(codex !== undefined, '没有「蓝紫星辰」配色')
