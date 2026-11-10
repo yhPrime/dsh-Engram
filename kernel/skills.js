@@ -187,7 +187,9 @@ function defaultMeta(id) {
     obstacles: {},
     resolved: [],
     derivedFrom: [],
-    order: 0,
+    // 新技能一开始排到最前：刚加进来的技能先让用户看见、能被触发，
+    // 之后靠实际使用（feedback/uses）把顺序调回正常。
+    order: 90,
     pendingCommit: false,
   }
 }
@@ -553,6 +555,10 @@ export function updateSkillMeta(dataDir, slug, patch = {}) {
   if (Array.isArray(patch.notes)) {
     meta.notes = patch.notes.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 50)
   }
+  // 排序：新建默认高（90），用户可手动调；范围 0~100。
+  if (patch.order !== undefined && Number.isFinite(Number(patch.order))) {
+    meta.order = Math.max(0, Math.min(100, Math.round(Number(patch.order))))
+  }
   writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
   const committed = commitSkills(dataDir, `skill(${slug}): meta`)
   if (!committed) {
@@ -603,6 +609,19 @@ function gitRun(cwd, args) {
     timeout: 15000,
     windowsHide: true,
   })
+}
+
+function gitCapture(cwd, args) {
+  try {
+    return String(execFileSync('git', ['-C', cwd, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 15000,
+      windowsHide: true,
+    }) || '')
+  } catch {
+    return null
+  }
 }
 
 export function ensureSkillsRepo(dataDir) {
@@ -671,6 +690,9 @@ export function commitSkills(dataDir, message) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       ensureSkillsRepo(dataDir)
+      // 没有变更 = 已经在 git 里了（例如同一目录被上一次提交带上），不算失败。
+      const dirty = gitCapture(dataDir, ['status', '--porcelain', '--', SKILLS_DIRNAME])
+      if (dirty !== null && dirty.trim() === '') return true
       gitRun(dataDir, ['add', '--', SKILLS_DIRNAME])
       // 只提交 skills/ 路径：用户已 staged 的其它文件不能被顺带提交。
       gitRun(dataDir, [...GIT_IDENTITY, 'commit', '-m', message, '--', SKILLS_DIRNAME])
@@ -914,7 +936,10 @@ export function matchSkill(skills, intent, options = {}) {
         contextScore = hit / queryContext.length
       }
     }
-    const score = similarity + contextScore * 0.1
+    // 刚加进来的技能（还没被用过）给一点「新鲜度」加成：先让它有机会被触发，
+    // 一有反馈（uses>0）就回落，排序随实际使用回归正常。
+    const freshBoost = (Number((skill.meta.confidence || {}).uses) || 0) === 0 ? 0.06 : 0
+    const score = similarity + contextScore * 0.1 + freshBoost
     candidates.push({ skill, score, size: text.length })
   }
   if (candidates.length === 0) return null
