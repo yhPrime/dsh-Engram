@@ -165,6 +165,7 @@ function defaultMeta(id) {
     obstacles: {},
     resolved: [],
     derivedFrom: [],
+    order: 0,
     pendingCommit: false,
   }
 }
@@ -582,6 +583,9 @@ function createSkillUnlocked(dataDir, draft) {
   meta.typeName = draft.typeName || meta.typeName || ''
   meta.context = Array.isArray(draft.context) ? draft.context : meta.context
   meta.triggers = Array.isArray(draft.triggers) ? draft.triggers : meta.triggers
+  if (draft.order !== undefined && Number.isFinite(Number(draft.order))) {
+    meta.order = Math.max(0, Math.min(100, Math.round(Number(draft.order))))
+  }
   if (Array.isArray(draft.derivedFrom)) {
     meta.derivedFrom = [...new Set([...meta.derivedFrom, ...draft.derivedFrom.map(String)])].slice(0, 50)
   }

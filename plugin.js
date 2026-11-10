@@ -39,7 +39,28 @@ function audit(config, line) {
 /** 在已声明 webServer 的上下文里注册控制台 API。 */
 function mountConsole(webCtx, config) {
   try {
-    const api = createApi(config)
+    // 「添加技能」的分类/标签/排序要开一个临时模型会话。
+    // llm 与 agentDefaultModel 都不在 inject 里（缺了也不能拖垮插件），
+    // 所以只经 ctx.get 取、取不到就退回本地归类，读取本身也包一层兜底。
+    const safeGet = (name) => {
+      try {
+        return typeof webCtx.get === 'function' ? webCtx.get(name) : undefined
+      } catch {
+        return undefined
+      }
+    }
+    const api = createApi(config, {
+      getLlm: () => safeGet('llm'),
+      getRoute: () => {
+        const model = safeGet('agentDefaultModel')
+        if (model === undefined || model === null || typeof model.currentSelection !== 'function') return null
+        try {
+          return model.currentSelection() || null
+        } catch {
+          return null
+        }
+      },
+    })
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'prefix',
       path: API_PREFIX,

@@ -50,6 +50,12 @@ window.__ModuleLoader__.load({
 .eng-title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .1px; }
 .eng-sub { margin-top: 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
 .eng-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.eng-modal-mask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, .34); }
+.eng-modal { width: min(660px, 100%); max-height: min(760px, 88vh); overflow: auto; padding: 18px 20px 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px; background: var(--dsw-alias-bg-layer-2); box-shadow: 0 18px 48px rgba(0, 0, 0, .2); }
+.eng-modal-title { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+.eng-modal-warn { margin: 12px 0 14px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
+.eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
+.eng-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .eng-content { flex: 1 1 auto; width: 100%; max-width: min(1180px, 100%); min-height: 0; margin: 0 auto; padding: clamp(12px, 2.4vw, 24px); overflow-y: auto; overflow-x: auto; }
 .eng-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .eng-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
@@ -634,6 +640,59 @@ window.__ModuleLoader__.load({
                   ? h('div', { style: { marginBottom: 10 } }, h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '脚本附件'), current.files.map((file) => h('div', { key: file, className: 'eng-mono eng-muted' }, file)))
                   : null,
                 h('pre', { className: 'eng-pre' }, current.body || '（空）'))))))
+    }
+
+    /**
+     * 「添加技能」：从本地 SKILL.md 或粘贴正文导入一条技能。
+     *
+     * 分类 / 标签 / 排序由宿主开一个**临时模型会话**算，这会真实产生一次模型调用；
+     * 宿主没有模型服务时退回本地关键词归类，界面上必须如实说明是哪一种——
+     * 用户有权知道这次导入到底花没花模型调用。
+     */
+    function ImportSkillDialog(props) {
+      const [filePath, setFilePath] = useState('')
+      const [content, setContent] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      const [result, setResult] = useState(null)
+      const canSubmit = busy === false && (filePath.trim() !== '' || content.trim() !== '')
+      const submit = async () => {
+        setBusy(true)
+        setError('')
+        try {
+          const out = await request('/skills/import', { method: 'POST', body: { path: filePath.trim(), content } })
+          setResult(out)
+          props.onImported(out)
+        } catch (caught) {
+          setError(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加技能' },
+        h('div', { className: 'eng-modal' },
+          h('h3', { className: 'eng-modal-title' }, '添加技能'),
+          h('div', { className: 'eng-muted', style: { fontSize: 12 } }, '从本地 SKILL.md 或粘贴正文导入；落库后归到经验库的 .exp/skills/ 下。'),
+          h('div', { className: 'eng-modal-warn' },
+            h('div', null, h('b', null, '会产生额外消耗：'), '导入时会开一个临时模型会话读一遍正文，算出分类、标签、排序分——这是一次真实的模型调用（按当前模型计费）。'),
+            h('div', { style: { marginTop: 4 } }, '宿主没有可用的模型服务时会退回本地关键词归类，那种情况不消耗模型，结果里会标明「本地」。')),
+          h(Field, { label: 'SKILL.md 路径（绝对路径）' },
+            h('input', { className: 'eng-input', value: filePath, placeholder: 'C:\\Users\\you\\my-skill\\SKILL.md', onChange: (event) => setFilePath(event.target.value) })),
+          h(Field, { label: '或者粘贴技能正文', tip: '路径优先：填了路径就忽略下面的正文' },
+            h('textarea', { className: 'eng-textarea', rows: 8, value: content, onChange: (event) => setContent(event.target.value), placeholder: '--- name: 我的技能 description: 一句话说明 --- 再接正文' })),
+          error ? h(Banner, { bad: true }, error) : null,
+          result
+            ? h('div', { className: 'eng-card', style: { padding: 12, marginTop: 12 } },
+              h('div', { style: { fontWeight: 620, marginBottom: 6 } }, `已导入：${result.name}（${result.action}）`),
+              h('div', { className: 'eng-muted', style: { lineHeight: 1.8 } },
+                `分类：${result.category || '未分类'}　标签：${(result.tags || []).join('、') || '无'}　排序分：${result.order}`,
+                h('br'),
+                `分类来源：${result.classifier === 'session' ? `临时会话（${result.model || '当前模型'}）` : '本地关键词，未消耗模型'}`),
+              result.classifier === 'local' ? h('div', { className: 'eng-muted', style: { marginTop: 4 } }, result.note || '') : null)
+            : null,
+          h('div', { className: 'eng-modal-actions' },
+            h(Button, { small: true, onClick: props.onClose }, result ? '关闭' : '取消'),
+            h(Button, { small: true, kind: 'primary', disabled: !canSubmit, onClick: submit }, busy ? '导入中…（会调一次模型）' : '导入'))))
     }
 
     function Types(props) {
@@ -1973,6 +2032,8 @@ window.__ModuleLoader__.load({
       const [refreshing, setRefreshing] = useState(false)
       const [refreshedAt, setRefreshedAt] = useState('')
       const [reloadToken, setReloadToken] = useState(0)
+      // 「添加技能」弹层：只在技能页出现，放在顶部右侧、版本号左边。
+      const [importOpen, setImportOpen] = useState(false)
       const loadState = useCallback(async () => {
         try {
           setState(await request('/state'))
@@ -2056,6 +2117,7 @@ window.__ModuleLoader__.load({
           h('header', { className: 'eng-top' },
             h('div', null, h('h1', { className: 'eng-title' }, TITLE), h('div', { className: 'eng-sub' }, '经验与技能的本地控制台')),
             h('div', { className: 'eng-top-right' },
+              tab === 'skills' ? h(Button, { small: true, kind: 'primary', onClick: () => setImportOpen(true), title: '从外部导入一条技能（会开一个临时模型会话做分类/标签/排序）' }, '添加技能') : null,
               source && source.mode === 'mock' ? h(Badge, { tone: 'warn' }, '示例数据') : null,
               state ? h('span', { className: 'eng-muted' }, `v${state.version}`) : null,
               refreshedAt ? h('span', { className: 'eng-muted', title: '最近一次刷新完成时间' }, `已刷新 ${refreshedAt}`) : null,
@@ -2066,7 +2128,13 @@ window.__ModuleLoader__.load({
           },
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
-            h(PageBoundary, { key: `${tab}:${reloadToken}` }, content))))
+            h(PageBoundary, { key: `${tab}:${reloadToken}` }, content))),
+        importOpen
+          ? h(ImportSkillDialog, {
+            onClose: () => setImportOpen(false),
+            onImported: () => { refreshAll() },
+          })
+          : null)
     }
 
     /**
