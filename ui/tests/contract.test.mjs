@@ -63,7 +63,7 @@ await check('API.md 覆盖全部路由与错误码', () => {
   for (const route of ['/health', '/state', '/experiences', '/experience', '/feedback', '/types', '/skills', '/usage', '/settings', '/sync', '/github', '/skill-install', '/chat-save']) {
     assert.ok(doc.includes(route), `文档缺少路由 ${route}`)
   }
-  for (const code of ['id-required', 'bad-result', 'not-found', 'read-only', 'method-not-allowed', 'not-feedbackable', 'internal', 'bad-action', 'github', 'repo-required', 'slug-required', 'ids-required']) {
+  for (const code of ['id-required', 'bad-result', 'not-found', 'read-only', 'method-not-allowed', 'not-feedbackable', 'internal', 'bad-action', 'github', 'repo-required', 'slug-required', 'ids-required', 'turn-not-found']) {
     assert.ok(doc.includes(code), `文档缺少错误码 ${code}`)
   }
   assert.ok(doc.includes('source: mock'))
