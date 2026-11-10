@@ -127,6 +127,20 @@ window.__ModuleLoader__.load({
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
 .eng-split[data-open="true"] .eng-stack > .eng-detail-card { order: -1; }
+/* 「左列表 + 右详情」页（经验 / 技能）：两栏各自独立滚动，页面本身不再整页滚 */
+.eng-content[data-fill="true"] { display: flex; flex-direction: column; overflow: hidden; }
+.eng-content[data-fill="true"] .eng-split { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+.eng-content[data-fill="true"] .eng-split > * { min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+@media (max-width: 1180px) {
+  .eng-content[data-fill="true"] { overflow-y: auto; }
+  .eng-content[data-fill="true"] .eng-split { flex: 0 0 auto; }
+  .eng-content[data-fill="true"] .eng-split > * { max-height: none; overflow: visible; }
+}
+@container (max-width: 980px) {
+  .eng-content[data-fill="true"] { overflow-y: auto; }
+  .eng-content[data-fill="true"] .eng-split { flex: 0 0 auto; }
+  .eng-content[data-fill="true"] .eng-split > * { max-height: none; overflow: visible; }
+}
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: transparent; }
 .eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
@@ -1771,7 +1785,10 @@ window.__ModuleLoader__.load({
               source ? h(Badge, { tone: source.mode === 'mock' ? 'warn' : 'ok' }, source.mode === 'mock' ? '示例数据' : `数据：${source.label}`) : null,
               state ? h('span', { className: 'eng-muted' }, `v${state.version}`) : null,
               h(Button, { small: true, onClick: loadState }, '刷新'))),
-          h('div', { className: tab === 'graph' ? 'eng-content eng-content-full' : 'eng-content' },
+          h('div', {
+            className: tab === 'graph' ? 'eng-content eng-content-full' : 'eng-content',
+            'data-fill': tab === 'experiences' || tab === 'skills' ? 'true' : 'false',
+          },
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
             h(PageBoundary, { key: tab }, content))))

@@ -292,6 +292,13 @@ check('主面板对空数据渲染也不抛错，且标题是「经验库」', (
   assert.ok(serialized.includes('使用记录'))
 })
 
+check('经验 / 技能页：左右两栏各自独立滚动（页面不再整页滚）', () => {
+  const source = loaded.source
+  assert.ok(source.includes('.eng-content[data-fill="true"]'), '缺少 data-fill 布局规则')
+  assert.ok(/\.eng-content\[data-fill="true"\]\s+\.eng-split\s*\{/u.test(source), '缺少两栏填充规则')
+  assert.ok(/\.eng-content\[data-fill="true"\] \.eng-split > \* \{[^}]*overflow-y:\s*auto/u.test(source), '两栏没有独立滚动')
+  assert.ok(source.includes("'data-fill': tab === 'experiences' || tab === 'skills'"), '经验 / 技能页没有标记 data-fill')
+})
 check('客户端不弹窗（无 alert / confirm / prompt）', () => {
   assert.equal(/(^|[^\w.])alert\s*\(/u.test(loaded.source), false)
   assert.equal(/(^|[^\w.])confirm\s*\(/u.test(loaded.source), false)
