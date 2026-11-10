@@ -2052,7 +2052,10 @@ window.__ModuleLoader__.load({
             return
           }
           const reason = result && typeof result.reason === 'string' ? result.reason : ''
-          setSyncNotice(reason === '' ? `${label}完成` : `${label}：${reason}`)
+          const overwriteNote = result && result.overwrote
+            ? `（用本地覆盖了远端${result.backupRef ? `；旧远端 HEAD 存在 ${result.backupRef}` : ''}）`
+            : ''
+          setSyncNotice(reason === '' ? `${label}完成${overwriteNote}` : `${label}：${reason}${overwriteNote}`)
         } catch (caught) {
           setSyncNotice(caught.message || String(caught))
         } finally {
@@ -2185,6 +2188,7 @@ window.__ModuleLoader__.load({
             h(Badge, { tone: connectedNow ? 'ok' : 'muted' }, connectedNow ? '已连接' : '未连接'),
             h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, connectedNow ? gitUrlNow : '选一个仓库，或填地址连接'),
             h('span', { className: 'eng-muted' }, `分支 ${branchNow}`),
+            h('span', { className: 'eng-muted' }, String(gitDraft.pushStrategy || 'overwrite') === 'fast-forward' ? '策略：只允许快进' : '策略：本地覆盖云端'),
             syncData ? h('span', { className: 'eng-muted' }, `${syncData.dirtyCount} 个未提交`) : null,
             syncData && syncData.lastCommitAt ? h('span', { className: 'eng-muted' }, `上次同步 ${fmtTime(syncData.lastCommitAt)}`) : null),
           h('div', { className: 'eng-actions', style: { margin: '10px 0 14px' } },
