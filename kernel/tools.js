@@ -206,7 +206,8 @@ export function buildTools(defineTool, config = {}) {
       const dataDir = dataDirOf()
       const store = readStore(dataDir)
       // 技能优先：高确定技能命中时只返回技能本身，不再列具体经验。
-      const skills = listSkills(dataDir)
+      // 只拿还没全局注册的技能：注册过的交给 DSH 当普通技能用，经验库不再排序它
+      const skills = listSkills(dataDir, { onlyLocal: true })
       const pendingSkills = skills.filter((skill) => skill.meta.pendingCommit === true).length
       const skillHit = matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: true })
       if (skillHit !== null) {

@@ -279,7 +279,13 @@ export function readSkillBySlug(dataDir, slug) {
   }
 }
 
-export function listSkills(dataDir) {
+/**
+ * 列出技能。
+ * options.onlyLocal=true 时不返回「已全局注册」的技能——它们已经交给 DSH 当真实技能用，
+ * 经验库不再参与排序/召回，避免两个引擎同时抢着用它。
+ */
+export function listSkills(dataDir, options = {}) {
+  const onlyLocal = options.onlyLocal === true
   const root = skillsRootOf(dataDir)
   if (!fs.existsSync(root)) return []
   const skills = []
@@ -292,7 +298,9 @@ export function listSkills(dataDir) {
       continue
     }
     const skill = readSkill(dir)
-    if (skill !== null) skills.push(skill)
+    if (skill === null) continue
+    if (onlyLocal && globalRegistrationOf(skill) !== null) continue
+    skills.push(skill)
   }
   return skills.sort((left, right) => (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0))
 }
@@ -397,9 +405,120 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
 }
 
 
-// 注意：这里**曾经**有 exportSkillToDsh（把技能复制到 ~/.dsh/skills/ 变成 DSH 已装技能）。
-// 已按用户口径删除：经验库的技能归经验库自己管，召回时才以技能形态交给模型；
-// 写进 DSH skills 目录会被其他技能管理插件当成"已安装技能"，不属于我们的边界。
+/** DSH 扫描「已安装技能」的目录（全局注册的落点）。 */
+export function dshGlobalSkillsRoot(env = process.env) {
+  const home = String((env && env.DSH_HOME) || '').trim()
+  const base = home === '' ? path.join(os.homedir(), '.dsh') : path.resolve(home.replace(/^~(?=$|[\\/])/u, os.homedir()))
+  return path.join(base, 'skills')
+}
+
+/** 这个技能是否已经在全局注册（被 DSH 当真实技能加载）。 */
+export function globalRegistrationOf(skill) {
+  const meta = skill && skill.meta ? skill.meta : {}
+  const registered = meta.globalRegistered
+  return registered && typeof registered.path === 'string' && registered.path !== '' ? registered : null
+}
+
+/**
+ * 把一个技能链接进 DSH 的 skills 目录（用户手动点的动作，不是自动行为）。
+ *
+ * - 优先建 junction（Windows 上不需要管理员权限，且两边是同一份文件，改一处同步）；
+ * - 链接建不出来才退回复制，并在 meta 里记 mode='copy'，取消注册时按记录删。
+ * - 目标已被别人占用（不是指向本技能）时直接报错，绝不覆盖。
+ */
+export function registerSkillGlobally(dataDir, slug, options = {}) {
+  const skill = readSkillBySlug(dataDir, slug)
+  if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  const root = path.resolve(options.root || dshGlobalSkillsRoot())
+  fs.mkdirSync(root, { recursive: true })
+  const target = path.join(root, skill.slug)
+  let mode = 'junction'
+  let link = null
+  try {
+    link = fs.readlinkSync(target)
+  } catch {
+    link = null
+  }
+  if (link !== null) {
+    const resolved = path.resolve(root, link)
+    if (resolved !== path.resolve(skill.dir)) throw new Error(`目标已被占用：${target}（指向 ${resolved}）`)
+  } else if (fs.existsSync(target)) {
+    throw new Error(`目标已被占用：${target}（不是经验库的链接，删掉或改名后再试）`)
+  } else {
+    try {
+      fs.symlinkSync(skill.dir, target, 'junction')
+    } catch {
+      copyTree(skill.dir, target)
+      mode = 'copy'
+    }
+  }
+  skill.meta.globalRegistered = { path: target, at: new Date().toISOString(), mode }
+  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+  const committed = commitSkills(dataDir, `skill(${slug}): register globally`)
+  if (!committed) {
+    skill.meta.pendingCommit = true
+    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+  }
+  return { slug, targetDir: target, mode, registered: true }
+}
+
+/**
+ * 取消全局注册：只删我们记下的那条链接/副本，别的一概不动。
+ * 没注册过也不报错（幂等），返回 removed=false。
+ */
+export function unregisterSkillFromDsh(dataDir, slug) {
+  const skill = readSkillBySlug(dataDir, slug)
+  if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  const registered = globalRegistrationOf(skill)
+  const target = registered !== null ? registered.path : path.join(dshGlobalSkillsRoot(), skill.slug)
+  const expected = path.join(path.dirname(target), skill.slug)
+  let removed = false
+  if (path.resolve(target) === path.resolve(expected)) {
+    let isLink = false
+    try {
+      isLink = fs.lstatSync(target).isSymbolicLink()
+    } catch {
+      isLink = false
+    }
+    if (isLink) {
+      try {
+        fs.rmSync(target, { force: true })
+        removed = true
+      } catch {
+        removed = false
+      }
+    } else if (fs.existsSync(target) && registered !== null && registered.mode === 'copy') {
+      // 只有确认是我们自己复制的那份才删，避免误删用户手放的技能
+      fs.rmSync(target, { recursive: true, force: true })
+      removed = true
+    }
+  }
+  delete skill.meta.globalRegistered
+  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+  const committed = commitSkills(dataDir, `skill(${slug}): unregister globally`)
+  if (!committed) {
+    skill.meta.pendingCommit = true
+    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+  }
+  return { slug, targetDir: target, removed, registered: false }
+}
+
+/** 忘记技能 = 删除这个技能目录（注册着的先取消注册，免得留悬空链接）。 */
+export function forgetSkill(dataDir, slug) {
+  const skill = readSkillBySlug(dataDir, slug)
+  if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  let unregistered = false
+  if (globalRegistrationOf(skill) !== null) {
+    try {
+      unregistered = unregisterSkillFromDsh(dataDir, slug).removed
+    } catch {
+      unregistered = false
+    }
+  }
+  fs.rmSync(skill.dir, { recursive: true, force: true })
+  const committed = commitSkills(dataDir, `skill(${slug}): forget`)
+  return { slug, deleted: true, unregistered, commit: committed }
+}
 
 function copyTree(fromDir, toDir) {
   fs.mkdirSync(toDir, { recursive: true })

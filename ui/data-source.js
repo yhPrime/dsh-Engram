@@ -455,6 +455,8 @@ export function skillRowOf(input = {}) {
     resolvedCount: Math.max(0, Math.trunc(Number(input.resolvedCount) || 0)),
     derivedFrom: Array.isArray(input.derivedFrom) ? input.derivedFrom.map(String) : [],
     pendingCommit: input.pendingCommit === true,
+    globalRegistered: input.globalRegistered === true,
+    globalPath: String(input.globalPath || ''),
     lastUsedAt: String(input.lastUsedAt || ''),
     updatedAt: String(input.updatedAt || ''),
     path: String(input.path || ''),
