@@ -24,7 +24,8 @@ import { commitSkills, createSkill, skillDirOf } from './skills.js'
 export const MAX_IMPORT_BYTES = 512 * 1024
 
 /** 本地兜底给出的排序分（0–100，越高越靠前）。没有模型判断时用中位值。 */
-export const DEFAULT_ORDER = 50
+// 新技能天生高排序：刚加进来的先让人看见、能被触发，之后靠实际使用回归正常。
+export const DEFAULT_ORDER = 90
 
 export const MAX_TAGS = 6
 
@@ -57,6 +58,12 @@ function normalizeNewlines(text) {
  * 解析 SKILL.md：拆出 frontmatter 的 name / description 与正文。
  * 没有 frontmatter 时整篇当正文，名字留给调用方兜底。
  */
+function createdOrderOf(decidedOrder) {
+  const value = Number(decidedOrder)
+  if (!Number.isFinite(value)) return DEFAULT_ORDER
+  return Math.max(DEFAULT_ORDER, Math.max(0, Math.min(100, Math.round(value))))
+}
+
 export function parseSkillMarkdown(text) {
   const raw = normalizeNewlines(text)
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/)
