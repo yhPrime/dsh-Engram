@@ -156,6 +156,12 @@ window.__ModuleLoader__.load({
 .eng-graph-detail { position: absolute; right: 14px; bottom: 14px; z-index: 2; width: min(320px, 72%); padding: 12px 14px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.14); }
 .eng-graph-detail-title { font-size: 13px; font-weight: 650; margin: 0 0 6px; word-break: break-word; }
 .eng-graph-detail-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+/* 关系图右上角配色胶囊：跟随主题 / 蓝紫星辰（dsh-codex-effort-slider 的渐变） */
+.eng-graph-pill { position: absolute; top: 14px; right: 14px; z-index: 3; display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent); backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+.eng-graph-pill button { border: 0; border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 12px; line-height: 1.2; color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; white-space: nowrap; }
+.eng-graph-pill button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.eng-graph-pill button[data-active="true"] { color: #fff; background: var(--dsw-alias-brand-primary); }
+.eng-graph-pill button[data-tone="codex"][data-active="true"] { background: linear-gradient(90deg, #4d93f8 0%, #6d28d9 42%, #9333ea 74%, #c084fc 100%); }
 `
     function ensureStyles() {
       try {
@@ -720,8 +726,17 @@ window.__ModuleLoader__.load({
       return `rgba(${mix(r)}, ${mix(g)}, ${mix(b)}, ${a})`
     }
 
+    // 「蓝紫星辰」= dsh-codex-effort-slider 那条推理能量滑条的渐变：
+    // #4d93f8 蓝 → #6d28d9 深紫 → #9333ea 紫 → #c084fc 淡紫（滑条实色为 #3b1178→#c084fc，
+    // 两端取更亮的一档，保证图上节点在浅色/深色主题都看得清）。
+    const CODEX_STAR_STOPS = [
+      { node: '#6d28d9', nodeLight: '#a78bfa', node2: '#4d93f8', edge: '#7c3aed', highlight: '#c084fc', glow: '#9333ea', dust: '#c4b5fd' },
+      { node: '#4d93f8', nodeLight: '#93c5fd', node2: '#9333ea', edge: '#6d28d9', highlight: '#c084fc', glow: '#6d28d9', dust: '#bfdbfe' },
+    ]
+
     const GRAPH_PALETTES = {
       dsh: {},
+      codex: { bg: '#050418', bgInner: '#0d0b26', node: CODEX_STAR_STOPS[0].node, node2: CODEX_STAR_STOPS[0].node2, edge: CODEX_STAR_STOPS[0].edge, highlight: CODEX_STAR_STOPS[0].highlight, warn: '#c084fc', ok: '#7aaaff', bad: '#f472b6', glow: CODEX_STAR_STOPS[0].glow, dust: CODEX_STAR_STOPS[0].dust, bloom: 20 },
       cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', ok: '#39ff88', bad: '#ff3b5c', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
       aurora: { bg: '#010208', bgInner: '#06101a', node: '#7dffd4', node2: '#b892ff', edge: '#7cc7ff', highlight: '#c9b6ff', warn: '#ffe3a3', glow: '#9dffdf', dust: '#bfffe9', bloom: 18 },
       blackgold: { bg: '#060504', bgInner: '#141006', node: '#ffcc66', node2: '#ff9f2e', edge: '#b9852f', highlight: '#ffe3a3', warn: '#ffcf7a', glow: '#ffb84d', dust: '#ffe3a3', bloom: 16 },
@@ -796,9 +811,15 @@ window.__ModuleLoader__.load({
      * 从 `linear-gradient(...)` / `radial-gradient(...)` 字符串里取颜色停靠点。
      * 丢掉透明与接近透明的停靠点；返回 rgba 字符串数组。
      */
+    /**
+     * 从 background-image 里抽颜色停靠点。
+     * 主题背景常是多层（几层 radial 光斑 + 最后一层 linear 底色），radial 里的光斑色不是主色，
+     * 所以能切出 linear-gradient 那一段就只认那一段。
+     */
     function parseGradientStops(value) {
-      const text = String(value || '')
-      if (!/gradient\(/iu.test(text)) return []
+      const full = String(value || '')
+      if (!/gradient\(/iu.test(full)) return []
+      const text = sliceLinearGradient(full) || full
       const colors = []
       const pattern = /(#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|\b(?:transparent|white|black)\b)/giu
       for (const match of text.matchAll(pattern)) {
@@ -823,6 +844,23 @@ window.__ModuleLoader__.load({
         if (!unique.some((item) => item.replace(/\s+/gu, '') === key)) unique.push(color)
       }
       return unique.slice(0, 6)
+    }
+
+    /** 取 background-image 里 linear-gradient(...) 那一段（含括号配平）；没有就返回空串。 */
+    function sliceLinearGradient(value) {
+      const text = String(value || '')
+      const at = text.indexOf('linear-gradient(')
+      if (at === -1) return ''
+      let depth = 0
+      for (let index = at + 'linear-gradient'.length; index < text.length; index += 1) {
+        const ch = text[index]
+        if (ch === '(') depth += 1
+        else if (ch === ')') {
+          depth -= 1
+          if (depth === 0) return text.slice(at, index + 1)
+        }
+      }
+      return text.slice(at)
     }
 
     /** 颜色亮度（0~1）；解析失败按 0.5 处理。 */
@@ -875,24 +913,48 @@ window.__ModuleLoader__.load({
       return `rgba(${mix(r)}, ${mix(g)}, ${mix(b)}, ${a})`
     }
 
-    /** 主题渐变停靠点：按明暗主题把太浅/太暗的停靠点拉回可读区间。 */
-    function adjustGradientStops(stops, dark) {
+    /**
+     * 把渐变停靠点压进「画在画布上能看见」的亮度区间。
+     * 昔涟这种主题的底色停靠点接近纯白（#fff8fc…），直接拿来画就白茫茫一片，
+     * 之前看着"没变化"就是这个原因；这里按明暗主题反复往可读区间推。
+     */
+    function graphStops(stops, dark) {
       return stops.map((color) => {
-        const luminance = colorLuminance(color)
-        if (dark && luminance < 0.16) return lightenColor(color, 0.45)
-        if (!dark && luminance > 0.84) return shadeColor(color, 0.42)
-        return color
+        let out = color
+        for (let index = 0; index < 8; index += 1) {
+          const luminance = colorLuminance(out)
+          if (dark ? luminance >= 0.42 : luminance <= 0.62) break
+          out = dark ? lightenColor(out, 0.3) : shadeColor(out, 0.28)
+        }
+        return out
       })
     }
-    /** 读当前主题页面的背景渐变（像昔涟主题那样自带渐变时直接沿用）。 */
+
+    /**
+     * 读当前主题的背景渐变。
+     * 主题常把渐变画在 `body::before` / `html::after` 这类伪元素上（昔涟就是 body::before），
+     * getComputedStyle(body).backgroundImage 读不到，所以伪元素也要探。
+     */
     function readThemeGradientStops() {
       if (typeof window === 'undefined' || typeof document === 'undefined') return []
       const candidates = []
+      const probe = (element, pseudo) => {
+        if (element === null || element === undefined) return
+        try {
+          const style = getComputedStyle(element, pseudo)
+          if (style !== null && style !== undefined) candidates.push(style.backgroundImage)
+        } catch {
+          // 某些环境不支持伪元素查询：跳过
+        }
+      }
       try {
-        candidates.push(getComputedStyle(document.body).backgroundImage)
-        candidates.push(getComputedStyle(document.documentElement).backgroundImage)
-        const app = document.querySelector('.dsh-app')
-        if (app !== null) candidates.push(getComputedStyle(app).backgroundImage)
+        probe(document.body, null)
+        probe(document.body, '::before')
+        probe(document.body, '::after')
+        probe(document.documentElement, null)
+        probe(document.documentElement, '::before')
+        probe(document.querySelector('.dsh-app'), null)
+        probe(document.querySelector('.dsh-app'), '::before')
       } catch {
         return []
       }
@@ -912,22 +974,22 @@ window.__ModuleLoader__.load({
       const rgb = bg.match(/\d+(\.\d+)?/g) || ['255', '255', '255']
       const luminance = (Number(rgb[0]) * 0.299 + Number(rgb[1]) * 0.587 + Number(rgb[2]) * 0.114) / 255
       const dark = luminance < 0.45
-      // 完全跟着 DSH 主题 token：品牌色、深标签、描边、弱化文字
-      const brand = read('--dsw-alias-brand-primary', dark ? '#38bdf8' : '#0369a1')
-      const deep = read('--dsw-alias-label-deep-diving', brand)
-      // 主题自带渐变（例如昔涟主题的背景渐变）时，直接沿用它的颜色停靠点
-      const themeStops = adjustGradientStops(readThemeGradientStops(), dark)
+      // 主题自带渐变（昔涟那种）时沿用它；主题没有渐变就退到「蓝紫星辰」，
+      // 不再用 DSH 的默认品牌蓝——那是宿主默认色，跟主题没关系。
+      const themeStops = graphStops(readThemeGradientStops(), dark)
       const hasThemeGradient = themeStops.length >= 2
+      const star = CODEX_STAR_STOPS[dark ? 1 : 0]
+      const pick = (index, fallback) => (hasThemeGradient ? (themeStops[index] || themeStops[themeStops.length - 1]) : fallback)
       return {
         bg: bgInner,
         bgInner: bg,
-        node: hasThemeGradient ? themeStops[0] : brand,
-        nodeLight: hasThemeGradient ? themeStops[1] : lightenColor(brand, 0.58),
-        node2: hasThemeGradient ? themeStops[themeStops.length - 1] : deep,
-        edge: hasThemeGradient ? themeStops[1] : read('--dsw-alias-border-l3', dark ? '#64748b' : '#94a3b8'),
-        highlight: hasThemeGradient ? lightenColor(themeStops[0], 0.35) : brand,
-        glow: hasThemeGradient ? themeStops[0] : brand,
-        dust: read('--dsw-alias-label-dimmed', dark ? '#94a3b8' : '#cbd5e1'),
+        node: pick(0, star.node),
+        nodeLight: hasThemeGradient ? lightenColor(pick(1, star.nodeLight), 0.3) : star.nodeLight,
+        node2: pick(themeStops.length - 1, star.node2),
+        edge: pick(1, star.edge),
+        highlight: hasThemeGradient ? lightenColor(pick(1, star.highlight), 0.25) : star.highlight,
+        glow: pick(0, star.glow),
+        dust: hasThemeGradient ? lightenColor(pick(1, star.dust), 0.2) : star.dust,
         ringFill: dark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
         dark,
         bloom: dark ? 12 : 7,
@@ -944,6 +1006,18 @@ window.__ModuleLoader__.load({
         cam: { yaw: -0.42, pitch: -0.24, dist: 1420 },
         selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false,
       })
+      // 图上那个胶囊：手动切「跟随主题 / 蓝紫星辰」，写进 ui.graphPalette。
+      const graphUi = (settings.data && settings.data.ui) || {}
+      const paletteNow = GRAPH_PALETTES[graphUi.graphPalette] ? graphUi.graphPalette : 'dsh'
+      const pickPalette = async (key) => {
+        if (key === paletteNow) return
+        try {
+          await request('/settings', { method: 'POST', body: { ui: { graphPalette: key } } })
+          await settings.reload()
+        } catch (caught) {
+          console.error('[engram] graph palette save failed', caught)
+        }
+      }
       useEffect(() => {
         const canvas = canvasRef.current
         if (!canvas || !graph.data) return undefined
@@ -954,7 +1028,8 @@ window.__ModuleLoader__.load({
           ? readDshGraphPalette(canvas)
           : (() => {
               const base = GRAPH_PALETTES[paletteKey]
-              return { ...base, node2: base.node, highlight: base.node, nodeLight: lightenColor(base.node, 0.5) }
+              // 保留调色板自己的第二色/高亮色，别再压成单色（否则自选配色也没有渐变层次）
+              return { ...base, nodeLight: lightenColor(base.node, 0.5) }
             })()
         const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
         const bloom = ui.graphBloom !== false
@@ -1278,7 +1353,9 @@ window.__ModuleLoader__.load({
             if (entry.alpha <= 0.01) { if (entry.targetAlpha === 0) store.nodes.delete(entry.node.id); continue }
             const node = entry.node
             const isSelected = store.selected !== null && store.selected === node.id
-            const color = palette.node
+            // 三类节点分开取色：经验=主色、类型=第二停靠点、技能=高亮色。
+            // 这样主题渐变（多停靠点）才看得出来，不然图上一片单色。
+            const color = node.kind === 'skill' ? (palette.highlight || palette.node) : node.kind === 'type' ? (palette.node2 || palette.node) : palette.node
             const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.09 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
             const nearFactor = Math.min(1.6, Math.max(0.35, entry.screenF))
             let energy = 1
@@ -1352,6 +1429,15 @@ window.__ModuleLoader__.load({
       }, [graph.data, settings.data])
       return h('div', { className: 'eng-graph-canvas-wrap' },
         h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '3D 记忆海' }),
+        h('div', { className: 'eng-graph-pill', role: 'group', 'aria-label': '关系图配色' },
+          [['dsh', '跟随主题'], ['codex', '蓝紫星辰']].map(([key, label]) => h('button', {
+            key,
+            type: 'button',
+            'data-tone': key,
+            'data-active': paletteNow === key ? 'true' : 'false',
+            title: key === 'codex' ? 'dsh-codex-effort-slider 那条推理滑条的蓝紫渐变' : '跟着当前 DSH 主题色走（换主题自动变）',
+            onClick: () => pickPalette(key),
+          }, label))),
         selection === null ? null : h('div', { className: 'eng-graph-detail' },
           h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'type' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'type' ? '类型' : selection.kind === 'skill' ? '技能' : '经验')),
           h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
@@ -1904,8 +1990,12 @@ window.__ModuleLoader__.load({
       Record,
       Types,
       Usage,
+      Graph,
       SaveExperienceAction,
       parseGradientStops,
+      graphStops,
+      sliceLinearGradient,
+      GRAPH_PALETTES,
       inject: ['slots', 'layout'],
       apply(ctx) {
         try {

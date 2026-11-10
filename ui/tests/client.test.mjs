@@ -243,6 +243,52 @@ check('关系图配色：能从主题背景渐变里取颜色停靠点（自带�
   const gradient = parse('linear-gradient(90deg, #ff2bd6 0%, #00f0ff 100%)')
   assert.equal(gradient.length, 2)
 })
+
+check('关系图页：整块画布 + 右上角配色胶囊（跟随主题 / 蓝紫星辰）', () => {
+  const tree = JSON.stringify(module.Graph({}), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(tree.includes('eng-graph-canvas'), '没有画布')
+  assert.ok(tree.includes('eng-graph-pill'), '没有配色胶囊')
+  assert.ok(tree.includes('跟随主题'), '胶囊缺少「跟随主题」')
+  assert.ok(tree.includes('蓝紫星辰'), '胶囊缺少「蓝紫星辰」')
+})
+check('关系图配色：多层背景只取 linear 那层；浅色停靠点压进可读区间；有「蓝紫星辰」', () => {
+  const parse = module.parseGradientStops
+  // 昔涟主题真实写法：4 层 radial 光斑 + 最后一层 linear 底色
+  const layered = [
+    'radial-gradient(1100px 760px at 12% -6%, rgba(255,196,226,.95), rgba(255,196,226,0) 62%)',
+    'radial-gradient(900px 700px at 88% 4%, rgba(206,190,255,.8), rgba(206,190,255,0) 60%)',
+    'linear-gradient(158deg, #fff8fc 0%, #ffeef7 34%, #f7ecff 68%, #eef6ff 100%)',
+  ].join(', ')
+  const stops = parse(layered)
+  assert.equal(JSON.stringify(stops), JSON.stringify(['#fff8fc', '#ffeef7', '#f7ecff', '#eef6ff']), '多层背景应只取 linear 那层的停靠点')
+  const slice = module.sliceLinearGradient(layered)
+  assert.ok(slice.startsWith('linear-gradient('), '没切出 linear-gradient 段')
+
+  // 浅色主题：接近纯白的停靠点必须被压暗，否则画在浅色底上等于没有
+  const shaped = module.graphStops(stops, false)
+  const luminanceOf = (color) => {
+    const hex = String(color).match(/^#([0-9a-f]{6})$/iu)
+    const rgb = String(color).match(/^rgba?\(([^)]+)\)$/iu)
+    const parts = hex !== null
+      ? [parseInt(hex[1].slice(0, 2), 16), parseInt(hex[1].slice(2, 4), 16), parseInt(hex[1].slice(4, 6), 16)]
+      : (rgb !== null ? rgb[1].split(/[\s,\/]+/u).filter(Boolean).slice(0, 3).map(Number) : null)
+    assert.ok(parts !== null, `停靠点既不是 hex 也不是 rgb：${color}`)
+    return (parts[0] * 0.299 + parts[1] * 0.587 + parts[2] * 0.114) / 255
+  }
+  for (const color of shaped) {
+    const luminance = luminanceOf(color)
+    assert.ok(luminance <= 0.66, `浅色主题停靠点仍然太亮：${color} (${luminance.toFixed(2)})`)
+    assert.ok(luminance >= 0.2, `浅色主题停靠点被压得太黑：${color} (${luminance.toFixed(2)})`)
+  }
+
+  const codex = module.GRAPH_PALETTES.codex
+  assert.ok(codex !== undefined, '没有「蓝紫星辰」配色')
+  const joined = JSON.stringify(codex).toLowerCase()
+  for (const hex of ['#6d28d9', '#4d93f8', '#9333ea', '#c084fc']) {
+    assert.ok(joined.includes(hex), `蓝紫星辰缺少推理滑条渐变色 ${hex}`)
+  }
+  assert.ok(codex.node !== codex.node2, '蓝紫星辰应该是双色，不该压成单色')
+})
 check('会话底部按钮：图标按钮，无文字无边框，尺寸对齐旁边图标，点击 POST /chat-save', () => {
   const action = module.SaveExperienceAction
   assert.equal(typeof action, 'function', '按钮组件没有导出给测试')
