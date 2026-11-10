@@ -69,6 +69,27 @@ await check('单个技能文件夹仍按一条导入（不是套件）', async (
   assert.equal(out.count, 1)
 })
 
+await check('整包导入：scripts/references 等随 SKILL.md 一起复制，并记 package 摘要', async () => {
+  const pkg = path.join(root, 'pkg-skill')
+  fs.mkdirSync(path.join(pkg, 'scripts'), { recursive: true })
+  fs.mkdirSync(path.join(pkg, 'references'), { recursive: true })
+  fs.writeFileSync(path.join(pkg, 'SKILL.md'), '---\nname: 整包技能\ndescription: 包\n---\n\n# 包\n正文\n', 'utf8')
+  fs.writeFileSync(path.join(pkg, 'scripts', 'run.py'), 'print(1)\n', 'utf8')
+  fs.writeFileSync(path.join(pkg, 'references', 'notes.md'), '# notes\n', 'utf8')
+  fs.writeFileSync(path.join(pkg, 'requirements.txt'), 'requests\n', 'utf8')
+  const out = await importSkills({ dataDir, filePath: pkg })
+  assert.equal(out.suite, false)
+  const item = out.items[0]
+  assert.ok(item.package && item.package.fileCount >= 4, `整包复制太少：${JSON.stringify(item.package)}`)
+  const dir = path.join(dataDir, 'skills', item.slug)
+  assert.equal(fs.existsSync(path.join(dir, 'scripts', 'run.py')), true, 'scripts 没复制')
+  assert.equal(fs.existsSync(path.join(dir, 'references', 'notes.md')), true, 'references 没复制')
+  assert.equal(fs.existsSync(path.join(dir, 'requirements.txt')), true, '根目录文件没复制')
+  const meta = JSON.parse(fs.readFileSync(path.join(dir, 'skill.json'), 'utf8'))
+  assert.ok(Array.isArray(meta.files) && meta.files.some((file) => file.path === 'scripts/run.py'), 'scripts 没登记到 files')
+  assert.ok(meta.package.dirs.includes('references'), 'package.dirs 没记 references')
+})
+
 await check('updateSkillMeta：改分类/便签并落盘', () => {
   const slug = skills.listSkills(dataDir)[0].slug
   const out = skills.updateSkillMeta(dataDir, slug, { typeNames: ['改后分类'], notes: ['新便签', '第二条'] })

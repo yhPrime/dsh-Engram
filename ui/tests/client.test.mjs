@@ -274,6 +274,8 @@ check('技能：全局注册 / 忘记技能都由人点按钮，模型没有自�
   // 详情卡全局 order:-1 会把管理卡顶到它下面，所以管理卡必须是更小的 order（-2）
   assert.ok(/\.eng-split\[data-open="true"\] \.eng-stack > \.eng-skill-actions \{[^}]*order:\s*-2/u.test(source), '管理卡没设 order:-2，会被详情卡压到下面')
   assert.ok(source.includes('便签（每行一条）'), '技能详情里没有便签输入')
+  assert.ok(source.includes('整包：') && source.includes('row.packageFiles'), '技能详情没有整包文件摘要')
+  assert.ok(source.includes('含 ${firstPkg.fileCount} 个文件'), '导入回执没说带了多少文件')
   const tree = JSON.stringify(module.Skills({ onChanged: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
   assert.ok(tree.includes('eng-skill-row') || tree.includes('还没有固化技能'), '技能页没渲染')
 })
