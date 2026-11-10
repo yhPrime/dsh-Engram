@@ -743,6 +743,83 @@ window.__ModuleLoader__.load({
       return `rgba(128, 128, 128, ${value})`
     }
 
+    /** 颜色 → {r,g,b}（hex / rgb / rgba）；解析不了返回 null。 */
+    function parseRgbColor(color) {
+      const text = String(color || '').trim()
+      const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/iu)
+      if (hex) {
+        const full = hex[1].length === 3 ? hex[1].split('').map((ch) => ch + ch).join('') : hex[1]
+        return { r: parseInt(full.slice(0, 2), 16), g: parseInt(full.slice(2, 4), 16), b: parseInt(full.slice(4, 6), 16) }
+      }
+      const rgb = text.match(/^rgba?\(([^)]+)\)$/iu)
+      if (rgb) {
+        const parts = rgb[1].split(/[\s,\/]+/u).filter(Boolean)
+        return { r: Math.round(Number(parts[0]) || 0), g: Math.round(Number(parts[1]) || 0), b: Math.round(Number(parts[2]) || 0) }
+      }
+      return null
+    }
+
+    function rgbToHsl(rgb) {
+      const r = rgb.r / 255
+      const g = rgb.g / 255
+      const b = rgb.b / 255
+      const max = Math.max(r, g, b)
+      const min = Math.min(r, g, b)
+      const l = (max + min) / 2
+      if (max === min) return { h: 0, s: 0, l }
+      const delta = max - min
+      const s = l > 0.5 ? delta / (2 - max - min) : delta / (max + min)
+      let h
+      if (max === r) h = ((g - b) / delta + (g < b ? 6 : 0)) / 6
+      else if (max === g) h = ((b - r) / delta + 2) / 6
+      else h = ((r - g) / delta + 4) / 6
+      return { h, s, l }
+    }
+
+    function hslToHex(h, s, l) {
+      const hue = ((h % 1) + 1) % 1
+      const channel = (p, q, t) => {
+        let value = t
+        if (value < 0) value += 1
+        if (value > 1) value -= 1
+        if (value < 1 / 6) return p + (q - p) * 6 * value
+        if (value < 1 / 2) return q
+        if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6
+        return p
+      }
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+      const p = 2 * l - q
+      const r = Math.round(channel(p, q, hue + 1 / 3) * 255)
+      const g = Math.round(channel(p, q, hue) * 255)
+      const b = Math.round(channel(p, q, hue - 1 / 3) * 255)
+      return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('')}`
+    }
+
+    /** 颜色饱和度（0~1）；读不到颜色按 0 处理。 */
+    function colorSaturation(color) {
+      const rgb = parseRgbColor(color)
+      if (rgb === null) return 0
+      return rgbToHsl(rgb).s
+    }
+
+    /**
+     * 把主题里的颜色变成能画的节点色：保色相，把饱和度提上来、亮度压进可读区间。
+     * 主题背景渐变多是接近纯白的粉/薰衣草（#fff8fc 这种），直接压暗就变灰——
+     * 之前「切到跟随主题后整张图发灰」就是这一步只做了明暗、没补饱和度。
+     */
+    function vividColor(color, dark) {
+      const rgb = parseRgbColor(color) || { r: 128, g: 128, b: 128 }
+      const hsl = rgbToHsl(rgb)
+      // 保色相；饱和度抬到能分辨的下限、但不拉到荧光（昔涟这种柔和主题要留点灰调）
+      const saturation = dark
+        ? Math.min(0.86, Math.max(hsl.s, 0.58))
+        : Math.min(0.8, Math.max(hsl.s, 0.55))
+      const lightness = dark
+        ? Math.min(0.74, Math.max(hsl.l, 0.62))
+        : Math.min(0.62, Math.max(hsl.l, 0.5))
+      return hslToHex(hsl.h, saturation, lightness)
+    }
+
     // 「蓝紫星辰」= dsh-codex-effort-slider 那条推理能量滑条的渐变：
     // #4d93f8 蓝 → #6d28d9 深紫 → #9333ea 紫 → #c084fc 淡紫（滑条实色为 #3b1178→#c084fc，
     // 两端取更亮的一档，保证图上节点在浅色/深色主题都看得清）。
@@ -833,13 +910,11 @@ window.__ModuleLoader__.load({
      * 主题背景常是多层（几层 radial 光斑 + 最后一层 linear 底色），radial 里的光斑色不是主色，
      * 所以能切出 linear-gradient 那一段就只认那一段。
      */
-    function parseGradientStops(value) {
-      const full = String(value || '')
-      if (!/gradient\(/iu.test(full)) return []
-      const text = sliceLinearGradient(full) || full
+    /** 从一段 background-image 里收颜色（去重、丢掉全透明的）。 */
+    function collectGradientColors(text) {
       const colors = []
       const pattern = /(#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|\b(?:transparent|white|black)\b)/giu
-      for (const match of text.matchAll(pattern)) {
+      for (const match of String(text || '').matchAll(pattern)) {
         const raw = String(match[0]).trim().toLowerCase()
         if (raw === 'transparent' || raw === '') continue
         if (raw === 'white' || raw === 'black') {
@@ -860,7 +935,20 @@ window.__ModuleLoader__.load({
         const key = color.replace(/\s+/gu, '')
         if (!unique.some((item) => item.replace(/\s+/gu, '') === key)) unique.push(color)
       }
-      return unique.slice(0, 6)
+      return unique
+    }
+
+    function parseGradientStops(value) {
+      const full = String(value || '')
+      if (!/gradient\(/iu.test(full)) return []
+      return collectGradientColors(sliceLinearGradient(full) || full).slice(0, 6)
+    }
+
+    /** 整段 background-image 的所有颜色（含 radial 光斑那一层）。 */
+    function parseAllGradientStops(value) {
+      const full = String(value || '')
+      if (!/gradient\(/iu.test(full)) return []
+      return collectGradientColors(full).slice(0, 8)
     }
 
     /** 取 background-image 里 linear-gradient(...) 那一段（含括号配平）；没有就返回空串。 */
@@ -936,15 +1024,9 @@ window.__ModuleLoader__.load({
      * 之前看着"没变化"就是这个原因；这里按明暗主题反复往可读区间推。
      */
     function graphStops(stops, dark) {
-      return stops.map((color) => {
-        let out = color
-        for (let index = 0; index < 8; index += 1) {
-          const luminance = colorLuminance(out)
-          if (dark ? luminance >= 0.42 : luminance <= 0.62) break
-          out = dark ? lightenColor(out, 0.3) : shadeColor(out, 0.28)
-        }
-        return out
-      })
+      // 走 vividColor：保色相 + 提饱和度 + 亮度进可读区间。
+      // 只压明暗不补饱和度会把「接近纯白的主题粉」压成灰（分不清是灰还是没生效）。
+      return stops.map((color) => vividColor(color, dark))
     }
 
     /**
@@ -976,6 +1058,10 @@ window.__ModuleLoader__.load({
         return []
       }
       for (const value of candidates) {
+        // 先看整段背景里「有颜色」的那几个停靠点——radial 光斑才是主题真正的粉/紫/蓝，
+        // linear 底色往往接近纯白（压暗之后就成灰了）。
+        const vivid = parseAllGradientStops(value).filter((color) => colorSaturation(color) >= 0.2)
+        if (vivid.length >= 2) return vivid.slice(0, 4)
         const stops = parseGradientStops(value)
         if (stops.length >= 2) return stops
       }
@@ -2027,6 +2113,9 @@ window.__ModuleLoader__.load({
       parseGradientStops,
       graphStops,
       withAlpha,
+      vividColor,
+      colorSaturation,
+      parseAllGradientStops,
       sliceLinearGradient,
       GRAPH_PALETTES,
       inject: ['slots', 'layout'],
