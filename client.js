@@ -96,7 +96,9 @@ window.__ModuleLoader__.load({
 .eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-subnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 .eng-subnav-item { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.eng-subnav-item[data-active="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
+.eng-subnav-item[data-active="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }.eng-save-exp { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; font: inherit; font-size: 11px; }
+.eng-save-exp:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-brand-primary); }
+.eng-save-exp:disabled { opacity: .6; cursor: default; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
 .eng-git-repo { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-git-repo:last-child { border-bottom: 0; }.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .eng-banner { margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: 12px; }
@@ -1662,10 +1664,41 @@ window.__ModuleLoader__.load({
             h(PageBoundary, { key: tab }, content))))
     }
 
+    /** 会话底部「存入经验」按钮：按当前消息 id 让 host 读会话文件，落一条经验。 */
+    function SaveExperienceAction(props) {
+      const [state, setState] = useState('idle')
+      const save = async (event) => {
+        if (event && typeof event.stopPropagation === 'function') event.stopPropagation()
+        setState('busy')
+        try {
+          const receipt = await request('/chat-save', {
+            method: 'POST',
+            body: { sessionId: props.sessionId || '', messageId: props.messageId || '' },
+          })
+          setState('ok')
+          window.setTimeout(() => setState('idle'), 2500)
+          return receipt
+        } catch (error) {
+          setState('err')
+          window.setTimeout(() => setState('idle'), 3000)
+          return null
+        }
+      }
+      const label = state === 'ok' ? '已存' : state === 'err' ? '失败' : '存经验'
+      return h('button', {
+        type: 'button',
+        className: 'eng-save-exp',
+        title: '把这条对话存进经验库（结果可之后回填）',
+        'aria-label': '存入经验库',
+        disabled: state === 'busy',
+        onClick: save,
+      }, h(EngramGlyph, { size: 14 }), h('span', null, label))
+    }
     return {
       // 暴露给测试：详情面板/设置页都要能单独渲染，防「点击后空白」「设置页堆成一坨」回归。
       DetailPane,
       Settings,
+      SaveExperienceAction,
       inject: ['slots', 'layout'],
       apply(ctx) {
         try {
@@ -1694,6 +1727,14 @@ window.__ModuleLoader__.load({
         try {
           disposers.push(ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({ name: 'plugins.bundle.config', key: PACKAGE_NAME }, BundleCard)))
         } catch (error) { failures.push(`card:${error && error.message ? error.message : String(error)}`); console.error('[engram] bundle card registration failed', error) }
+        try {
+          disposers.push(ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
+            name: 'conversation.chat.assistant-actions',
+            id: 'save-experience',
+            order: 5,
+            inject: (sessionId) => ({ props: { sessionId } }),
+          }, SaveExperienceAction)))
+        } catch (error) { failures.push(`chat-save:${error && error.message ? error.message : String(error)}`); console.error('[engram] chat save registration failed', error) }
         try {
           ctx.effect(() => () => {
             for (const dispose of disposers.reverse()) {

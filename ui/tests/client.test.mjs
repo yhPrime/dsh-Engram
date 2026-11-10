@@ -143,10 +143,10 @@ check('模块加载时不发请求（首屏才请求）', () => {
 const { ctx, injected, registrations } = makeCtx()
 module.apply(ctx)
 
-check('注册三处：侧栏经验库、主面板、插件页卡片', () => {
-  assert.deepEqual(injected, ['sidebar.panellist', 'main', 'plugins.bundle.config'])
+check('注册四处：侧栏经验库、主面板、插件页卡片、会话底部「存经验」', () => {
+  assert.deepEqual(injected, ['sidebar.panellist', 'main', 'plugins.bundle.config', 'conversation.chat.assistant-actions'])
   const names = registrations.map((entry) => entry.registration.name)
-  assert.deepEqual(names, ['sidebar.panellist', 'main', 'plugins.bundle.config'])
+  assert.deepEqual(names, ['sidebar.panellist', 'main', 'plugins.bundle.config', 'conversation.chat.assistant-actions'])
   for (const entry of registrations) {
     assert.equal(typeof entry.component, 'function', `${entry.registration.name} 没有组件`)
   }
@@ -229,6 +229,15 @@ check('详情面板：未选中 / 读取中 / 请求失败三种状态都有可�
   assert.ok(bad.includes('没有这条经验'), '错误没有显示出来')
 })
 
+check('会话底部按钮：渲染成「存经验」按钮，点击会 POST /chat-save', () => {
+  const action = module.SaveExperienceAction
+  assert.equal(typeof action, 'function', '按钮组件没有导出给测试')
+  const element = action({ sessionId: 's1', messageId: 'm1' })
+  assert.equal(element.type, 'button')
+  assert.equal(element.props['aria-label'], '存入经验库')
+  const text = JSON.stringify(element, (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(text.includes('存经验'))
+})
 check('设置页：二级菜单分屏，默认只露出「存储位置」一档', () => {
   const settings = module.Settings
   assert.equal(typeof settings, 'function', '设置页没有导出给测试')

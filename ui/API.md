@@ -381,6 +381,11 @@ body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结�
   `tip` 是给鼠标悬停提示框用的长说明（有歧义的项才有）。
 - 设置项保存：`POST /settings` body 可带 `currentRoot` / `config` / `ui` / `git` 任意组合；传 `null` 或空串等于「恢复默认」（删键）。
 
+### `POST /chat-save`
+body: `{ messageId, sessionId?, outcome?, type?, note? }` → `{ id, intent, action, outcome }`
+
+把会话里的一轮对话存成经验：按 `messageId` 读 `$DSH_HOME/sessions/**/session-<id>/session.v4.jsonl.zstd`（只读），取该条助手回复的正文作为「做法」、往前最近的用户输入作为「意图」，落一条 `outcome=unknown` 的经验（之后用 `exp_feedback` 回填）。只给 `messageId` 时会按最近修改的前 8 个会话反查。错误码：`ids-required`（缺 messageId）。
+
 ### `POST /skill-install`
 body: `{ slug, targetRoot? }` → `{ slug, targetDir, installedAt }`：把 `<dataDir>/skills/<slug>/` 复制成 DSH 可加载的真技能（默认 `$DSH_HOME/skills/<slug>/`；`targetRoot` 仅供测试/自定义）。错误码：`slug-required`。
 

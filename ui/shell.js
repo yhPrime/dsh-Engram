@@ -32,6 +32,7 @@ import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEng
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { exportSkillToDsh } from '../kernel/skills.js'
+import { saveTurnAsExperience } from '../kernel/chat-save.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -571,6 +572,22 @@ export async function handleRequest(req, res, source) {
       if (action === 'init') return json(res, 200, { ok: true, data: await gitInit(dataDir, config) })
       if (action === 'pull') return json(res, 200, { ok: true, data: await gitPull(dataDir, config) })
       return json(res, 200, { ok: true, data: await gitPush(dataDir, config, { message: body && body.message }) })
+    }
+    if (route === '/chat-save') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const sessionId = String((body && body.sessionId) || '').trim()
+      const messageId = String((body && body.messageId) || '').trim()
+      if (messageId === '') return fail(res, 400, 'ids-required', '缺少 messageId')
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      const saved = saveTurnAsExperience(dataDir, {
+        sessionId,
+        messageId,
+        outcome: body && body.outcome,
+        type: body && body.type,
+        note: body && body.note,
+      })
+      return json(res, 200, { ok: true, data: saved })
     }
     if (route === '/skill-install') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
