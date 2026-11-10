@@ -56,6 +56,7 @@ window.__ModuleLoader__.load({
 .eng-modal-warn { margin: 12px 0 14px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
 .eng-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+.eng-git-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; }
 /* 「添加技能」的拖拽落区：虚线框 + 中间提示，拖进来时高亮 */
 .eng-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; margin: 14px 0 12px; padding: 26px 18px; border: 1.5px dashed var(--dsw-alias-border-l2, var(--dsw-alias-border-l1)); border-radius: 14px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent); text-align: center; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
 .eng-dropzone:hover { border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, var(--dsw-alias-border-l2, var(--dsw-alias-border-l1))); }
@@ -1811,6 +1812,7 @@ window.__ModuleLoader__.load({
       const [newRepoName, setNewRepoName] = useState('')
       const [newRepoPrivate, setNewRepoPrivate] = useState(true)
       const [device, setDevice] = useState(null)
+      const [repoSearch, setRepoSearch] = useState('')
       const [section, setSection] = useState(props && props.section ? String(props.section) : 'storage')
       const deviceStart = async () => {
         setGhBusy(true); setGhNotice('')
@@ -1957,6 +1959,16 @@ window.__ModuleLoader__.load({
         try {
           const result = await request('/sync', { method: 'POST', body: { action } })
           await sync.reload()
+          if (action === 'status') {
+            setSyncNotice(result && result.isRepo
+              ? `仓库就绪 · 分支 ${result.branch || '—'} · ${result.dirtyCount} 个未提交 · 领先 ${result.ahead} / 落后 ${result.behind}`
+              : '还没初始化仓库：点「连接并同步」会顺手初始化')
+            return
+          }
+          if (action === 'disconnect') {
+            setSyncNotice('已断开仓库（本地提交历史与 GitHub 登录都保留）')
+            return
+          }
           const reason = result && typeof result.reason === 'string' ? result.reason : ''
           setSyncNotice(reason === '' ? `${label}完成` : `${label}：${reason}`)
         } catch (caught) {
@@ -1974,6 +1986,48 @@ window.__ModuleLoader__.load({
           setNotice('已保存')
         } catch (caught) {
           setNotice(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      // ── Git 同步（模仿记忆插件那块）：状态一行、操作一排、仓库直接连接，不用二次确认 ──
+      const syncData = sync.data || null
+      const gitUrlNow = String((syncData && syncData.remote) || (gitDraft && gitDraft.repoUrl) || '')
+      const connectedNow = Boolean(syncData && syncData.configured)
+      const branchNow = String((syncData && (syncData.branch || syncData.targetBranch)) || (gitDraft && gitDraft.branch) || 'main')
+      const advancedGitFields = (((settings.data && settings.data.spec) || {}).git || []).filter((field) => ['repoUrl', 'branch', 'autoBackupMinutes'].indexOf(field.key) === -1)
+      const filteredRepos = (ghRepos || []).filter((repo) => repoSearch.trim() === '' || String(repo.fullName || '').toLowerCase().includes(repoSearch.trim().toLowerCase()))
+      const connectRepo = async () => {
+        const url = String((gitDraft && gitDraft.repoUrl) || '').trim()
+        if (url === '') {
+          setGhNotice('先填仓库地址')
+          return
+        }
+        setBusy(true); setGhNotice('')
+        try {
+          await request('/settings', { method: 'POST', body: { git: { ...gitDraft, repoUrl: url } } })
+          await settings.reload()
+          const pushed = await request('/sync', { method: 'POST', body: { action: 'push' } })
+          await sync.reload()
+          if (pushed && pushed.ok) setGhNotice(`已连接并同步${pushed.commit ? `（${pushed.commit}）` : ''}${pushed.reason ? `；${pushed.reason}` : ''}`)
+          else setGhNotice(`已连接；推送没成功 —— ${(pushed && pushed.reason) || '未知原因'}`)
+          if (props.onChanged) props.onChanged()
+        } catch (caught) {
+          setGhNotice(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const saveAutoBackup = async (minutes) => {
+        const next = { ...gitDraft, autoBackupMinutes: minutes }
+        setGitDraft(next)
+        setBusy(true); setSyncNotice('')
+        try {
+          await request('/settings', { method: 'POST', body: { git: next } })
+          await Promise.all([settings.reload(), sync.reload()])
+          setSyncNotice(minutes === 0 ? '自动同步已关闭' : `自动同步：每 ${minutes} 分钟`)
+        } catch (caught) {
+          setSyncNotice(caught.message || String(caught))
         } finally {
           setBusy(false)
         }
