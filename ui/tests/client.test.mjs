@@ -292,13 +292,36 @@ check('主面板对空数据渲染也不抛错，且标题是「经验库」', (
   assert.ok(serialized.includes('使用记录'))
 })
 
+check('每个页面都渲染出 eng-fill + 自己的滚动窗口', () => {
+  const pages = [
+    ['概览', module.Overview, { state: {}, onGo: () => {}, onOpen: () => {} }],
+    ['检索', module.Recall, {}],
+    ['记录', module.Record, {}],
+    ['技能', module.Skills, {}],
+    ['类型', module.Types, { onChanged: () => {} }],
+    ['使用记录', module.Usage, {}],
+    ['设置', module.Settings, {}],
+  ].filter(([, fn]) => typeof fn === 'function')
+  assert.ok(pages.length >= 7, `可渲染页面只有 ${pages.length} 个`)
+  for (const [name, fn, props] of pages) {
+    const tree = fn(props)
+    const serialized = JSON.stringify(tree, (key, value) => (typeof value === 'function' ? '[fn]' : value))
+    assert.ok(serialized.includes('eng-fill'), `${name} 缺少 eng-fill（页面高度传不下去）`)
+    assert.ok(/eng-scroll|eng-split/u.test(serialized), `${name} 没有自己的滚动窗口`)
+  }
+})
+
 check('经验 / 技能页：左右两栏各自独立滚动（页面不再整页滚）', () => {
   const source = loaded.source
   assert.ok(source.includes('.eng-content[data-fill="true"]'), '缺少 data-fill 布局规则')
   assert.ok(/\.eng-content\[data-fill="true"\][^{]*\.eng-split\s*\{[^}]*align-items:\s*stretch/u.test(source), '缺少两栏撑满规则')
   assert.ok(/\.eng-content\[data-fill="true"\][^{]*\.eng-split > \*[^{]*\{[^}]*overflow-y:\s*auto/u.test(source), '两栏没有独立滚动')
   assert.ok(source.includes("className: 'eng-fill'"), '页面根容器没有 eng-fill（高度传不下去）')
-  assert.ok(source.includes("'data-fill': tab === 'experiences' || tab === 'skills'"), '经验 / 技能页没有标记 data-fill')
+  assert.ok(/'data-fill':\s*tab === 'graph' \? 'false' : 'true'/u.test(source), '除关系图外的页面没有标记 data-fill')
+  const fillCount = (source.match(/className: 'eng-fill'/gu) || []).length
+  assert.ok(fillCount >= 7, `只有 ${fillCount} 个页面用了 eng-fill，应覆盖概览/经验/检索/记录/技能/类型/使用记录/设置`)
+  const scrollCount = (source.match(/eng-scroll/gu) || []).length
+  assert.ok(scrollCount >= 6, `只有 ${scrollCount} 处 eng-scroll，长内容没有自己的滚动窗口`)
 })
 check('客户端不弹窗（无 alert / confirm / prompt）', () => {
   assert.equal(/(^|[^\w.])alert\s*\(/u.test(loaded.source), false)
