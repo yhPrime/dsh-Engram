@@ -252,11 +252,17 @@ check('新建仓库并推送：不再被局部变量遮盖 sync 句柄，失败�
   assert.ok(source.includes('初始化失败'), '初始化失败没有可读提示')
   assert.ok(source.includes('[engram] sync.reload failed'), '刷新失败没有留日志')
 })
-check('技能归经验库自己管：不往 DSH skills 注册', () => {
+check('技能：全局注册 / 忘记技能都由人点按钮，模型没有自动注册的路径', () => {
   const source = loaded.source
-  assert.equal(source.includes('/skill-install'), false, '控制台还留着「装到 DSH」的接口调用')
-  assert.equal(/装到 DSH/u.test(source), false, '还留着「装到 DSH」按钮')
-  assert.ok(source.includes('不写进 DSH 的 skills 目录'), '没有说明技能归经验库自己管')
+  assert.equal(source.includes('/skill-install'), false, '还留着旧的自动安装接口')
+  assert.ok(source.includes('/skill-global'), '没有「注册技能到全局」的接口调用')
+  assert.ok(source.includes('/skill-forget'), '没有「忘记技能」的接口调用')
+  assert.ok(source.includes('注册技能到全局'), '没有「注册技能到全局」按钮')
+  assert.ok(source.includes('忘记技能'), '没有「忘记技能」按钮')
+  assert.ok(source.includes("current.globalRegistered ? '取消注册' : '注册技能到全局'"), '注册后按钮没有变成「取消注册」')
+  assert.ok(source.includes('确认忘记'), '忘记技能没有两步确认')
+  const tree = JSON.stringify(module.Skills({ onChanged: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(tree.includes('eng-skill-row') || tree.includes('还没有固化技能'), '技能页没渲染')
 })
 check('添加技能弹窗：拖拽区 + 固定安装位置，不再有路径输入', () => {
   const dialog = module.ImportSkillDialog

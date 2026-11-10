@@ -33,6 +33,7 @@ import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEng
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { importSkill } from '../kernel/import-skill.js'
+import { forgetSkill, registerSkillGlobally, unregisterSkillFromDsh } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
@@ -559,6 +560,40 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/skill-feedback') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       return json(res, 200, { ok: true, data: buildSkillFeedback(active, await readBody(req)) })
+    }
+    if (route === '/skill-global') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const slug = String((body && body.slug) || '').trim()
+      if (slug === '') return fail(res, 400, 'slug-required', '缺少技能 slug')
+      const action = String((body && body.action) || 'register').trim().toLowerCase()
+      if (!['register', 'unregister'].includes(action)) return fail(res, 400, 'bad-action', 'action 只能是 register / unregister')
+      if (active.mode !== 'live') return fail(res, 400, 'unsupported', '示例数据不支持全局注册')
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      try {
+        const result = action === 'register'
+          ? registerSkillGlobally(dataDir, slug)
+          : unregisterSkillFromDsh(dataDir, slug)
+        resetSourceCache()
+        return json(res, 200, { ok: true, data: { ...result, action } })
+      } catch (error) {
+        return fail(res, 400, 'skill-global-failed', error && error.message ? error.message : String(error))
+      }
+    }
+    if (route === '/skill-forget') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const slug = String((body && body.slug) || '').trim()
+      if (slug === '') return fail(res, 400, 'slug-required', '缺少技能 slug')
+      if (active.mode !== 'live') return fail(res, 400, 'unsupported', '示例数据不支持删除技能')
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      try {
+        const result = forgetSkill(dataDir, slug)
+        resetSourceCache()
+        return json(res, 200, { ok: true, data: result })
+      } catch (error) {
+        return fail(res, 400, 'skill-forget-failed', error && error.message ? error.message : String(error))
+      }
     }
     if (route === '/type') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')

@@ -600,6 +600,8 @@ window.__ModuleLoader__.load({
       const [intent, setIntent] = useState('')
       const [context, setContext] = useState('')
       const [notice, setNotice] = useState('')
+      // 「忘记技能」两步确认：第一下只把按钮换成「确认忘记」，避免误点删掉资产
+      const [confirmForget, setConfirmForget] = useState('')
       const rows = skills.data ? skills.data.skills || [] : []
       const current = selected === null ? null : rows.find((row) => row.id === selected) || null
       const act = async (fn) => {
@@ -618,13 +620,14 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-card' },
             rows.length === 0 ? h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀') : rows.map((row) => {
               const [label, tone] = skillStateOf(row.status)
-              return h('div', { key: row.id, className: 'eng-skill-row', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
+              return h('div', { key: row.id, className: 'eng-skill-row', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => { setSelected(row.id); setConfirmForget('') } },
                 h('div', { style: { flex: 1, minWidth: 0 } },
                   h('div', { className: 'eng-skill-name' }, row.name),
                   h('div', { className: 'eng-skill-desc' }, row.description || '—'),
                   h('div', { className: 'eng-actions', style: { marginTop: 6 } },
                     h(Badge, { tone }, label),
                     h('span', { className: 'eng-muted' }, `uses ${row.uses || 0} · helped ${row.helped || 0} · hurt ${row.hurt || 0}`),
+                    row.globalRegistered ? h(Badge, { tone: 'brand' }, '全局') : null,
                     row.pendingCommit ? h(Badge, { tone: 'warn' }, '待补提交') : null,
                     h('span', { className: 'eng-muted' }, `文件 ${Array.isArray(row.files) ? row.files.length : 0}`))),
                 h('span', { className: 'eng-mono', style: { flex: '0 0 auto' } }, row.id))
@@ -647,8 +650,40 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
-                h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } }, '这个技能归经验库自己管：不写进 DSH 的 skills 目录，召回时按需以技能形态交给模型。'),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性'),
+                  h(Button, {
+                    small: true,
+                    kind: current.globalRegistered ? undefined : 'primary',
+                    title: current.globalRegistered
+                      ? '把链接从 DSH skills 目录里删掉，技能回到经验库排序'
+                      : '链接进 DSH 的 skills 目录：之后由 DSH 当普通技能加载，经验库不再排序它',
+                    onClick: () => act(async () => {
+                      const out = await request('/skill-global', { method: 'POST', body: { slug: current.id, action: current.globalRegistered ? 'unregister' : 'register' } })
+                      return out.registered
+                        ? `已注册到全局：${out.targetDir}`
+                        : `已取消注册${out.removed ? '' : '（链接本来就不在了，已清理记录）'}`
+                    }),
+                  }, current.globalRegistered ? '取消注册' : '注册技能到全局'),
+                  h(Button, {
+                    small: true,
+                    kind: 'danger',
+                    title: confirmForget === current.id ? '再点一次就删掉这个技能目录' : '从经验库删除这个技能',
+                    onClick: () => {
+                      if (confirmForget !== current.id) {
+                        setConfirmForget(current.id)
+                        return
+                      }
+                      act(async () => {
+                        const out = await request('/skill-forget', { method: 'POST', body: { slug: current.id } })
+                        setConfirmForget('')
+                        setSelected(null)
+                        return `已忘记技能：${out.slug}`
+                      })
+                    },
+                  }, confirmForget === current.id ? '确认忘记' : '忘记技能')),
+                h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } }, current.globalRegistered
+                  ? `已注册到全局（${current.globalPath || 'DSH skills 目录'}）：DSH 会把它当真实技能加载，经验库不再排序/召回它；点「取消注册」回到经验库管理。`
+                  : '还没注册到全局：它归经验库自己管，召回时按需以技能形态交给模型；要当普通技能用就点「注册技能到全局」。'),
                 Array.isArray(current.files) && current.files.length > 0
                   ? h('div', { style: { marginBottom: 10 } }, h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '脚本附件'), current.files.map((file) => h('div', { key: file, className: 'eng-mono eng-muted' }, file)))
                   : null,

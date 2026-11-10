@@ -367,6 +367,16 @@ body: `{ intent, context? }` → `{ action, slug?, derivedFromCount? }`；mock �
 ### `POST /skill-feedback`
 body: `{ slug, result: helped|hurt|neutral }` → `{ id, result, G_before?, G_after? }`
 
+### `POST /skill-global`
+body: `{ slug, action: register|unregister }` → `{ slug, targetDir, mode, registered }`
+
+`register`：把 `<dataDir>/skills/<slug>/` **链接**（优先 junction，建不了才复制）到 `$DSH_HOME/skills/<slug>/`，之后按普通 DSH 技能加载。
+注册后**经验库不再排序/召回这个技能**（`listSkills({onlyLocal:true})` 会过滤掉它），避免两个引擎同时抢着用；`unregister` 删掉这条链接并清掉记录，技能回到经验库排序池。
+目标已被别人占用时返回 400 `skill-global-failed`，绝不覆盖。错误码：`slug-required` / `bad-action` / `unsupported`。
+
+### `POST /skill-forget`
+body: `{ slug }` → `{ slug, deleted, unregistered }`：删除技能目录（注册着的会先取消注册）。错误码：`slug-required` / `skill-forget-failed`。
+
 ### `POST /type`
 body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结果；mock 返回 501 unsupported
 
