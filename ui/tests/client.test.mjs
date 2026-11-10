@@ -229,14 +229,35 @@ check('详情面板：未选中 / 读取中 / 请求失败三种状态都有可�
   assert.ok(bad.includes('没有这条经验'), '错误没有显示出来')
 })
 
-check('会话底部按钮：渲染成「存经验」按钮，点击会 POST /chat-save', () => {
+check('关系图配色：能从主题背景渐变里取颜色停靠点（自带渐变的主题直接沿用）', () => {
+  const parse = module.parseGradientStops
+  assert.equal(typeof parse, 'function')
+  const linear = parse('linear-gradient(158deg, #fff8fc 0%, #ffeef7 34%, #f7ecff 68%, #eef6ff 100%)')
+  assert.equal(linear.length, 4)
+  assert.equal(linear[0], '#fff8fc')
+  const radial = parse('radial-gradient(1100px 760px at 12% -6%, rgba(255,196,226,.95), rgba(255,196,226,0) 62%)')
+  assert.equal(JSON.stringify(radial), JSON.stringify(['rgba(255,196,226,.95)']))
+  assert.equal(JSON.stringify(parse('none')), '[]')
+  assert.equal(JSON.stringify(parse('url(a.png)')), '[]')
+  assert.equal(JSON.stringify(parse('#123456')), '[]')
+  const gradient = parse('linear-gradient(90deg, #ff2bd6 0%, #00f0ff 100%)')
+  assert.equal(gradient.length, 2)
+})
+check('会话底部按钮：图标按钮，无文字无边框，尺寸对齐旁边图标，点击 POST /chat-save', () => {
   const action = module.SaveExperienceAction
   assert.equal(typeof action, 'function', '按钮组件没有导出给测试')
   const element = action({ sessionId: 's1', messageId: 'm1' })
   assert.equal(element.type, 'button')
   assert.equal(element.props['aria-label'], '存入经验库')
-  const text = JSON.stringify(element, (key, value) => (typeof value === 'function' ? '[fn]' : value))
-  assert.ok(text.includes('存经验'))
+  assert.equal(element.props.style.width, '24px')
+  assert.equal(element.props.style.height, '24px')
+  assert.equal(element.props.style.border, '0')
+  assert.equal(element.props.style.background, 'transparent')
+  assert.ok(String(element.props.title).includes('存进经验库'))
+  // 只放图标：不能有文字子节点
+  const children = (element.children || []).filter((child) => child !== null && child !== undefined)
+  assert.equal(children.length, 1)
+  assert.equal(typeof children[0].type, 'function')
 })
 check('设置页：二级菜单分屏，默认只露出「存储位置」一档', () => {
   const settings = module.Settings
