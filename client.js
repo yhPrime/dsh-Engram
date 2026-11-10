@@ -90,6 +90,7 @@ window.__ModuleLoader__.load({
 .eng-table th { padding: 8px 10px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-table td { padding: 8px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
 .eng-table tr:last-child td { border-bottom: 0; }
+.eng-scroll .eng-table thead th { position: sticky; top: 0; z-index: 1; background: var(--dsw-alias-bg-layer-2); }
 .eng-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
 .eng-tip:hover, .eng-tip:focus-visible { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); outline: none; }
 .eng-tip-bubble { display: none; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 30; width: max-content; max-width: 300px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 96%, transparent); color: var(--dsw-alias-label-primary); font-size: 11px; line-height: 1.55; box-shadow: 0 8px 24px rgba(0,0,0,.18); pointer-events: none; }
@@ -127,20 +128,23 @@ window.__ModuleLoader__.load({
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
 .eng-split[data-open="true"] .eng-stack > .eng-detail-card { order: -1; }
-/* 「左列表 + 右详情」页（经验 / 技能）：两栏各自独立滚动，页面本身不再整页滚 */
+/* 控制台所有页：抬头 / 表单 / 子导航留在原位，长内容在自己的窗口里滚，不再整页拖走 */
 .eng-content[data-fill="true"] { display: flex; flex-direction: column; overflow: hidden; }
 .eng-content[data-fill="true"] > .eng-fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.eng-content[data-fill="true"] > .eng-fill > .eng-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
 .eng-content[data-fill="true"] > .eng-fill > .eng-split { flex: 1 1 auto; min-height: 0; align-items: stretch; grid-auto-rows: minmax(0, 1fr); }
 .eng-content[data-fill="true"] > .eng-fill > .eng-split > * { min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 @media (max-width: 1180px) {
   .eng-content[data-fill="true"] { overflow-y: auto; }
   .eng-content[data-fill="true"] > .eng-fill { display: block; }
+  .eng-content[data-fill="true"] > .eng-fill > .eng-scroll { overflow: visible; }
   .eng-content[data-fill="true"] > .eng-fill > .eng-split { grid-auto-rows: auto; }
   .eng-content[data-fill="true"] > .eng-fill > .eng-split > * { max-height: none; overflow: visible; }
 }
 @container (max-width: 980px) {
   .eng-content[data-fill="true"] { overflow-y: auto; }
   .eng-content[data-fill="true"] > .eng-fill { display: block; }
+  .eng-content[data-fill="true"] > .eng-fill > .eng-scroll { overflow: visible; }
   .eng-content[data-fill="true"] > .eng-fill > .eng-split { grid-auto-rows: auto; }
   .eng-content[data-fill="true"] > .eng-fill > .eng-split > * { max-height: none; overflow: visible; }
 }
@@ -325,7 +329,8 @@ window.__ModuleLoader__.load({
         ['今日调用', usage.today, '次'],
         ['库大小', fmtBytes(state.bytes), ''],
       ]
-      return h('div', null,
+      return h('div', { className: 'eng-fill' },
+        h('div', { className: 'eng-scroll' },
         h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
           h('span', { className: 'eng-kpi-label' }, label),
           h('span', { className: 'eng-kpi-value' }, value === undefined ? '—' : String(value), h('span', { className: 'eng-kpi-unit' }, unit))))),
@@ -357,7 +362,7 @@ window.__ModuleLoader__.load({
                 const [label, tone] = skillStateOf(key)
                 return h(Badge, { key, tone }, `${label} ${summary[key] || 0}`)
               })),
-              h('div', { className: 'eng-muted', style: { marginTop: 10 } }, state.notice || `共 ${totals.types || 0} 个类型`)))))
+              h('div', { className: 'eng-muted', style: { marginTop: 10 } }, state.notice || `共 ${totals.types || 0} 个类型`))))))
     }
 
     function Experiences(props) {
@@ -468,7 +473,7 @@ window.__ModuleLoader__.load({
       }
       const candidates = result ? (result.candidates || result.rows || []) : []
       const engineShape = candidates.some((item) => Array.isArray(item.evidence))
-      return h('div', null,
+      return h('div', { className: 'eng-fill' },
         error ? h(Banner, { bad: true }, error) : null,
         h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 14 } },
           h('div', { className: 'eng-form-grid' },
@@ -476,7 +481,8 @@ window.__ModuleLoader__.load({
               h('textarea', { className: 'eng-textarea', placeholder: '例如：把课件导出成 PDF，字体要嵌进去', value: intent, onChange: (event) => setIntent(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) run() } })),
             h(Field, { label: '情境（逗号分隔，可选）' }, h('input', { className: 'eng-input', placeholder: 'windows, powerpoint', value: context, onChange: (event) => setContext(event.target.value) }))),
           h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || intent.trim() === '', onClick: run }, busy ? '检索中…' : '检索'))),
-        result === null ? null : h('div', null,
+        h('div', { className: 'eng-scroll' },
+          result === null ? h(Empty, null, '输入意图后点「检索」，候选会出现在这里') : h('div', null,
           h('div', { className: 'eng-actions', style: { marginBottom: 12 } },
             h(Badge, { tone: result.mode === 'skill' ? 'brand' : result.mode === 'advantage' ? 'ok' : 'muted' }, `mode=${result.mode}`),
             h('span', { className: 'eng-muted' }, `候选 ${candidates.length} 组`),
@@ -506,7 +512,7 @@ window.__ModuleLoader__.load({
             : h('div', { key: item.id, className: 'eng-card', style: { padding: 14 } },
                 h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone: outcomeOf(item.outcome)[1] }, outcomeOf(item.outcome)[0]), h('span', { className: 'eng-mono' }, `G ${fmtNumber(item.G)}`)),
                 h('div', { className: 'eng-row-intent' }, item.intent || '（无意图）'),
-                h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—'))))))
+                h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—')))))))
     }
 
     function Record() {
@@ -540,7 +546,8 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
-      return h('div', { className: 'eng-card', style: { padding: 18 } },
+      return h('div', { className: 'eng-fill' },
+        h('div', { className: 'eng-card eng-scroll', style: { padding: 18 } },
         error ? h(Banner, { bad: true }, error) : null,
         receipt ? h(Banner, null, `已记录：action=${receipt.action}，id=${receipt.id}，G=${fmtNumber(receipt.G)}${receipt.skillWarning ? `；${receipt.skillWarning}` : ''}`) : null,
         h('div', { className: 'eng-form-grid' },
@@ -558,7 +565,7 @@ window.__ModuleLoader__.load({
           h(Field, { label: '技能 id（可选）' }, h('input', { className: 'eng-input', value: form.skillId, onChange: update('skillId'), placeholder: 'skill:<slug>' })),
           h(Field, { label: '受阻描述（可选）' }, h('input', { className: 'eng-input', value: form.blockedBy, onChange: update('blockedBy'), placeholder: '页脚错位 第 3 行' })),
           h(Field, { label: '备注', wide: true }, h('textarea', { className: 'eng-textarea', value: form.note, onChange: update('note') }))),
-        h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || form.intent.trim() === '' || form.action.trim() === '', onClick: submit }, busy ? '提交中…' : '记录')))
+        h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || form.intent.trim() === '' || form.action.trim() === '', onClick: submit }, busy ? '提交中…' : '记录'))))
     }
 
     function Skills(props) {
@@ -643,7 +650,7 @@ window.__ModuleLoader__.load({
           setNotice(caught.message || String(caught))
         }
       }
-      return h('div', null,
+      return h('div', { className: 'eng-fill' },
         types.error ? h(Banner, { bad: true }, types.error) : null,
         notice ? h(Banner, null, notice) : null,
         h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14 } },
@@ -651,7 +658,7 @@ window.__ModuleLoader__.load({
             h(Field, { label: '新类型名称' }, h('input', { className: 'eng-input', value: name, onChange: (event) => setName(event.target.value) })),
             h(Field, { label: '描述（可选）' }, h('input', { className: 'eng-input', value: description, onChange: (event) => setDescription(event.target.value) }))),
           h(Button, { kind: 'primary', disabled: name.trim() === '', onClick: () => op({ action: 'create', name: name.trim(), description: description.trim() }) }, '新建类型')),
-        h('div', { className: 'eng-card' },
+        h('div', { className: 'eng-card eng-scroll' },
           h('table', { className: 'eng-table' },
             h('thead', null, h('tr', null, h('th', null, '名称'), h('th', null, 'id'), h('th', null, '条数'), h('th', null, '类型'))),
             h('tbody', null, rows.map((row) => h('tr', { key: row.id, style: { cursor: row.system ? 'default' : 'pointer' }, onClick: () => { if (!row.system) { setSelected(row.id); setNewName(row.name); setMergeInto('') } } },
@@ -675,9 +682,9 @@ window.__ModuleLoader__.load({
     function Usage() {
       const usage = useLoad(useCallback(() => request('/usage?limit=200'), []))
       const rows = usage.data ? usage.data.rows || [] : []
-      return h('div', null,
+      return h('div', { className: 'eng-fill' },
         usage.error ? h(Banner, { bad: true }, usage.error) : null,
-        h('div', { className: 'eng-card' }, rows.length === 0 ? h(Empty, null, usage.loading ? '读取中…' : '还没有调用记录') : h('table', { className: 'eng-table' },
+        h('div', { className: 'eng-card eng-scroll' }, rows.length === 0 ? h(Empty, null, usage.loading ? '读取中…' : '还没有调用记录') : h('table', { className: 'eng-table' },
           h('thead', null, h('tr', null, h('th', null, '时间'), h('th', null, '工具'), h('th', null, '意图'), h('th', null, '结果'))),
           h('tbody', null, rows.map((row, index) => h('tr', { key: index },
             h('td', { className: 'eng-mono' }, fmtTime(row.at)),
@@ -1569,8 +1576,9 @@ window.__ModuleLoader__.load({
         'data-active': section === id ? 'true' : 'false',
         onClick: () => setSection(id),
       }, label)))
-      return h('div', { className: 'eng-stack' },
+      return h('div', { className: 'eng-fill eng-stack' },
         subnav,
+        h('div', { className: 'eng-scroll eng-stack' },
         section === 'storage' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '存储位置'),
@@ -1674,7 +1682,7 @@ window.__ModuleLoader__.load({
             h('dt', null, '经验库文件'), h('dd', { className: 'eng-mono' }, data.file || '—'),
             h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
             h('dt', null, '版本'), h('dd', null, data.version || '—')))
-        ] : null)
+        ] : null))
     }
 
     const NAV = [
@@ -1790,7 +1798,7 @@ window.__ModuleLoader__.load({
               h(Button, { small: true, onClick: loadState }, '刷新'))),
           h('div', {
             className: tab === 'graph' ? 'eng-content eng-content-full' : 'eng-content',
-            'data-fill': tab === 'experiences' || tab === 'skills' ? 'true' : 'false',
+            'data-fill': tab === 'graph' ? 'false' : 'true',
           },
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
@@ -1870,9 +1878,15 @@ window.__ModuleLoader__.load({
       }, glyph)
     }
     return {
-      // 暴露给测试：详情面板/设置页都要能单独渲染，防「点击后空白」「设置页堆成一坨」回归。
+      // 暴露给测试：详情面板/设置页/各页面都要能单独渲染，防「点击后空白」「设置页堆成一坨」「整页滚」回归。
       DetailPane,
       Settings,
+      Overview,
+      Skills,
+      Recall,
+      Record,
+      Types,
+      Usage,
       SaveExperienceAction,
       parseGradientStops,
       inject: ['slots', 'layout'],
