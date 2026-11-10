@@ -80,6 +80,7 @@ export const SETTINGS_SPEC = {
   git: [
     { key: 'repoUrl', label: '远端仓库', type: 'string', hint: 'https://… 或 git@host:path 或本机绝对路径', tip: '经验库会以这个仓库为备份目标。https 推公开/私有仓库都行；地址里不要写账号密码，token 填在下面。' },
     { key: 'branch', label: '分支', type: 'string', hint: '默认 main', tip: '推送到哪个分支；不存在会自动建。' },
+    { key: 'pushStrategy', label: '推送策略', type: 'enum', values: ['overwrite', 'fast-forward'], labels: { overwrite: '本地覆盖云端（默认）', 'fast-forward': '只允许快进' }, tip: '本地覆盖云端：远端有本机没有的提交时直接用本机强推（覆盖前会把旧远端 HEAD 存到本地的 refs/engram/overwritten/*，还能捞回来）。只允许快进：分叉就报错、交回人处理。经验库是本机资产、云端只是备份，所以默认本地赢。' },
     { key: 'token', label: '访问 token（可选）', type: 'string', hint: '设备登录成功后自动填；也可手动贴 PAT', tip: '优先用上面的「用 GitHub 登录」（设备码，免 token）。这里只作后备：手动贴 GitHub PAT（classic 勾 repo），或设备登录后自动写入。它只存在本机 ~/.dsh/engram/settings.json，推送时走 http.extraHeader，错误信息里打码。' },
     { key: 'authorName', label: '提交作者名', type: 'string', hint: '留空用全局 git 身份', tip: '写进 commit 的作者名；留空就用你机器上的 git 全局配置。' },
     { key: 'authorEmail', label: '提交作者邮箱', type: 'string', hint: '留空用全局 git 身份', tip: '写进 commit 的邮箱；留空用全局 git 配置。' },

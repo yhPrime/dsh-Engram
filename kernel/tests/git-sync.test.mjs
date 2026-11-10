@@ -161,6 +161,51 @@ await check('本地分支 master、配置分支 main：推 HEAD，不报 src ref
   assert.equal(upstream, 'origin/main')
 })
 
+await check('推送策略：默认本地覆盖云端（强推 + 备份旧远端 HEAD）；可选只允许快进', async () => {
+  const bare = path.join(root, 'strategy-remote.git')
+  git(root, ['init', '--bare', '-b', 'main', bare])
+  const mine = path.join(root, 'strategy-mine')
+  fs.mkdirSync(mine, { recursive: true })
+  git(mine, ['init', '-b', 'main'])
+  git(mine, ['config', 'user.name', 'Mine'])
+  git(mine, ['config', 'user.email', 'mine@test.local'])
+  fs.writeFileSync(path.join(mine, 'exp-lib.json'), '{"v":1}\n', 'utf8')
+  git(mine, ['add', '-A'])
+  git(mine, ['commit', '-q', '-m', 'v1'])
+  const base = { repoUrl: bare, branch: 'main' }
+  const init = await gitInit(mine, { ...base, pushStrategy: 'overwrite' })
+  assert.equal(init.ok, true, init.reason)
+  const first = await gitPush(mine, { ...base, pushStrategy: 'overwrite' })
+  assert.equal(first.ok, true, first.reason)
+
+  // 另一台设备推了一条，云端领先本地
+  const other = path.join(root, 'strategy-other')
+  git(root, ['clone', '-q', bare, other])
+  git(other, ['config', 'user.name', 'Other'])
+  git(other, ['config', 'user.email', 'other@test.local'])
+  fs.writeFileSync(path.join(other, 'from-other.txt'), 'other\n', 'utf8')
+  git(other, ['add', '-A'])
+  git(other, ['commit', '-q', '-m', 'other commit'])
+  git(other, ['push', '-q', 'origin', 'main'])
+  const otherHead = git(other, ['rev-parse', 'HEAD']).trim()
+
+  // 本地又加了一条（与云端分叉）
+  fs.writeFileSync(path.join(mine, 'local.txt'), 'local\n', 'utf8')
+  git(mine, ['add', '-A'])
+  git(mine, ['commit', '-q', '-m', 'local commit'])
+  const myHead = git(mine, ['rev-parse', 'HEAD']).trim()
+
+  const strict = await gitPush(mine, { ...base, pushStrategy: 'fast-forward' })
+  assert.equal(strict.ok, false, '只允许快进时不该覆盖云端')
+  assert.match(strict.reason, /fast-forward|non-fast-forward|rejected/i)
+
+  const overwrite = await gitPush(mine, { ...base, pushStrategy: 'overwrite' })
+  assert.equal(overwrite.ok, true, overwrite.reason)
+  assert.equal(overwrite.overwrote, true, '应该报告覆盖了远端')
+  assert.ok(overwrite.backupRef.startsWith('refs/engram/overwritten/'), '覆盖前要留本地备份 ref')
+  assert.equal(git(bare, ['rev-parse', 'refs/heads/main']).trim(), myHead, '云端应该等于本地 HEAD')
+  assert.equal(git(mine, ['rev-parse', overwrite.backupRef]).trim(), otherHead, '备份 ref 指向被覆盖的旧远端 HEAD')
+})
 fs.rmSync(root, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
