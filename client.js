@@ -123,10 +123,8 @@ window.__ModuleLoader__.load({
 .eng-banner-bad { border-color: color-mix(in srgb, var(--eng-bad) 40%, var(--dsw-alias-border-l1)); color: var(--eng-bad); }
 .eng-detail { padding: 16px; }
 .eng-detail-title { font-size: 14px; font-weight: 650; margin: 0 0 4px; }
-/* 详情标题行：名字在左，管理胶囊贴右上角并与标题垂直居中 */
-.eng-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.eng-detail-head-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-@media (max-width: 720px) { .eng-detail-head { flex-wrap: wrap; } .eng-detail-head-actions { margin-left: 0; } }
+/* 技能详情上面的管理卡：两颗胶囊一行放这，详情卡在它下面 */
+.eng-skill-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; }
 .eng-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 10px; font-size: 12px; }
 .eng-kv dt { color: var(--dsw-alias-label-secondary); }
 .eng-kv dd { margin: 0; word-break: break-word; }
@@ -683,42 +681,41 @@ window.__ModuleLoader__.load({
               validation.data && validation.data.problems && validation.data.problems.length > 0
                 ? validation.data.problems.map((item) => h('div', { key: item.slug, className: 'eng-muted', style: { marginBottom: 6 } }, `${item.slug}：${item.problems.join('；')}`))
                 : h('div', { className: 'eng-muted' }, '全部健康')),
+            // 管理动作单独一张卡，压在详情卡上面（用户要的「详情盒子下沉、上面加个新盒子放按钮」）
+            current === null ? null : h('div', { className: 'eng-card eng-skill-actions' },
+              h(Button, {
+                small: true,
+                kind: current.globalRegistered ? undefined : 'primary',
+                title: current.globalRegistered
+                  ? '把链接从 DSH skills 目录里删掉，技能回到经验库排序'
+                  : '链接进 DSH 的 skills 目录：之后由 DSH 当普通技能加载，经验库不再排序它',
+                onClick: () => act(async () => {
+                  const out = await request('/skill-global', { method: 'POST', body: { slug: current.id, action: current.globalRegistered ? 'unregister' : 'register' } })
+                  return out.registered
+                    ? `已注册到全局：${out.targetDir}`
+                    : `已取消注册${out.removed ? '' : '（链接本来就不在了，已清理记录）'}`
+                }),
+              }, current.globalRegistered ? '取消注册' : '注册技能到全局'),
+              h(Button, {
+                small: true,
+                kind: 'danger',
+                title: confirmForget === current.id ? '再点一次就删掉这个技能目录' : '从经验库删除这个技能',
+                onClick: () => {
+                  if (confirmForget !== current.id) {
+                    setConfirmForget(current.id)
+                    return
+                  }
+                  act(async () => {
+                    const out = await request('/skill-forget', { method: 'POST', body: { slug: current.id } })
+                    setConfirmForget('')
+                    setSelected(null)
+                    return `已忘记技能：${out.slug}`
+                  })
+                },
+              }, confirmForget === current.id ? '确认忘记' : '忘记技能')),
             current === null ? h('div', { className: 'eng-card eng-detail-card' }, h(Empty, null, '选一个技能看正文')) : h('div', { className: 'eng-card eng-detail-card' },
               h('div', { className: 'eng-detail' },
-                // 标题行：名字在左，两颗管理胶囊贴右上角（用户指的就是这个位置），和标题垂直居中
-                h('div', { className: 'eng-detail-head' },
-                  h('h3', { className: 'eng-detail-title', style: { margin: 0, flex: '1 1 auto', minWidth: 0 } }, current.name),
-                  h('div', { className: 'eng-detail-head-actions' },
-                    h(Button, {
-                      small: true,
-                      kind: current.globalRegistered ? undefined : 'primary',
-                      title: current.globalRegistered
-                        ? '把链接从 DSH skills 目录里删掉，技能回到经验库排序'
-                        : '链接进 DSH 的 skills 目录：之后由 DSH 当普通技能加载，经验库不再排序它',
-                      onClick: () => act(async () => {
-                        const out = await request('/skill-global', { method: 'POST', body: { slug: current.id, action: current.globalRegistered ? 'unregister' : 'register' } })
-                        return out.registered
-                          ? `已注册到全局：${out.targetDir}`
-                          : `已取消注册${out.removed ? '' : '（链接本来就不在了，已清理记录）'}`
-                      }),
-                    }, current.globalRegistered ? '取消注册' : '注册技能到全局'),
-                    h(Button, {
-                      small: true,
-                      kind: 'danger',
-                      title: confirmForget === current.id ? '再点一次就删掉这个技能目录' : '从经验库删除这个技能',
-                      onClick: () => {
-                        if (confirmForget !== current.id) {
-                          setConfirmForget(current.id)
-                          return
-                        }
-                        act(async () => {
-                          const out = await request('/skill-forget', { method: 'POST', body: { slug: current.id } })
-                          setConfirmForget('')
-                          setSelected(null)
-                          return `已忘记技能：${out.slug}`
-                        })
-                      },
-                    }, confirmForget === current.id ? '确认忘记' : '忘记技能'))),
+                h('h3', { className: 'eng-detail-title' }, current.name),
                 h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
                 h(SkillMetaEditor, { key: current.id, row: current, onSaved: async (message) => { await skills.reload(); props.onChanged(); setNotice(message) } }),
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
