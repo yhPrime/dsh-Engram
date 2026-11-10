@@ -202,7 +202,29 @@ check('两者都空要报错', () => {
 })
 
 check('文件不存在要报错', () => {
-  assert.throws(() => readImportSource({ filePath: path.join(os.tmpdir(), 'definitely-not-here-123.md') }), /读不到这个文件/)
+  assert.throws(() => readImportSource({ filePath: path.join(os.tmpdir(), 'definitely-not-here-123.md') }), /读不到这个路径/)
+})
+
+check('直接给技能文件夹：读里面的 SKILL.md', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-dir-'))
+  try {
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: 文件夹技能\ndescription: 测试\n---\n\n# 何时用\n测试\n', 'utf8')
+    const out = readImportSource({ filePath: dir })
+    assert.equal(out.source, 'SKILL.md')
+    assert.match(out.text, /文件夹技能/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+check('文件夹里没有 SKILL.md：提示要放在根目录', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-dir-'))
+  try {
+    fs.mkdirSync(path.join(dir, 'scripts'))
+    assert.throws(() => readImportSource({ filePath: dir }), /这个文件夹里没有 SKILL\.md/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 console.log('== 端到端 ==')
