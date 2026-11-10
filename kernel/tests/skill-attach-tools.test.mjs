@@ -50,27 +50,27 @@ const seed = [
 ]
 for (const item of seed) call('exp_record', { ...item, type: '代码 / 插件' })
 
-await check('exp_consolidate：body 覆盖正文 + files 挂脚本 + install 装到 DSH', () => {
+await check('exp_consolidate：body 覆盖正文 + files 挂脚本，且不再往 DSH skills 装', () => {
   const customBody = '# 何时用\n用户要求把插件提交到插件市场时。\n\n## 做法\n1. 读 README\n2. 走 API 开 PR\n\n## 脚本\n见下方清单。'
   const result = call('exp_consolidate', {
     intent: '向 awesome-dsh-plugin 提交收录 PR',
     type: '插件市场收录申请测试',
     body: customBody,
     files: [scriptA],
+    // 旧参数：现在应被忽略（技能只进经验库）
     install: true,
   })
   assert.equal(result.action, 'created')
   const slug = result.slug
   assert.deepEqual(result.files, ['scripts/submit.py'])
-  assert.ok(result.installedPath && result.installedPath.includes(slug))
+  assert.equal(result.installedPath, undefined, '不该再返回 installedPath')
   const dir = path.join(dataDir, 'skills', slug)
   const md = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8')
   assert.match(md, /读 README/)
   assert.match(md, /## 脚本/)
   assert.match(md, /scripts\/submit\.py/)
   assert.equal(fs.existsSync(path.join(dir, 'scripts', 'submit.py')), true)
-  assert.equal(fs.existsSync(path.join(result.installedPath, 'SKILL.md')), true)
-  assert.equal(fs.existsSync(path.join(result.installedPath, 'scripts', 'submit.py')), true)
+  assert.equal(fs.existsSync(path.join(process.env.DSH_HOME, 'skills', slug)), false, '技能被复制进了 DSH skills 目录')
 })
 
 await check('exp_skill_attach：给已有技能追加脚本与正文', () => {

@@ -567,20 +567,14 @@ await check('POST /github：设备码没开始时轮询 400（不用 token）；
   assert.equal(bad.payload.error.code, 'bad-action')
 })
 
-await check('POST /skill-install：把技能装到指定目录；缺 slug 400', async () => {
+await check('技能归经验库自己管：/skill-install 已下线（不写 DSH skills 目录）', async () => {
   const dir = tempDir()
   createSkill(dir, { slug: 'install-demo', name: '安装演示', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })
   const source = createLiveSource({ dataDir: dir })
   const targetRoot = tempDir()
-  const ok = await call(source, '/skill-install', { method: 'POST', body: { slug: 'install-demo', targetRoot } })
-  assert.equal(ok.status, 200)
-  assert.equal(ok.payload.ok, true)
-  assert.equal(ok.payload.data.slug, 'install-demo')
-  assert.ok(ok.payload.data.targetDir.startsWith(targetRoot))
-  assert.equal(fs.existsSync(path.join(ok.payload.data.targetDir, 'SKILL.md')), true)
-  const bad = await call(source, '/skill-install', { method: 'POST', body: {} })
-  assert.equal(bad.status, 400)
-  assert.equal(bad.payload.error.code, 'slug-required')
+  const gone = await call(source, '/skill-install', { method: 'POST', body: { slug: 'install-demo', targetRoot } })
+  assert.equal(gone.status, 404, '还留着会往 DSH skills 写文件的接口')
+  assert.equal(fs.readdirSync(targetRoot).length, 0, '不该往目标目录写任何东西')
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)

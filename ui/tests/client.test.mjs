@@ -244,6 +244,12 @@ check('关系图配色：能从主题背景渐变里取颜色停靠点（自带�
   assert.equal(gradient.length, 2)
 })
 
+check('技能归经验库自己管：不往 DSH skills 注册', () => {
+  const source = loaded.source
+  assert.equal(source.includes('/skill-install'), false, '控制台还留着「装到 DSH」的接口调用')
+  assert.equal(/装到 DSH/u.test(source), false, '还留着「装到 DSH」按钮')
+  assert.ok(source.includes('不写进 DSH 的 skills 目录'), '没有说明技能归经验库自己管')
+})
 check('添加技能弹窗：拖拽区 + 固定安装位置，不再有路径输入', () => {
   const dialog = module.ImportSkillDialog
   assert.equal(typeof dialog, 'function', '弹窗没导出给测试')

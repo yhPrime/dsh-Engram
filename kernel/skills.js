@@ -397,30 +397,9 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
 }
 
 
-/** 把这个技能装成 DSH 真正可加载的技能（默认 ~/.dsh/skills/<slug>/）。 */
-export function exportSkillToDsh(dataDir, slug, options = {}) {
-  const skill = readSkillBySlug(dataDir, slug)
-  if (skill === null) throw new Error(`没有这个技能：${slug}`)
-  const dshHome = String(process.env.DSH_HOME || '').trim() === ''
-    ? path.join(os.homedir(), '.dsh')
-    : path.resolve(String(process.env.DSH_HOME).replace(/^~(?=$|[\\/])/u, os.homedir()))
-  const root = path.resolve(options.targetRoot || path.join(dshHome, 'skills'))
-  const target = path.join(root, skill.slug)
-  fs.mkdirSync(target, { recursive: true })
-  fs.copyFileSync(path.join(skill.dir, SKILL_FILENAME), path.join(target, SKILL_FILENAME))
-  for (const dirName of [SCRIPTS_DIRNAME, 'references', 'assets']) {
-    const from = path.join(skill.dir, dirName)
-    if (fs.existsSync(from) && fs.statSync(from).isDirectory()) {
-      const to = path.join(target, dirName)
-      fs.rmSync(to, { recursive: true, force: true })
-      copyTree(from, to)
-    }
-  }
-  skill.meta.installedAt = new Date().toISOString()
-  skill.meta.installedPath = target
-  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  return { slug, targetDir: target, installedAt: skill.meta.installedAt }
-}
+// 注意：这里**曾经**有 exportSkillToDsh（把技能复制到 ~/.dsh/skills/ 变成 DSH 已装技能）。
+// 已按用户口径删除：经验库的技能归经验库自己管，召回时才以技能形态交给模型；
+// 写进 DSH skills 目录会被其他技能管理插件当成"已安装技能"，不属于我们的边界。
 
 function copyTree(fromDir, toDir) {
   fs.mkdirSync(toDir, { recursive: true })

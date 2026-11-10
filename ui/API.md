@@ -386,10 +386,13 @@ body: `{ messageId, sessionId?, outcome?, type?, note? }` → `{ id, intent, act
 
 把会话里的一轮对话存成经验：按 `messageId` 读 `$DSH_HOME/sessions/**/session-<id>/session.v4.jsonl.zstd`（只读），取该条助手回复的正文作为「做法」、往前最近的用户输入作为「意图」，落一条 `outcome=unknown` 的经验（之后用 `exp_feedback` 回填）。只给 `messageId` 时会按最近修改的前 8 个会话反查。错误码：`ids-required`（缺 messageId）、`turn-not-found`（会话里找不到该消息 id）。
 
-### `POST /skill-install`
-body: `{ slug, targetRoot? }` → `{ slug, targetDir, installedAt }`：把 `<dataDir>/skills/<slug>/` 复制成 DSH 可加载的真技能（默认 `$DSH_HOME/skills/<slug>/`；`targetRoot` 仅供测试/自定义）。错误码：`slug-required`。
+### 技能不写进 DSH skills 目录（边界）
 
-> 技能现在可以带脚本：`<skill>/scripts/` 下的附件会登记在 `skill.json` 的 `files`，并在 `SKILL.md` 里维护「## 脚本」清单；工具侧用 `exp_consolidate` 的 `body`/`files`/`install` 或 `exp_skill_attach` 补齐。
+`<dataDir>/skills/<slug>/` 只归经验库自己管：**不**复制到 `$DSH_HOME/skills/`，也不交给宿主的技能管理插件当「已安装技能」。
+召回时由 `exp_recall` 按需把技能正文作为结果返回——用到它的时候它才是技能，平时它只是经验库里的一份资产。
+因此没有 `POST /skill-install`（已下线），工具的 `exp_consolidate` / `exp_skill_attach` 也不再有 `install` 参数。缺 slug 的报错码 `slug-required` 现在只由 `/skill-feedback` 使用。
+
+> 技能可以带脚本：`<skill>/scripts/` 下的附件会登记在 `skill.json` 的 `files`，并在 `SKILL.md` 里维护「## 脚本」清单；用 `exp_consolidate` 的 `body`/`files` 或 `exp_skill_attach` 补齐。
 
 ### `GET /sync`
 → Git 备份状态：

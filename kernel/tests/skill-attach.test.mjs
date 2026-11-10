@@ -8,7 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const skills = await import('../skills.js')
-const { attachSkillFiles, createSkill, exportSkillToDsh, listSkills, readSkillBySlug, validateAllSkills } = skills
+const { attachSkillFiles, createSkill, listSkills, readSkillBySlug, validateAllSkills } = skills
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-skill-'))
 const dataDir = path.join(root, 'exp')
@@ -98,15 +98,10 @@ await check('不存在的技能：明确报错', () => {
   assert.throws(() => attachSkillFiles(dataDir, 'no-such-skill', [scriptA]), /没有这个技能/)
 })
 
-await check('装成 DSH 技能：SKILL.md + scripts/ 复制到 $DSH_HOME/skills/<slug>/', () => {
-  const exported = exportSkillToDsh(dataDir, 'demo-skill')
-  assert.equal(exported.targetDir, path.join(process.env.DSH_HOME, 'skills', 'demo-skill'))
-  const target = exported.targetDir
-  assert.equal(fs.existsSync(path.join(target, 'SKILL.md')), true)
-  assert.equal(fs.existsSync(path.join(target, 'scripts', 'submit_pr.py')), true)
-  const meta = readSkillBySlug(dataDir, 'demo-skill').meta
-  assert.equal(meta.installedPath, target)
-  assert.ok(meta.installedAt)
+await check('技能不装进 DSH：skills 模块不再暴露 exportSkillToDsh', () => {
+  assert.equal(typeof skills.exportSkillToDsh, 'undefined', '还留着往 $DSH_HOME/skills 复制的导出函数')
+  const target = path.join(process.env.DSH_HOME, 'skills', 'demo-skill')
+  assert.equal(fs.existsSync(target), false, '不该在 DSH skills 目录里留下副本')
 })
 
 fs.rmSync(root, { recursive: true, force: true })
