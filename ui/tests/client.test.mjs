@@ -229,6 +229,27 @@ check('详情面板：未选中 / 读取中 / 请求失败三种状态都有可�
   assert.ok(bad.includes('没有这条经验'), '错误没有显示出来')
 })
 
+check('设置页：二级菜单分屏，默认只露出「存储位置」一档', () => {
+  const settings = module.Settings
+  assert.equal(typeof settings, 'function', '设置页没有导出给测试')
+  const serialized = JSON.stringify(settings({}), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  for (const label of ['存储位置', '备份与账号', '内核参数', '界面与关系图', '维护']) {
+    assert.ok(serialized.includes(label), `缺少二级菜单：${label}`)
+  }
+  assert.ok(serialized.includes('恢复默认'), '存储位置的操作没渲染')
+  assert.equal(serialized.includes('每轮提示段'), false, '内核参数不该在存储页露出')
+  assert.equal(serialized.includes('关系图主题'), false, '界面参数不该在存储页露出')
+  assert.equal(serialized.includes('用 GitHub 登录'), false, '备份/登录不该在存储页露出')
+})
+check('设置页：每一档都能单独渲染出自己的内容', () => {
+  const render = (section) => JSON.stringify(module.Settings({ section }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(render('backup').includes('Git 仓库备份'))
+  assert.ok(render('backup').includes('用 GitHub 登录'))
+  assert.ok(render('kernel').includes('内核算力参数保存后动态生效'))
+  assert.ok(render('ui').includes('保存数据源'))
+  assert.ok(render('maintenance').includes('技能校验'))
+  assert.ok(render('maintenance').includes('运行信息'))
+})
 check('主面板对空数据渲染也不抛错，且标题是「经验库」', () => {
   const panel = registrations.find((entry) => entry.registration.name === 'main').component
   const tree = panel({})
