@@ -141,6 +141,7 @@ function skillRowFromEngine(skill) {
     typeName: meta.typeName || '',
     context: meta.context,
     triggers: meta.triggers,
+    order: Number(meta.order) || 0,
     files: Array.isArray(meta.files) ? meta.files.map((item) => (item && item.path) || '').filter((item) => item !== '') : [],
     uses: confidence.uses,
     helped: confidence.helped,
@@ -236,7 +237,7 @@ export function createLiveSource(config = {}) {
 
     skills() {
       if (engine === null) return []
-      return engine.listSkills().map(skillRowFromEngine).sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)) || a.name.localeCompare(b.name, 'zh'))
+      return engine.listSkills().map(skillRowFromEngine).sort((a, b) => (Number(b.order) || 0) - (Number(a.order) || 0) || String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)) || a.name.localeCompare(b.name, 'zh'))
     },
 
     feedback(id, result) {

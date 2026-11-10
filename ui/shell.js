@@ -33,6 +33,7 @@ import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEng
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { exportSkillToDsh } from '../kernel/skills.js'
+import { importSkill } from '../kernel/import-skill.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
@@ -327,6 +328,26 @@ export function buildConsolidate(source, body = {}) {
   return source.consolidate({ intent, context: Array.isArray(body.context) ? body.context.map(String) : [] })
 }
 
+/**
+ * `/skills/import` 的 data：把一条外部技能文本导进来。
+ *
+ * 分类 / 标签 / 排序由 `deps.getLlm` / `deps.getRoute` 提供的临时模型会话算；
+ * 宿主没有模型服务时 kernel 会退回本地关键词归类，并如实回 classifier='local'。
+ * 所以前端必须把 classifier 与 note 原样展示，不能假装算过。
+ */
+export async function buildImportSkill(source, body = {}, deps = {}) {
+  if (source.mode !== 'live') throw codedError('unsupported', '示例数据不支持导入技能')
+  const read = source.read() || {}
+  const dataDir = String(read.dataDir || '')
+  if (dataDir === '') throw codedError('no-data-dir', '没有数据目录，无法写入技能')
+  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
+  const typeNames = typesOf(store).map((type) => String(type.name || '')).filter((name) => name !== '')
+  const filePath = String(body.path || '').trim()
+  const content = typeof body.content === 'string' ? body.content : ''
+  if (filePath === '' && content.trim() === '') throw codedError('source-required', '要么给 SKILL.md 路径，要么粘贴正文')
+  return importSkill({ dataDir, filePath, content, typeNames, deps })
+}
+
 export function buildSkillFeedback(source, body = {}) {
   const slug = String(body.slug || '').trim()
   const result = String(body.result || '').trim().toLowerCase()
@@ -436,7 +457,7 @@ async function readBody(req) {
 }
 
 /** 处理一条请求；测试可直接调用（不必起宿主）。 */
-export async function handleRequest(req, res, source) {
+export async function handleRequest(req, res, source, deps = {}) {
   try {
     const url = new URL(req.url || '/', 'http://dsh.internal')
     const route = url.pathname.slice(API_PREFIX.length) || '/'
@@ -531,6 +552,10 @@ export async function handleRequest(req, res, source) {
     if (route === '/consolidate') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       return json(res, 200, { ok: true, data: buildConsolidate(active, await readBody(req)) })
+    }
+    if (route === '/skills/import') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      return json(res, 200, { ok: true, data: await buildImportSkill(active, await readBody(req), deps) })
     }
     if (route === '/skill-feedback') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
@@ -762,6 +787,6 @@ export async function handleRequest(req, res, source) {
  * @param {object} config - 插件行 config（`source` / `dataDir`）。
  * @returns {(req: any, res: any) => Promise<void>}
  */
-export function createApi(config = {}) {
-  return (req, res) => handleRequest(req, res, createSource(config))
+export function createApi(config = {}, deps = {}) {
+  return (req, res) => handleRequest(req, res, createSource(config), deps)
 }
