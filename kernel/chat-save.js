@@ -10,6 +10,8 @@ import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
+const CHAT_SAVE_REV = 'v3'
+
 import { readStore, upsertExperience, writeStore } from './store.js'
 
 function dshHome() {
@@ -19,11 +21,13 @@ function dshHome() {
 
 /** 找到 sessionId 对应的会话文件（可能在某个工作区子目录下）。 */
 export function findSessionFile(sessionId, options = {}) {
-  const id = String(sessionId || '').trim()
-  if (id === '') return ''
+  const raw = String(sessionId || '').trim()
+  if (raw === '') return ''
+  const bare = raw.startsWith('session-') ? raw.slice('session-'.length) : raw
+  const names = [...new Set([raw, bare, `session-${bare}`].filter((name) => name !== ''))]
   const root = path.resolve(options.sessionsRoot || path.join(dshHome(), 'sessions'))
-  const candidates = [path.join(root, id)]
-  if (!id.startsWith('session-')) candidates.push(path.join(root, `session-${id}`))
+  const candidates = []
+  for (const name of names) candidates.push(path.join(root, name))
   let workspaces = []
   try {
     workspaces = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory())
@@ -31,8 +35,7 @@ export function findSessionFile(sessionId, options = {}) {
     workspaces = []
   }
   for (const workspace of workspaces) {
-    candidates.push(path.join(root, workspace.name, id))
-    if (!id.startsWith('session-')) candidates.push(path.join(root, workspace.name, `session-${id}`))
+    for (const name of names) candidates.push(path.join(root, workspace.name, name))
   }
   for (const dir of candidates) {
     for (const name of ['session.v4.jsonl.zstd', 'session.v4.jsonl', 'session.jsonl.zstd', 'session.jsonl']) {
@@ -45,9 +48,18 @@ export function findSessionFile(sessionId, options = {}) {
 
 function readSessionLines(file) {
   const buffer = fs.readFileSync(file)
-  const text = file.endsWith('.zstd')
-    ? zlib.zstdDecompressSync(buffer).toString('utf8')
-    : buffer.toString('utf8')
+  let text = ''
+  if (file.endsWith('.zstd')) {
+    if (typeof zlib.zstdDecompressSync !== 'function') return []
+    try {
+      text = zlib.zstdDecompressSync(buffer).toString('utf8')
+    } catch {
+      // 文件正在追加、当前帧不完整：本次读不到就当空文件，调用方会重试。
+      return []
+    }
+  } else {
+    text = buffer.toString('utf8')
+  }
   const out = []
   for (const line of text.split(/\r?\n/u)) {
     if (line.trim() === '') continue
@@ -109,6 +121,11 @@ export function readTurnByMessage(sessionId, messageId, options = {}) {
   }
 }
 
+function sleepSync(ms) {
+  const until = Date.now() + ms
+  while (Date.now() < until) { /* 忙等，保持同步 API */ }
+}
+
 function clip(text, max) {
   const value = String(text || '').replace(/\s+/gu, ' ').trim()
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`
@@ -123,7 +140,20 @@ export function saveTurnAsExperience(dataDir, input = {}, options = {}) {
   const messageId = String(input.messageId || '').trim()
   let turn = readTurnByMessage(sessionId, messageId, options)
   if (turn === null) turn = readTurnByMessageId(messageId, options)
-  if (turn === null) throw new Error('找不到这条消息（会话文件不存在或消息 id 不匹配）')
+  if (turn === null) {
+    // 会话文件是异步追加的：点击瞬间可能还没落盘，短暂重试几次。
+    const attempts = Math.max(1, Math.trunc(Number(options.attempts) || 4))
+    for (let index = 0; index < attempts && turn === null; index += 1) {
+      if (index > 0) sleepSync(250)
+      turn = readTurnByMessage(sessionId, messageId, options)
+      if (turn === null) turn = readTurnByMessageId(messageId, options)
+    }
+  }
+  if (turn === null) {
+    const file = options.sessionFile || findSessionFile(sessionId, options)
+    const root = options.sessionsRoot || path.join(dshHome(), 'sessions')
+    throw new Error(`[${CHAT_SAVE_REV}] 找不到这条消息：session=${sessionId || '(空)'} mid=${messageId} file=${file || '(没找到会话文件)'} root=${root} zstd=${typeof zlib.zstdDecompressSync}`)
+  }
   const outcome = String(input.outcome || 'unknown')
   const intent = clip(turn.userText || input.intent || '（未识别到用户输入）', 200)
   const action = clip(turn.assistantText || '（助手回复为空）', 600)
@@ -183,4 +213,47 @@ export function readTurnByMessageId(messageId, options = {}) {
     if (turn !== null) return turn
   }
   return null
+}
+/** 只读自检：会话根、最近会话文件、某个 messageId 能否扫到。 */
+export function probeSessions(messageId = '', options = {}) {
+  const root = path.resolve(options.sessionsRoot || path.join(dshHome(), 'sessions'))
+  const out = {
+    root,
+    rootExists: fs.existsSync(root),
+    zstd: typeof zlib.zstdDecompressSync,
+    dshHomeEnv: process.env.DSH_HOME || '(unset)',
+    sessions: 0,
+    newest: [],
+    found: '',
+    error: '',
+  }
+  const dirs = []
+  try {
+    for (const workspace of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!workspace.isDirectory()) continue
+      const base = path.join(root, workspace.name)
+      for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const file = path.join(base, entry.name, 'session.v4.jsonl.zstd')
+        if (!fs.existsSync(file)) continue
+        dirs.push({ dir: path.join(base, entry.name), file, size: fs.statSync(file).size, mtime: fs.statSync(file).mtimeMs })
+      }
+    }
+  } catch (error) {
+    out.error = error && error.message ? error.message : String(error)
+  }
+  dirs.sort((left, right) => right.mtime - left.mtime)
+  out.sessions = dirs.length
+  out.newest = dirs.slice(0, 5).map((item) => ({ dir: item.dir, size: item.size, mtime: new Date(item.mtime).toISOString() }))
+  const id = String(messageId || '').trim()
+  if (id !== '') {
+    for (const item of dirs.slice(0, 30)) {
+      const hit = readSessionLines(item.file).some((event) => event && event.data && event.data.message && String(event.data.message.id || '') === id)
+      if (hit) {
+        out.found = item.file
+        break
+      }
+    }
+  }
+  return out
 }

@@ -33,7 +33,7 @@ import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEng
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { exportSkillToDsh } from '../kernel/skills.js'
-import { findSessionFile, saveTurnAsExperience } from '../kernel/chat-save.js'
+import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -417,8 +417,8 @@ function json(res, status, payload) {
   res.end(body)
 }
 
-function fail(res, status, code, message) {
-  return json(res, status, { ok: false, error: { code, message } })
+function fail(res, status, code, message, details) {
+  return json(res, status, { ok: false, error: { code, message, ...(details === undefined ? {} : { details }) } })
 }
 
 /** 读请求体（上限 1MB）。 */
@@ -574,6 +574,10 @@ export async function handleRequest(req, res, source) {
       if (action === 'pull') return json(res, 200, { ok: true, data: await gitPull(dataDir, config) })
       return json(res, 200, { ok: true, data: await gitPush(dataDir, config, { message: body && body.message }) })
     }
+    if (route === '/chat-save-probe') {
+      const mid = String((req.url || '').split('mid=')[1] || '').split('&')[0]
+      return json(res, 200, { ok: true, data: probeSessions(mid === '' ? '' : decodeURIComponent(mid)) })
+    }
     if (route === '/chat-save') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       const body = await readBody(req)
@@ -581,6 +585,13 @@ export async function handleRequest(req, res, source) {
       const messageId = String((body && body.messageId) || '').trim()
       if (messageId === '') return fail(res, 400, 'ids-required', '缺少 messageId')
       const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      try {
+        const logFile = path.join(String(process.env.DSH_HOME || '').trim() === '' ? path.join(process.env.USERPROFILE || '', '.dsh') : String(process.env.DSH_HOME), 'engram', 'chat-save.log')
+        fs.mkdirSync(path.dirname(logFile), { recursive: true })
+        fs.appendFileSync(logFile, `${new Date().toISOString()} sessionId=${sessionId || '(空)'} messageId=${messageId}\n`)
+      } catch {
+        // 日志失败不影响保存
+      }
       let saved
       try {
         saved = saveTurnAsExperience(dataDir, {
