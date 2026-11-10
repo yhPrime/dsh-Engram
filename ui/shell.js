@@ -344,7 +344,7 @@ export async function buildImportSkill(source, body = {}, deps = {}) {
   const typeNames = typesOf(store).map((type) => String(type.name || '')).filter((name) => name !== '')
   const filePath = String(body.path || '').trim()
   const content = typeof body.content === 'string' ? body.content : ''
-  if (filePath === '' && content.trim() === '') throw codedError('source-required', '要么给 SKILL.md 路径，要么粘贴正文')
+  if (filePath === '' && content.trim() === '') throw codedError('source-required', '要么拖入/选择 SKILL.md，要么粘贴正文')
   return importSkill({ dataDir, filePath, content, typeNames, deps })
 }
 

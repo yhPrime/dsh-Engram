@@ -244,6 +244,22 @@ check('关系图配色：能从主题背景渐变里取颜色停靠点（自带�
   assert.equal(gradient.length, 2)
 })
 
+check('添加技能弹窗：拖拽区 + 固定安装位置，不再有路径输入', () => {
+  const dialog = module.ImportSkillDialog
+  assert.equal(typeof dialog, 'function', '弹窗没导出给测试')
+  const tree = JSON.stringify(dialog({ onClose: () => {}, onImported: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  for (const text of ['拖拽技能到此处', '选择文件夹', '选择文件', '安装位置', '技能文件夹需包含 SKILL.md', '取消', '安装']) {
+    assert.ok(tree.includes(text), `弹窗缺少：${text}`)
+  }
+  assert.equal(tree.includes('SKILL.md 路径（绝对路径）'), false, '还有路径输入框')
+  assert.equal(tree.includes('C:\\\\Users\\\\you\\\\my-skill'), false, '路径占位符还在')
+  assert.ok(tree.includes('onDrop') || tree.includes('[fn]'), '拖拽事件没挂上')
+  assert.ok(tree.includes('webkitdirectory'), '没有「选择文件夹」的目录选择器')
+  assert.ok(tree.includes('exp/skills/'), '没写固定安装位置')
+  const source = loaded.source
+  assert.ok(source.includes('findSkillFileInEntry'), '拖文件夹时没有往下找 SKILL.md')
+  assert.ok(source.includes('浏览器里解不开 zip'), 'zip 没有给出可理解的提示')
+})
 check('关系图节点是「中心向外发光」而不是球体高光', () => {
   const source = loaded.source
   assert.equal(source.includes('createRadialGradient(-screenRadius * 0.35'), false, '还在用左上偏移的球体高光')

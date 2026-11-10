@@ -56,6 +56,18 @@ window.__ModuleLoader__.load({
 .eng-modal-warn { margin: 12px 0 14px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
 .eng-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+/* 「添加技能」的拖拽落区：虚线框 + 中间提示，拖进来时高亮 */
+.eng-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; margin: 14px 0 12px; padding: 26px 18px; border: 1.5px dashed var(--dsw-alias-border-l2, var(--dsw-alias-border-l1)); border-radius: 14px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent); text-align: center; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.eng-dropzone:hover { border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, var(--dsw-alias-border-l2, var(--dsw-alias-border-l1))); }
+.eng-dropzone[data-dragging="true"] { border-color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
+.eng-dropzone-title { font-size: 15px; font-weight: 650; letter-spacing: .2px; }
+.eng-dropzone-sub { font-size: 12px; line-height: 1.7; color: var(--dsw-alias-label-secondary); }
+.eng-dropzone-actions { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.eng-dropzone-link { padding: 0; border: 0; background: none; font: inherit; font-size: 12px; color: var(--dsw-alias-brand-primary); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.eng-dropzone-file { margin-top: 4px; padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--dsw-alias-label-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent); }
+.eng-fixed-target { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; }
+.eng-fixed-target code { padding: 3px 8px; border-radius: 6px; background: var(--dsw-alias-interactive-bg-hover); }
+.eng-req { margin: 10px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.9; color: var(--dsw-alias-label-secondary); }
 .eng-content { flex: 1 1 auto; width: 100%; max-width: min(1180px, 100%); min-height: 0; margin: 0 auto; padding: clamp(12px, 2.4vw, 24px); overflow-y: auto; overflow-x: auto; }
 .eng-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .eng-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
@@ -643,24 +655,110 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 「添加技能」：从本地 SKILL.md 或粘贴正文导入一条技能。
+     * 在拖进来的文件夹里找 SKILL.md（浏览器没有路径能力，只能顺着 FileSystemEntry 往下钻）。
+     * 深度限制 4 层，避免用户把整个盘拖进来卡死。
+     */
+    async function findSkillFileInEntry(entry, depth = 0) {
+      if (entry === null || entry === undefined) return null
+      if (entry.isFile) {
+        const file = await new Promise((resolve) => entry.file(resolve, () => resolve(null)))
+        if (!file) return null
+        return /^skill\.md$/iu.test(file.name) || /\.md$/iu.test(file.name) ? file : null
+      }
+      if (!entry.isDirectory || depth >= 4) return null
+      const reader = entry.createReader()
+      const readBatch = () => new Promise((resolve) => reader.readEntries(resolve, () => resolve([])))
+      let batch = await readBatch()
+      while (batch.length > 0) {
+        for (const child of batch) {
+          const found = await findSkillFileInEntry(child, depth + 1)
+          if (found !== null) return found
+        }
+        batch = await readBatch()
+      }
+      return null
+    }
+
+    /**
+     * 「添加技能」：把外部技能拖进来 / 选文件夹 / 选 SKILL.md 导入。
+     *
+     * 安装位置是固定的（经验库 `.exp/skills/<slug>/`），所以不再让用户填路径——
+     * 路径框除了制造「填了也没用」的误会没有别的用。浏览器读不到任意路径，
+     * 只能读用户亲手选/拖的文件，因此入口做成拖拽区 + 两个选择器。
      *
      * 分类 / 标签 / 排序由宿主开一个**临时模型会话**算，这会真实产生一次模型调用；
-     * 宿主没有模型服务时退回本地关键词归类，界面上必须如实说明是哪一种——
-     * 用户有权知道这次导入到底花没花模型调用。
+     * 宿主没有模型服务时退回本地关键词归类，界面上必须如实说明是哪一种。
      */
     function ImportSkillDialog(props) {
-      const [filePath, setFilePath] = useState('')
       const [content, setContent] = useState('')
+      const [fileName, setFileName] = useState('')
+      const [dragging, setDragging] = useState(false)
+      const [showPaste, setShowPaste] = useState(false)
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
       const [result, setResult] = useState(null)
-      const canSubmit = busy === false && (filePath.trim() !== '' || content.trim() !== '')
+      const fileInputRef = useRef(null)
+      const dirInputRef = useRef(null)
+      const canSubmit = busy === false && content.trim() !== ''
+      const takeFile = async (file) => {
+        if (file === null || file === undefined) return
+        const name = String(file.name || '')
+        if (/\.zip$/iu.test(name)) {
+          setError('浏览器里解不开 zip：解压后选「技能文件夹」，或直接选里面的 SKILL.md')
+          return
+        }
+        if (!/\.md$/iu.test(name)) {
+          setError(`只认 SKILL.md / .md，收到的是：${name}`)
+          return
+        }
+        try {
+          const text = await file.text()
+          if (String(text || '').trim() === '') {
+            setError('这个文件是空的')
+            return
+          }
+          setContent(text)
+          setFileName(name)
+          setError('')
+        } catch (caught) {
+          setError(`读取失败：${caught && caught.message ? caught.message : String(caught)}`)
+        }
+      }
+      const onDrop = async (event) => {
+        event.preventDefault()
+        setDragging(false)
+        const items = (event.dataTransfer && event.dataTransfer.items) || []
+        const files = []
+        for (const item of items) {
+          if (item === null || item.kind !== 'file') continue
+          const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null
+          if (entry !== null && entry !== undefined && entry.isDirectory) {
+            const found = await findSkillFileInEntry(entry)
+            if (found !== null) {
+              await takeFile(found)
+              return
+            }
+            continue
+          }
+          const file = item.getAsFile()
+          if (file !== null) files.push(file)
+        }
+        const picked = files.find((file) => /^skill\.md$/iu.test(file.name)) || files.find((file) => /\.md$/iu.test(file.name)) || files[0]
+        if (picked === undefined) setError('没找到 SKILL.md：把技能文件夹或 SKILL.md 拖进来')
+        else await takeFile(picked)
+      }
+      const onPicked = async (event) => {
+        const list = Array.from((event.target && event.target.files) || [])
+        // 选的是整个文件夹时，文件列表里第一个不一定是 SKILL.md，先挑它
+        const picked = list.find((file) => /^skill\.md$/iu.test(file.name)) || list.find((file) => /\.md$/iu.test(file.name)) || list[0]
+        if (picked !== undefined) await takeFile(picked)
+        if (event.target) event.target.value = ''
+      }
       const submit = async () => {
         setBusy(true)
         setError('')
         try {
-          const out = await request('/skills/import', { method: 'POST', body: { path: filePath.trim(), content } })
+          const out = await request('/skills/import', { method: 'POST', body: { content } })
           setResult(out)
           props.onImported(out)
         } catch (caught) {
@@ -672,14 +770,30 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加技能' },
         h('div', { className: 'eng-modal' },
           h('h3', { className: 'eng-modal-title' }, '添加技能'),
-          h('div', { className: 'eng-muted', style: { fontSize: 12 } }, '从本地 SKILL.md 或粘贴正文导入；落库后归到经验库的 .exp/skills/ 下。'),
+          h('div', { className: 'eng-dropzone', 'data-dragging': dragging ? 'true' : 'false', role: 'button', tabIndex: 0, title: '拖入技能文件夹或 SKILL.md', onClick: () => { if (fileInputRef.current) fileInputRef.current.click() }, onDragOver: (event) => { event.preventDefault(); setDragging(true) }, onDragLeave: () => setDragging(false), onDrop: onDrop },
+            h('div', { className: 'eng-dropzone-title' }, '拖拽技能到此处'),
+            h('div', { className: 'eng-dropzone-sub' }, '支持技能文件夹或单个 SKILL.md'),
+            h('div', { className: 'eng-dropzone-actions' },
+              h('button', { type: 'button', className: 'eng-dropzone-link', onClick: (event) => { event.stopPropagation(); if (dirInputRef.current) dirInputRef.current.click() } }, '选择文件夹'),
+              h('span', { className: 'eng-muted' }, '/'),
+              h('button', { type: 'button', className: 'eng-dropzone-link', onClick: (event) => { event.stopPropagation(); if (fileInputRef.current) fileInputRef.current.click() } }, '选择文件')),
+            fileName === '' ? null : h('div', { className: 'eng-dropzone-file' }, `已选择：${fileName}（${content.length} 字）`)),
+          h('input', { ref: fileInputRef, type: 'file', accept: '.md,.markdown,text/markdown', style: { display: 'none' }, onChange: onPicked }),
+          h('input', { ref: dirInputRef, type: 'file', webkitdirectory: '', directory: '', multiple: true, style: { display: 'none' }, onChange: onPicked }),
+          h('div', { className: 'eng-fixed-target' },
+            h('span', { className: 'eng-muted' }, '安装位置'),
+            h('code', { className: 'eng-mono', style: { fontSize: 12 } }, '经验库 .exp/skills/<slug>/（固定，不用填）')),
+          h('ul', { className: 'eng-req' },
+            h('li', null, '技能文件夹需包含 SKILL.md'),
+            h('li', null, 'SKILL.md 需带 YAML 的 name 与 description'),
+            h('li', null, '导入只复制正文；scripts/ 等附件可在导入后用 exp_skill_attach 挂上'),
+            h('li', null, '原始来源不会被改动')),
+          showPaste
+            ? h('textarea', { className: 'eng-textarea', rows: 8, style: { marginTop: 10 }, value: content, onChange: (event) => { setContent(event.target.value); setFileName('') }, placeholder: '--- name: 我的技能 description: 一句话说明 --- 再接正文' })
+            : h('button', { type: 'button', className: 'eng-dropzone-link', style: { marginTop: 8, fontSize: 12 }, onClick: () => setShowPaste(true) }, '没有文件？直接粘贴 SKILL.md 正文'),
           h('div', { className: 'eng-modal-warn' },
             h('div', null, h('b', null, '会产生额外消耗：'), '导入时会开一个临时模型会话读一遍正文，算出分类、标签、排序分——这是一次真实的模型调用（按当前模型计费）。'),
             h('div', { style: { marginTop: 4 } }, '宿主没有可用的模型服务时会退回本地关键词归类，那种情况不消耗模型，结果里会标明「本地」。')),
-          h(Field, { label: 'SKILL.md 路径（绝对路径）' },
-            h('input', { className: 'eng-input', value: filePath, placeholder: 'C:\\Users\\you\\my-skill\\SKILL.md', onChange: (event) => setFilePath(event.target.value) })),
-          h(Field, { label: '或者粘贴技能正文', tip: '路径优先：填了路径就忽略下面的正文' },
-            h('textarea', { className: 'eng-textarea', rows: 8, value: content, onChange: (event) => setContent(event.target.value), placeholder: '--- name: 我的技能 description: 一句话说明 --- 再接正文' })),
           error ? h(Banner, { bad: true }, error) : null,
           result
             ? h('div', { className: 'eng-card', style: { padding: 12, marginTop: 12 } },
@@ -692,7 +806,7 @@ window.__ModuleLoader__.load({
             : null,
           h('div', { className: 'eng-modal-actions' },
             h(Button, { small: true, onClick: props.onClose }, result ? '关闭' : '取消'),
-            h(Button, { small: true, kind: 'primary', disabled: !canSubmit, onClick: submit }, busy ? '导入中…（会调一次模型）' : '导入'))))
+            h(Button, { small: true, kind: 'primary', disabled: !canSubmit, onClick: submit }, busy ? '安装中…（会调一次模型）' : '安装'))))
     }
 
     function Types(props) {
@@ -2212,6 +2326,7 @@ window.__ModuleLoader__.load({
     return {
       // 暴露给测试：详情面板/设置页/各页面都要能单独渲染，防「点击后空白」「设置页堆成一坨」「整页滚」回归。
       DetailPane,
+      ImportSkillDialog,
       Console,
       Settings,
       Overview,
