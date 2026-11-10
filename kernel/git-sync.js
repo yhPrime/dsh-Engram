@@ -194,16 +194,22 @@ export async function gitPush(dataDir, config = {}, options = {}) {
   const remote = await runGit(['config', '--get', 'remote.origin.url'], { cwd: dataDir })
   const repoUrl = remote.code === 0 ? remote.stdout.trim() : resolved.repoUrl
   if (repoUrl === '') return { ok: false, action: 'push', committed, pushed: false, reason: '没有配置远端仓库（设置里填 repoUrl 或先初始化）' }
-  const push = await runGit([...tokenArgs(repoUrl, resolved.token), 'push', '-u', 'origin', branch], { cwd: dataDir })
+  // 推 HEAD，不推「本地同名分支」：本地分支可能叫 master、配置里的目标分支叫 main
+  // （新建仓库默认 main），直接 `push origin main` 会报 src refspec does not match any。
+  const push = await runGit([...tokenArgs(repoUrl, resolved.token), 'push', '-u', 'origin', `HEAD:refs/heads/${branch}`], { cwd: dataDir })
   if (push.code !== 0) {
     return { ok: false, action: 'push', committed, pushed: false, reason: mask(tail(push.stderr || push.stdout), resolved.token) }
   }
   const head = await runGit(['rev-parse', '--short', 'HEAD'], { cwd: dataDir })
+  // 用 HEAD:refs/heads/<branch> 推上去时 git 不一定给本地分支建上游，这里显式补一次
+  // （失败也只是少了 upstream，不影响备份本身）。
+  await runGit(['branch', `--set-upstream-to=origin/${branch}`], { cwd: dataDir })
   return {
     ok: true,
     action: 'push',
     committed,
     pushed: true,
+    remoteBranch: branch,
     commit: head.code === 0 ? head.stdout.trim() : '',
     message,
     reason: committed ? '' : '没有新的改动，已是最新',
@@ -220,7 +226,8 @@ export async function gitPull(dataDir, config = {}) {
   const remote = await runGit(['config', '--get', 'remote.origin.url'], { cwd: dataDir })
   const repoUrl = remote.code === 0 ? remote.stdout.trim() : resolved.repoUrl
   if (repoUrl === '') return { ok: false, action: 'pull', reason: '没有配置远端仓库' }
-  const fetch = await runGit([...tokenArgs(repoUrl, resolved.token), 'fetch', '--quiet', 'origin', branch], { cwd: dataDir })
+  // 显式写目标 ref：只写 fetch origin <branch> 时不一定更新 origin/<branch>，后面 merge 就会找不到
+  const fetch = await runGit([...tokenArgs(repoUrl, resolved.token), 'fetch', '--quiet', 'origin', `${branch}:refs/remotes/origin/${branch}`], { cwd: dataDir })
   if (fetch.code !== 0) return { ok: false, action: 'pull', reason: mask(tail(fetch.stderr || fetch.stdout), resolved.token) }
   const merge = await runGit(['merge', '--ff-only', '--quiet', `origin/${branch}`], { cwd: dataDir })
   if (merge.code !== 0) return { ok: false, action: 'pull', reason: `需要手动合并（本地有独立提交）：${mask(tail(merge.stderr || merge.stdout), resolved.token)}` }
