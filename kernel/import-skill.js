@@ -266,9 +266,26 @@ export function readImportSource({ filePath = '', content = '' } = {}) {
     try {
       stat = fs.statSync(target)
     } catch {
-      throw new Error(`读不到这个文件：${target}`)
+      throw new Error(`读不到这个路径：${target}`)
     }
-    if (!stat.isFile()) throw new Error(`不是一个文件：${target}`)
+    // 允许直接给「技能文件夹」：人想的永远是文件夹，不是里面那个文件名。
+    if (stat.isDirectory()) {
+      let names = []
+      try {
+        names = fs.readdirSync(target)
+      } catch {
+        names = []
+      }
+      const found = names.find((name) => /^skill\.md$/iu.test(name))
+      if (found === undefined) {
+        throw new Error(`这个文件夹里没有 SKILL.md：${target}（技能文件夹的根目录要放 SKILL.md）`)
+      }
+      const file = path.join(target, found)
+      const fileStat = fs.statSync(file)
+      if (fileStat.size > MAX_IMPORT_BYTES) throw new Error(`文件太大（${fileStat.size} 字节），上限 ${MAX_IMPORT_BYTES}`)
+      return { text: fs.readFileSync(file, 'utf8'), source: found }
+    }
+    if (!stat.isFile()) throw new Error(`不是一个文件或文件夹：${target}`)
     if (stat.size > MAX_IMPORT_BYTES) throw new Error(`文件太大（${stat.size} 字节），上限 ${MAX_IMPORT_BYTES}`)
     return { text: fs.readFileSync(target, 'utf8'), source: path.basename(target) }
   }
