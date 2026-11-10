@@ -1619,7 +1619,7 @@ export function renderHint(config = {}, maxCharacters = 900) {
   const clusters = Array.isArray(store.clusters) ? store.clusters : []
   const nonEmptyClusters = clusters.filter((cluster) => (Number(cluster.stats && cluster.stats.count) || 0) > 0).length
   const lines = [
-    "【经验库】接同类任务先用 exp_recall(intent)：mode=advantage 按 Â 排序；mode=evidence 表示没有成败对照，排的是证据强度。做完用 exp_record 记结果（成功/失败/被纠正都记；同一意图换做法复用同一 intent）；用过某条用 exp_feedback 报 helped/hurt。类型用 exp_type 管。",
+    "【经验库】接同类任务先用 exp_recall(intent)：mode=advantage 按 Â 排序；mode=evidence 表示没有成败对照，排的是证据强度。做完用 exp_record 记结果（成功/失败/被纠正都记；同一意图换做法复用同一 intent）；用过某条用 exp_feedback 报 helped/hurt。类型用 exp_type 管。沉淀技能能带脚本：exp_consolidate(…, files:[…], install:true) 或对已有技能用 exp_skill_attach。",
     `共 ${active} 条（类型 ${userTypes.length}/${maxTypes}，簇 ${nonEmptyClusters}/${clusters.length}）；召回先按簇路由，无同族回退全库。`,
     "类型/簇（描述越具体，写入与召回越准）：",
   ]

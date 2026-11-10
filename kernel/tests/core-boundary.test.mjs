@@ -78,7 +78,7 @@ await check('core 工具工厂：无 DSH 也能建出工具并记录/召回', as
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-core-'))
   const tools = core.buildTools((definition) => definition, { dataDir: dir })
   const names = tools.map((tool) => tool.name).sort()
-  assert.deepEqual(names, ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_type'])
+  assert.deepEqual(names, ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_skill_attach', 'exp_type'])
   const call = (name, args) => tools.find((tool) => tool.name === name).execute(args)
   const recorded = call('exp_record', { intent: '冒烟：给插件跑测试', action: '先跑 npm test', outcome: 'success', type: '代码 / 插件' })
   assert.equal(recorded.action, 'added')

@@ -187,7 +187,7 @@ check('簇统计跟随反馈：G 转负后 success→fail', () => {
 check('exp_feedback 注册，参数 schema 完整（id/result 必填，result 三选一）', () => {
   const tools = buildTools((definition) => definition, { dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'exp-feedback-schema-')) })
   const names = tools.map((tool) => tool.name)
-  assert.deepEqual(names, ['exp_record', 'exp_recall', 'exp_feedback', 'exp_consolidate', 'exp_type'])
+  assert.deepEqual(names, ['exp_record', 'exp_recall', 'exp_feedback', 'exp_consolidate', 'exp_skill_attach', 'exp_type'])
   const tool = tools.find((item) => item.name === 'exp_feedback')
   assert.equal(tool.parameters.id.required, true)
   assert.equal(tool.parameters.result.required, true)

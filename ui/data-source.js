@@ -440,6 +440,7 @@ export function skillRowOf(input = {}) {
     typeName: String(input.typeName || '未分类'),
     context: Array.isArray(input.context) ? input.context.map(String) : [],
     triggers: Array.isArray(input.triggers) ? input.triggers.map(String) : [],
+    files: Array.isArray(input.files) ? input.files.map(String) : [],
     uses: Math.max(0, Math.trunc(Number(input.uses) || 0)),
     helped,
     hurt,

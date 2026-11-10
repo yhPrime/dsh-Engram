@@ -129,6 +129,16 @@ dsh plugin --profile <profile> add ./dsh-engram-${version}.tgz
 - **自动备份**：\`autoBackupMinutes\` 大于 0 时按间隔自动提交推送（最小 15 分钟；没有改动会跳过）。
 - API：\`GET /exp-ui/api/sync\` 看状态，\`POST /exp-ui/api/sync\` 带 \`{action:"init"|"push"|"pull"|"status"}\`；GitHub 相关用 \`POST /exp-ui/api/github\`。
 
+## 技能与脚本
+
+经验沉淀出来的技能是**完整技能包**，不是一段散文：
+
+- \`<dataDir>/skills/<slug>/SKILL.md\`（frontmatter name/description + 正文）
+- \`<dataDir>/skills/<slug>/scripts/\`（脚本附件，登记在 \`skill.json\` 的 \`files\`，并在 \`SKILL.md\` 维护「## 脚本」清单）
+- 沉淀时可带：\`exp_consolidate\` 的 \`body\`（手写正文）/ \`files\`（脚本路径）/ \`install\`（同时装成 DSH 可加载技能）
+- 已有技能补料：\`exp_skill_attach\`（files / body / install）
+- 控制台「技能」页显示文件数，选中技能可「装到 DSH」（复制到 \`$DSH_HOME/skills/<slug>/\`，之后 \`skill\` 工具就能加载）
+
 ## 借鉴与致谢
 
 这个插件是长期迭代出来的，不少设计来自公开项目与 DSH 生态。写清楚借了什么，免得以后当成原创：

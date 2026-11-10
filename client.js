@@ -575,7 +575,8 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'eng-actions', style: { marginTop: 6 } },
                     h(Badge, { tone }, label),
                     h('span', { className: 'eng-muted' }, `uses ${row.uses || 0} · helped ${row.helped || 0} · hurt ${row.hurt || 0}`),
-                    row.pendingCommit ? h(Badge, { tone: 'warn' }, '待补提交') : null)),
+                    row.pendingCommit ? h(Badge, { tone: 'warn' }, '待补提交') : null,
+                    h('span', { className: 'eng-muted' }, `文件 ${Array.isArray(row.files) ? row.files.length : 0}`))),
                 h('span', { className: 'eng-mono', style: { flex: '0 0 auto' } }, row.id))
             })),
           h('div', { className: 'eng-stack' },
@@ -596,7 +597,11 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性'),
+                  h(Button, { small: true, onClick: () => act(async () => { const out = await request('/skill-install', { method: 'POST', body: { slug: current.id } }); return `已装到 ${out.targetDir}` }) }, '装到 DSH')),
+                Array.isArray(current.files) && current.files.length > 0
+                  ? h('div', { style: { marginBottom: 10 } }, h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '脚本附件'), current.files.map((file) => h('div', { key: file, className: 'eng-mono eng-muted' }, file)))
+                  : null,
                 h('pre', { className: 'eng-pre' }, current.body || '（空）'))))))
     }
 

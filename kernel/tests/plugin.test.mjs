@@ -34,10 +34,10 @@ await check('插件入口：name / inject / apply 存在', () => {
   assert.equal(typeof mod.apply, 'function')
 })
 
-await check('apply：ctx.tools 直接注册五个工具', async () => {
+await check('apply：ctx.tools 直接注册六个工具', async () => {
   const registered = []
   await mod.apply(ctxWithTools(registered), { dataDir: dir })
-  assert.deepEqual(registered.map((tool) => tool.name).sort(), ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_type'])
+  assert.deepEqual(registered.map((tool) => tool.name).sort(), ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_skill_attach', 'exp_type'])
   assert.ok(registered.every((tool) => typeof tool.execute === 'function'))
 })
 
@@ -51,7 +51,7 @@ await check('apply：没有 ctx.tools 时经 inject 回退注册', async () => {
     },
   }
   await mod.apply(ctx, { dataDir: dir })
-  assert.deepEqual(registered.map((tool) => tool.name).sort(), ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_type'])
+  assert.deepEqual(registered.map((tool) => tool.name).sort(), ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_skill_attach', 'exp_type'])
   assert.equal(sections.length, 1)
   assert.equal(sections[0].name, 'exp-lib')
 })

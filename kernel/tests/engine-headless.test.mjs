@@ -55,7 +55,7 @@ await check('engine 暴露稳定方法，不依赖 DSH', () => {
   for (const name of ['record', 'recall', 'feedback', 'consolidate', 'types', 'listSkills', 'readSkill', 'validate', 'hint', 'tools']) {
     assert.equal(typeof engine[name], 'function', `缺少方法：${name}`)
   }
-  assert.deepEqual(engine.tools().sort(), ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_type'])
+  assert.deepEqual(engine.tools().sort(), ['exp_consolidate', 'exp_feedback', 'exp_recall', 'exp_record', 'exp_skill_attach', 'exp_type'])
   assert.ok(engine.hint().includes('exp_recall'))
 })
 

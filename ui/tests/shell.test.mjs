@@ -10,6 +10,7 @@ import path from 'node:path'
 import { API_PREFIX, handleRequest, pluginVersion } from '../shell.js'
 import { createMockSource } from '../mock.js'
 import { createLiveSource } from '../live.js'
+import { createSkill } from '../../kernel/skills.js'
 import { galleryHtml } from '../icons-gallery.js'
 
 let passed = 0
@@ -564,6 +565,22 @@ await check('POST /github：设备码没开始时轮询 400（不用 token）；
   const bad = await call(source, '/github', { method: 'POST', body: { action: 'nope' } })
   assert.equal(bad.status, 400)
   assert.equal(bad.payload.error.code, 'bad-action')
+})
+
+await check('POST /skill-install：把技能装到指定目录；缺 slug 400', async () => {
+  const dir = tempDir()
+  createSkill(dir, { slug: 'install-demo', name: '安装演示', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })
+  const source = createLiveSource({ dataDir: dir })
+  const targetRoot = tempDir()
+  const ok = await call(source, '/skill-install', { method: 'POST', body: { slug: 'install-demo', targetRoot } })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.payload.ok, true)
+  assert.equal(ok.payload.data.slug, 'install-demo')
+  assert.ok(ok.payload.data.targetDir.startsWith(targetRoot))
+  assert.equal(fs.existsSync(path.join(ok.payload.data.targetDir, 'SKILL.md')), true)
+  const bad = await call(source, '/skill-install', { method: 'POST', body: {} })
+  assert.equal(bad.status, 400)
+  assert.equal(bad.payload.error.code, 'slug-required')
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)
