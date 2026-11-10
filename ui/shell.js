@@ -580,13 +580,18 @@ export async function handleRequest(req, res, source) {
       const messageId = String((body && body.messageId) || '').trim()
       if (messageId === '') return fail(res, 400, 'ids-required', '缺少 messageId')
       const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
-      const saved = saveTurnAsExperience(dataDir, {
-        sessionId,
-        messageId,
-        outcome: body && body.outcome,
-        type: body && body.type,
-        note: body && body.note,
-      })
+      let saved
+      try {
+        saved = saveTurnAsExperience(dataDir, {
+          sessionId,
+          messageId,
+          outcome: body && body.outcome,
+          type: body && body.type,
+          note: body && body.note,
+        })
+      } catch (error) {
+        return fail(res, 400, 'turn-not-found', error && error.message ? error.message : '读不到这条消息')
+      }
       return json(res, 200, { ok: true, data: saved })
     }
     if (route === '/skill-install') {
