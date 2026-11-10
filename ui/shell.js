@@ -32,8 +32,8 @@ import path from 'node:path'
 import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
-import { importSkill } from '../kernel/import-skill.js'
-import { forgetSkill, registerSkillGlobally, unregisterSkillFromDsh } from '../kernel/skills.js'
+import { importSkills } from '../kernel/import-skill.js'
+import { forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
@@ -345,7 +345,9 @@ export async function buildImportSkill(source, body = {}, deps = {}) {
   const filePath = String(body.path || '').trim()
   const content = typeof body.content === 'string' ? body.content : ''
   if (filePath === '' && content.trim() === '') throw codedError('source-required', '要么拖入/选择 SKILL.md，要么粘贴正文')
-  return importSkill({ dataDir, filePath, content, typeNames, deps })
+  const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
+  const notes = Array.isArray(body.notes) ? body.notes.map(String) : []
+  return importSkills({ dataDir, filePath, content, typeNames, categories, notes, deps })
 }
 
 export function buildSkillFeedback(source, body = {}) {
@@ -578,6 +580,21 @@ export async function handleRequest(req, res, source, deps = {}) {
         return json(res, 200, { ok: true, data: { ...result, action } })
       } catch (error) {
         return fail(res, 400, 'skill-global-failed', error && error.message ? error.message : String(error))
+      }
+    }
+    if (route === '/skill-meta') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const slug = String((body && body.slug) || '').trim()
+      if (slug === '') return fail(res, 400, 'slug-required', '缺少技能 slug')
+      if (active.mode !== 'live') return fail(res, 400, 'unsupported', '示例数据不支持改技能元数据')
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      try {
+        const result = updateSkillMeta(dataDir, slug, body)
+        resetSourceCache()
+        return json(res, 200, { ok: true, data: result })
+      } catch (error) {
+        return fail(res, 400, 'skill-meta-failed', error && error.message ? error.message : String(error))
       }
     }
     if (route === '/skill-forget') {

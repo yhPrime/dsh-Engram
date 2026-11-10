@@ -593,6 +593,42 @@ window.__ModuleLoader__.load({
         h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || form.intent.trim() === '' || form.action.trim() === '', onClick: submit }, busy ? '提交中…' : '记录'))))
     }
 
+    /**
+     * 技能的分类 + 便签编辑器：一个技能可以挂多个分类、多条便签（技能套件常用）。
+     * key 用技能 id，切技能时自然重置草稿。
+     */
+    function SkillMetaEditor(props) {
+      const row = props.row
+      const [categories, setCategories] = useState(Array.isArray(row.typeNames) ? row.typeNames.join('、') : '')
+      const [notes, setNotes] = useState(Array.isArray(row.notes) ? row.notes.join('\n') : '')
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
+      const save = async () => {
+        setBusy(true)
+        setError('')
+        try {
+          const splitCategories = categories.split(/[,，、\n]/u).map((item) => item.trim()).filter((item) => item !== '')
+          const splitNotes = notes.split(/\n/u).map((item) => item.trim()).filter((item) => item !== '')
+          const out = await request('/skill-meta', { method: 'POST', body: { slug: row.id, typeNames: splitCategories, notes: splitNotes } })
+          await props.onSaved(`已保存：${(out.typeNames || []).length} 个分类、${(out.notes || []).length} 条便签`)
+        } catch (caught) {
+          setError(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      return h('div', { className: 'eng-actions', style: { alignItems: 'flex-start', gap: 8, marginBottom: 10 } },
+        h('div', { style: { flex: '1 1 220px', minWidth: 0 } },
+          h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '分类（逗号分隔，可多个）'),
+          h('input', { className: 'eng-input', value: categories, placeholder: '例如：PPT / 课件、文档 / 教案', onChange: (event) => setCategories(event.target.value) })),
+        h('div', { style: { flex: '1 1 220px', minWidth: 0 } },
+          h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '便签（每行一条）'),
+          h('textarea', { className: 'eng-textarea', rows: 2, value: notes, placeholder: '例如：需要 python-pptx 环境', onChange: (event) => setNotes(event.target.value) })),
+        h('div', { style: { flex: '0 0 auto', paddingTop: 20 } },
+          h(Button, { small: true, disabled: busy, onClick: save }, busy ? '保存中…' : '保存分类与便签')),
+        error ? h('div', { className: 'eng-muted', style: { color: 'var(--eng-bad)', flexBasis: '100%' } }, error) : null)
+    }
+
     function Skills(props) {
       const skills = useLoad(useCallback(() => request('/skills'), []))
       const validation = useLoad(useCallback(() => request('/validate'), []))
@@ -647,6 +683,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'eng-detail' },
                 h('h3', { className: 'eng-detail-title' }, current.name),
                 h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
+                h(SkillMetaEditor, { key: current.id, row: current, onSaved: async (message) => { await skills.reload(); props.onChanged(); setNotice(message) } }),
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
@@ -731,6 +768,8 @@ window.__ModuleLoader__.load({
       const [dragging, setDragging] = useState(false)
       const [showPaste, setShowPaste] = useState(false)
       const [sourcePath, setSourcePath] = useState('')
+      const [categoriesDraft, setCategoriesDraft] = useState('')
+      const [notesDraft, setNotesDraft] = useState('')
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
       const [result, setResult] = useState(null)
@@ -796,7 +835,10 @@ window.__ModuleLoader__.load({
         setBusy(true)
         setError('')
         try {
+          const splitList = (text) => String(text || '').split(/[,，\n]/u).map((item) => item.trim()).filter((item) => item !== '')
           const body = sourcePath.trim() !== '' ? { path: sourcePath.trim() } : { content }
+          body.categories = splitList(categoriesDraft)
+          body.notes = splitList(notesDraft)
           const out = await request('/skills/import', { method: 'POST', body })
           setResult(out)
           props.onImported(out)
@@ -826,11 +868,18 @@ window.__ModuleLoader__.load({
             h('span', { className: 'eng-muted' }, '来源路径'),
             h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, value: sourcePath, placeholder: 'C:\\Users\\you\\my-skill（技能文件夹或 SKILL.md）', onChange: (event) => setSourcePath(event.target.value) })),
           h('div', { className: 'eng-muted', style: { marginTop: 4, fontSize: 12 } }, '拖拽被宿主窗口拦掉时用这个：粘绝对路径由服务端直接读（文件夹或 SKILL.md；zip 请先解压）。'),
+          h('div', { className: 'eng-fixed-target', style: { marginTop: 10 } },
+            h('span', { className: 'eng-muted' }, '分类'),
+            h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, value: categoriesDraft, placeholder: '逗号分隔，可多个（技能套件常用）', onChange: (event) => setCategoriesDraft(event.target.value) })),
+          h('div', { className: 'eng-fixed-target', style: { marginTop: 8 } },
+            h('span', { className: 'eng-muted' }, '便签'),
+            h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, value: notesDraft, placeholder: '逗号分隔，可多条（给人看的备注）', onChange: (event) => setNotesDraft(event.target.value) })),
+          h('div', { className: 'eng-muted', style: { marginTop: 4, fontSize: 12 } }, '分类与便签会写到每条导入的技能上，之后还能在技能详情里改。'),
           h('ul', { className: 'eng-req' },
             h('li', null, '技能文件夹需包含 SKILL.md'),
+            h('li', null, '套件文件夹：子目录各带 SKILL.md 时按套件逐个导入（需用「来源路径」）'),
             h('li', null, 'SKILL.md 需带 YAML 的 name 与 description'),
-            h('li', null, '导入只复制正文；scripts/ 等附件可在导入后用 exp_skill_attach 挂上'),
-            h('li', null, '原始来源不会被改动')),
+            h('li', null, '导入只复制正文；scripts/ 等附件可在导入后用 exp_skill_attach 挂上')),
           showPaste
             ? h('textarea', { className: 'eng-textarea', rows: 8, style: { marginTop: 10 }, value: content, onChange: (event) => { setContent(event.target.value); setFileName('') }, placeholder: '--- name: 我的技能 description: 一句话说明 --- 再接正文' })
             : h('button', { type: 'button', className: 'eng-dropzone-link', style: { marginTop: 8, fontSize: 12 }, onClick: () => setShowPaste(true) }, '没有文件？直接粘贴 SKILL.md 正文'),
@@ -840,16 +889,14 @@ window.__ModuleLoader__.load({
           error ? h(Banner, { bad: true }, error) : null,
           result
             ? h('div', { className: 'eng-card', style: { padding: 12, marginTop: 12 } },
-              h('div', { style: { fontWeight: 620, marginBottom: 6 } }, `已导入：${result.name}（${result.action}）`),
-              h('div', { className: 'eng-muted', style: { lineHeight: 1.8 } },
-                `分类：${result.category || '未分类'}　标签：${(result.tags || []).join('、') || '无'}　排序分：${result.order}`,
-                h('br'),
-                `分类来源：${result.classifier === 'session' ? `临时会话（${result.model || '当前模型'}）` : '本地关键词，未消耗模型'}`),
-              result.classifier === 'local' ? h('div', { className: 'eng-muted', style: { marginTop: 4 } }, result.note || '') : null)
+              h('div', { style: { fontWeight: 620, marginBottom: 6 } }, result.suite ? `已导入技能套件：${result.count} 个技能` : `已导入：${(result.items && result.items[0] ? result.items[0].name : result.name)}（${(result.items && result.items[0] ? result.items[0].action : result.action)}）`),
+              (result.items || [result]).map((item) => h('div', { key: item.slug || item.name, className: 'eng-muted', style: { lineHeight: 1.8 } },
+                `· ${item.name}（${item.slug}）分类：${item.category || '未分类'}${item.classifier === 'local' ? '（本地归类）' : ''}`)),
+              h('div', { className: 'eng-muted', style: { marginTop: 6 } }, '导入的内容已在技能列表里，弹窗不会自动关，方便你核对；关掉后列表自动刷新。'))
             : null,
           h('div', { className: 'eng-modal-actions' },
             h(Button, { small: true, onClick: props.onClose }, result ? '关闭' : '取消'),
-            h(Button, { small: true, kind: 'primary', disabled: !canSubmit, onClick: submit }, busy ? '安装中…（会调一次模型）' : '安装'))))
+            h(Button, { small: true, kind: 'primary', disabled: !canSubmit, onClick: submit }, busy ? '安装中…（会调一次模型，套件按个数累加）' : '安装'))))
     }
 
     function Types(props) {
@@ -2136,7 +2183,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-muted', style: { marginBottom: 12 } }, '把经验库当普通 git 仓库同步到远端：只提交当前数据目录，拉取只做 fast-forward，冲突交回给人。选好仓库就等于连上了，不用再点第二次。'),
           h('div', { className: 'eng-git-status' },
             h(Badge, { tone: connectedNow ? 'ok' : 'muted' }, connectedNow ? '已连接' : '未连接'),
-            h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, connectedNow ? remoteNow : '选一个仓库，或填地址连接'),
+            h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, connectedNow ? gitUrlNow : '选一个仓库，或填地址连接'),
             h('span', { className: 'eng-muted' }, `分支 ${branchNow}`),
             syncData ? h('span', { className: 'eng-muted' }, `${syncData.dirtyCount} 个未提交`) : null,
             syncData && syncData.lastCommitAt ? h('span', { className: 'eng-muted' }, `上次同步 ${fmtTime(syncData.lastCommitAt)}`) : null),
@@ -2179,7 +2226,7 @@ window.__ModuleLoader__.load({
             : h('div', { className: 'eng-git-repos' }, filteredRepos.length === 0
               ? h('div', { className: 'eng-muted', style: { padding: '10px 12px' } }, ghRepos.length === 0 ? '这个账号还没有仓库，用下面的「新建并连接」' : '没有匹配的仓库')
               : filteredRepos.map((repo) => {
-                const isCurrent = connectedNow && remoteNow === repo.cloneUrl
+                const isCurrent = connectedNow && gitUrlNow === repo.cloneUrl
                 return h('div', { key: repo.fullName, className: 'eng-git-repo' },
                   h('div', { className: 'eng-row-main' },
                     h('div', { className: 'eng-row-intent' }, repo.fullName),
@@ -2376,8 +2423,10 @@ window.__ModuleLoader__.load({
             h(PageBoundary, { key: `${tab}:${reloadToken}` }, content))),
         importOpen
           ? h(ImportSkillDialog, {
-            onClose: () => setImportOpen(false),
-            onImported: () => { refreshAll() },
+            // 导入成功**不**重挂页面：refreshAll 会换 PageBoundary 的 key，弹窗会被一起卸载，
+            // 用户就看不到导入结果了。改成关弹窗时再刷新。
+            onClose: () => { setImportOpen(false); refreshAll() },
+            onImported: () => {},
           })
           : null)
     }
