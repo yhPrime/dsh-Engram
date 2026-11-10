@@ -13,6 +13,12 @@ import { createLiveSource } from '../live.js'
 import { createSkill } from '../../kernel/skills.js'
 import { galleryHtml } from '../icons-gallery.js'
 
+// 把设置文件隔离到临时 HOME：否则会读到用户真实的 ~/.dsh/engram/settings.json
+// （里面有 repoUrl/token），"未初始化""没 token" 这类断言就会随用户操作而飘。
+const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-shell-home-'))
+process.env.DSH_HOME = testHome
+delete process.env.ENGRAM_DATA_DIR
+
 let passed = 0
 let failed = 0
 
@@ -577,6 +583,7 @@ await check('技能归经验库自己管：/skill-install 已下线（不写 DSH
   assert.equal(fs.readdirSync(targetRoot).length, 0, '不该往目标目录写任何东西')
 })
 
+fs.rmSync(testHome, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
 

@@ -136,6 +136,31 @@ await check('未初始化就推送：给出可操作的原因', async () => {
   assert.match(result.reason, /还不是 git 仓库/)
 })
 
+await check('本地分支 master、配置分支 main：推 HEAD，不报 src refspec does not match any', async () => {
+  const bare = path.join(root, 'fresh-remote.git')
+  git(root, ['init', '--bare', '-b', 'main', bare])
+  const dir = path.join(root, 'legacy-work')
+  fs.mkdirSync(dir, { recursive: true })
+  git(dir, ['init', '-b', 'master'])
+  git(dir, ['config', 'user.name', 'Legacy'])
+  git(dir, ['config', 'user.email', 'legacy@test.local'])
+  fs.writeFileSync(path.join(dir, 'exp-lib.json'), '{"version":1}\n', 'utf8')
+  git(dir, ['add', '-A'])
+  git(dir, ['commit', '-q', '-m', 'init'])
+  // 真实流程：新建仓库后先 init（把 origin 指到新仓库、分支名用配置里的 main），再 push
+  const init = await gitInit(dir, { ...config, repoUrl: bare, branch: 'main' })
+  assert.equal(init.ok, true, init.reason)
+  const result = await gitPush(dir, { ...config, repoUrl: bare, branch: 'main' })
+  assert.equal(result.ok, true, result.reason)
+  assert.equal(result.pushed, true)
+  assert.equal(result.remoteBranch, 'main')
+  // 远端确实收到了 main 分支，并且本地分支建立了上游
+  const sha = git(bare, ['rev-parse', 'refs/heads/main']).trim()
+  assert.match(sha, /^[0-9a-f]{40}$/u)
+  const upstream = git(dir, ['rev-parse', '--abbrev-ref', 'master@{upstream}']).trim()
+  assert.equal(upstream, 'origin/main')
+})
+
 fs.rmSync(root, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

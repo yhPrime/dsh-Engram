@@ -1905,12 +1905,30 @@ window.__ModuleLoader__.load({
             setGhRepos(Array.isArray(data.repos) ? data.repos : [])
             setGhNotice(`读到 ${data.repos ? data.repos.length : 0} 个仓库`)
           } else {
-            const sync = data.sync || null
-            const init = data.init || null
-            await Promise.all([sync.reload(), settings.reload()])
-            if (sync && sync.ok) setGhNotice(`${label}：已提交并推送${sync.commit ? `（${sync.commit}）` : ''}`)
-            else if (sync) setGhNotice(`${label}：${sync.reason || '推送未完成'}`)
-            else setGhNotice(`${label}：${init && init.reason ? init.reason : '完成'}`)
+            // 注意别用 sync 当局部变量名——外层 `sync` 是 /sync 的 useLoad 句柄，
+            // 之前这里 `const sync = data.sync` 把句柄遮盖成普通对象，sync.reload 直接 TypeError，
+            // 用户只看到「sync.reload is not a function」，真正的推送失败原因被吞掉。
+            const pushResult = data.sync || null
+            const initResult = data.init || null
+            try {
+              await sync.reload()
+            } catch (caught) {
+              console.error('[engram] sync.reload failed', caught)
+            }
+            try {
+              await settings.reload()
+            } catch (caught) {
+              console.error('[engram] settings.reload failed', caught)
+            }
+            if (initResult !== null && initResult.ok === false) {
+              setGhNotice(`${label}：初始化失败 —— ${initResult.reason || '未知原因'}`)
+            } else if (pushResult === null) {
+              setGhNotice(`${label}：仓库已就绪，但还没推送（没有远端或初始化未完成）`)
+            } else if (pushResult.ok) {
+              setGhNotice(`${label}：已提交并推送${pushResult.commit ? `（${pushResult.commit}）` : ''}${pushResult.reason ? `；${pushResult.reason}` : ''}`)
+            } else {
+              setGhNotice(`${label}：推送没成功 —— ${pushResult.reason || '未知原因'}`)
+            }
             if (action === 'create') setNewRepoName('')
           }
         } catch (caught) {

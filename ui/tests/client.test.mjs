@@ -244,6 +244,14 @@ check('关系图配色：能从主题背景渐变里取颜色停靠点（自带�
   assert.equal(gradient.length, 2)
 })
 
+check('新建仓库并推送：不再被局部变量遮盖 sync 句柄，失败原因要显示出来', () => {
+  const source = loaded.source
+  assert.equal(/(^|\\n)\\s*const sync = data\\.sync/u.test(source), false, 'sync 句柄又被 data.sync 遮盖了')
+  assert.ok(source.includes('pushResult'), '没有单独的推送结果变量')
+  assert.ok(source.includes('推送没成功'), '推送失败没有可读提示')
+  assert.ok(source.includes('初始化失败'), '初始化失败没有可读提示')
+  assert.ok(source.includes('[engram] sync.reload failed'), '刷新失败没有留日志')
+})
 check('技能归经验库自己管：不往 DSH skills 注册', () => {
   const source = loaded.source
   assert.equal(source.includes('/skill-install'), false, '控制台还留着「装到 DSH」的接口调用')
