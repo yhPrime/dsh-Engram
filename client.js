@@ -670,7 +670,7 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'eng-muted' }, `uses ${row.uses || 0} · helped ${row.helped || 0} · hurt ${row.hurt || 0}`),
                     row.globalRegistered ? h(Badge, { tone: 'brand' }, '全局') : null,
                     row.pendingCommit ? h(Badge, { tone: 'warn' }, '待补提交') : null,
-                    h('span', { className: 'eng-muted' }, `文件 ${Array.isArray(row.files) ? row.files.length : 0}`))),
+                    h('span', { className: 'eng-muted' }, `文件 ${row.packageFiles || (Array.isArray(row.files) ? row.files.length : 0)}`))),
                 h('span', { className: 'eng-mono', style: { flex: '0 0 auto' } }, row.id))
             })),
           h('div', { className: 'eng-stack' },
@@ -720,6 +720,10 @@ window.__ModuleLoader__.load({
               h('div', { className: 'eng-detail' },
                 h('h3', { className: 'eng-detail-title' }, current.name),
                 h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
+                current.packageFiles > 0
+                  ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } },
+                    `整包：${current.packageFiles} 个文件 / ${fmtBytes(current.packageBytes)}${Array.isArray(current.packageDirs) && current.packageDirs.length > 0 ? ` · ${current.packageDirs.join('、')}` : ''}（导入时随 SKILL.md 一起复制）`)
+                  : null,
                 h(SkillMetaEditor, { key: current.id, row: current, onSaved: async (message) => { await skills.reload(); props.onChanged(); setNotice(message) } }),
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
@@ -2547,7 +2551,8 @@ window.__ModuleLoader__.load({
             onImported: (out) => {
               setImportOpen(false)
               const count = out && out.suite ? Number(out.count) || 0 : 1
-              setImportNotice(`已导入${count > 1 ? `技能套件 ${count} 个技能` : '技能'}，列表已刷新`)
+              const firstPkg = out && Array.isArray(out.items) && out.items[0] ? out.items[0].package : null
+              setImportNotice(`已导入${count > 1 ? `技能套件 ${count} 个技能` : '技能'}${firstPkg ? `（含 ${firstPkg.fileCount} 个文件）` : ''}，列表已刷新`)
               refreshAll()
             },
           })

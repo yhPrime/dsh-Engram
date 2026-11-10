@@ -16,7 +16,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { createSkill } from './skills.js'
+import { createHash } from 'node:crypto'
+
+import { commitSkills, createSkill, skillDirOf } from './skills.js'
 
 /** 单次导入的正文上限：技能是给人读的，超过这个大小说明导错了东西。 */
 export const MAX_IMPORT_BYTES = 512 * 1024
@@ -283,11 +285,13 @@ export function readImportSource({ filePath = '', content = '' } = {}) {
       const file = path.join(target, found)
       const fileStat = fs.statSync(file)
       if (fileStat.size > MAX_IMPORT_BYTES) throw new Error(`文件太大（${fileStat.size} 字节），上限 ${MAX_IMPORT_BYTES}`)
-      return { text: fs.readFileSync(file, 'utf8'), source: found }
+      return { text: fs.readFileSync(file, 'utf8'), source: found, dir: target, file }
     }
     if (!stat.isFile()) throw new Error(`不是一个文件或文件夹：${target}`)
     if (stat.size > MAX_IMPORT_BYTES) throw new Error(`文件太大（${stat.size} 字节），上限 ${MAX_IMPORT_BYTES}`)
-    return { text: fs.readFileSync(target, 'utf8'), source: path.basename(target) }
+    const isSkillDoc = /^skill\.md$/iu.test(path.basename(target))
+    // dir 只在「给的是 SKILL.md 本身」时才有意义：整包导入要把同目录的 scripts/references 一起带走
+    return { text: fs.readFileSync(target, 'utf8'), source: path.basename(target), dir: isSkillDoc ? path.dirname(target) : '', file: target }
   }
   const pasted = String(content || '')
   if (pasted.trim() === '') throw new Error('要么给一个 SKILL.md 路径，要么粘贴正文')
@@ -339,6 +343,96 @@ export function readImportSources({ filePath = '', content = '' } = {}) {
   return [readImportSource({ content })]
 }
 
+const PACKAGE_MAX_BYTES = 120 * 1024 * 1024
+const PACKAGE_MAX_FILES = 20000
+const PACKAGE_MAX_FILE_BYTES = 8 * 1024 * 1024
+const PACKAGE_SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'dist', 'build'])
+
+/**
+ * 把来源技能目录**整包**复制进 `<dataDir>/skills/<slug>/`。
+ *
+ * 之前只落 SKILL.md，技能包里的 scripts/、references/、templates/ 全丢了——
+ * 那些恰恰是技能能跑起来的部分。这里按目录递归复制，带三道闸：
+ * 单文件 ≤8MB、总文件 ≤20000、总大小 ≤120MB；超了只跳过并如实记在 package.skipped。
+ * `files` 仍只登记 scripts/（≤40 条），避免上万条把 skill.json 撑爆。
+ */
+export function copySkillPackage(dataDir, slug, fromDir) {
+  const target = skillDirOf(dataDir, slug)
+  const dirs = new Set()
+  const scriptFiles = []
+  let fileCount = 0
+  let bytes = 0
+  let skipped = 0
+  const walk = (current, rel) => {
+    let entries = []
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (PACKAGE_SKIP_DIRS.has(entry.name)) continue
+      const from = path.join(current, entry.name)
+      const relPath = rel === '' ? entry.name : `${rel}/${entry.name}`
+      if (entry.isDirectory()) {
+        dirs.add(relPath.split('/')[0])
+        walk(from, relPath)
+        continue
+      }
+      if (!entry.isFile()) continue
+      if (fileCount >= PACKAGE_MAX_FILES || bytes > PACKAGE_MAX_BYTES) {
+        skipped += 1
+        continue
+      }
+      const stat = fs.statSync(from)
+      if (stat.size > PACKAGE_MAX_FILE_BYTES) {
+        skipped += 1
+        continue
+      }
+      const to = path.join(target, ...relPath.split('/'))
+      fs.mkdirSync(path.dirname(to), { recursive: true })
+      fs.copyFileSync(from, to)
+      bytes += stat.size
+      fileCount += 1
+      if (/^scripts\//u.test(relPath) && stat.size <= 2 * 1024 * 1024) {
+        scriptFiles.push({
+          path: relPath,
+          bytes: stat.size,
+          sha256: createHash('sha256').update(fs.readFileSync(to)).digest('hex'),
+          addedAt: new Date().toISOString(),
+        })
+      }
+    }
+  }
+  walk(fromDir, '')
+  const metaPath = path.join(target, 'skill.json')
+  let meta = {}
+  try {
+    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+  } catch {
+    meta = {}
+  }
+  meta.package = {
+    source: fromDir,
+    files: fileCount,
+    bytes,
+    dirs: [...dirs].sort(),
+    skipped,
+    copiedAt: new Date().toISOString(),
+  }
+  if (scriptFiles.length > 0) {
+    const merged = Array.isArray(meta.files) ? [...meta.files] : []
+    for (const file of scriptFiles) {
+      const index = merged.findIndex((item) => item && item.path === file.path)
+      if (index >= 0) merged[index] = file
+      else merged.push(file)
+    }
+    meta.files = merged.slice(0, 40)
+  }
+  fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
+  return { fileCount, bytes, dirs: meta.package.dirs, skipped }
+}
+
 /**
  * 导入一条外部技能。
  *
@@ -347,7 +441,7 @@ export function readImportSources({ filePath = '', content = '' } = {}) {
  */
 export async function importSkill({ dataDir, filePath = '', content = '', typeNames = [], categories = [], notes = [], deps = {} } = {}) {
   if (String(dataDir || '') === '') throw new Error('没有数据目录，无法写入技能')
-  const { text, source } = readImportSource({ filePath, content })
+  const { text, source, dir: sourceDir = '' } = readImportSource({ filePath, content })
   const parsed = parseSkillMarkdown(text)
   const name = parsed.name.trim() !== ''
     ? parsed.name.trim()
@@ -385,6 +479,10 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
     order: decided.order,
   })
 
+  // 来源是文件夹（或 SKILL.md 本身）时，把 scripts/references/templates 一起搬进来
+  const packed = sourceDir !== '' ? copySkillPackage(dataDir, created.slug, sourceDir) : null
+  if (packed !== null) commitSkills(dataDir, `skill(${created.slug}): import package`)
+
   return {
     action: created.action,
     slug: created.slug,
@@ -396,6 +494,7 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
     classifier: decided.classifier,
     model: decided.model || '',
     note: decided.note,
+    package: packed,
   }
 }
 
@@ -407,7 +506,8 @@ export async function importSkills({ dataDir, filePath = '', content = '', typeN
   const sources = readImportSources({ filePath, content })
   const items = []
   for (const source of sources) {
-    items.push(await importSkill({ dataDir, content: source.text, typeNames, categories, notes, deps }))
+    // 有来源文件就再走一次 filePath：这样 importSkill 才拿得到目录，把整包一起复制进去
+    items.push(await importSkill({ dataDir, filePath: source.file || '', content: source.file ? '' : source.text, typeNames, categories, notes, deps }))
   }
   return { suite: sources.length > 1, count: items.length, items }
 }
