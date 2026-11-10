@@ -129,17 +129,20 @@ window.__ModuleLoader__.load({
 .eng-split[data-open="true"] .eng-stack > .eng-detail-card { order: -1; }
 /* 「左列表 + 右详情」页（经验 / 技能）：两栏各自独立滚动，页面本身不再整页滚 */
 .eng-content[data-fill="true"] { display: flex; flex-direction: column; overflow: hidden; }
-.eng-content[data-fill="true"] .eng-split { flex: 1 1 auto; min-height: 0; align-items: stretch; }
-.eng-content[data-fill="true"] .eng-split > * { min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+.eng-content[data-fill="true"] > .eng-fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.eng-content[data-fill="true"] > .eng-fill > .eng-split { flex: 1 1 auto; min-height: 0; align-items: stretch; grid-auto-rows: minmax(0, 1fr); }
+.eng-content[data-fill="true"] > .eng-fill > .eng-split > * { min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 @media (max-width: 1180px) {
   .eng-content[data-fill="true"] { overflow-y: auto; }
-  .eng-content[data-fill="true"] .eng-split { flex: 0 0 auto; }
-  .eng-content[data-fill="true"] .eng-split > * { max-height: none; overflow: visible; }
+  .eng-content[data-fill="true"] > .eng-fill { display: block; }
+  .eng-content[data-fill="true"] > .eng-fill > .eng-split { grid-auto-rows: auto; }
+  .eng-content[data-fill="true"] > .eng-fill > .eng-split > * { max-height: none; overflow: visible; }
 }
 @container (max-width: 980px) {
   .eng-content[data-fill="true"] { overflow-y: auto; }
-  .eng-content[data-fill="true"] .eng-split { flex: 0 0 auto; }
-  .eng-content[data-fill="true"] .eng-split > * { max-height: none; overflow: visible; }
+  .eng-content[data-fill="true"] > .eng-fill { display: block; }
+  .eng-content[data-fill="true"] > .eng-fill > .eng-split { grid-auto-rows: auto; }
+  .eng-content[data-fill="true"] > .eng-fill > .eng-split > * { max-height: none; overflow: visible; }
 }
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: transparent; }
@@ -384,7 +387,7 @@ window.__ModuleLoader__.load({
         await Promise.all([list.reload(), detail.reload()])
         props.onChanged()
       }
-      return h('div', null,
+      return h('div', { className: 'eng-fill' },
         list.error ? h(Banner, { bad: true }, list.error) : null,
         h('div', { className: 'eng-toolbar' },
           h('input', { className: 'eng-input', placeholder: '按意图检索（回车跳到检索页）…', value: searchDraft, onChange: (event) => setSearchDraft(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && searchDraft.trim() !== '') props.onSearch(searchDraft.trim()) } }),
@@ -576,7 +579,7 @@ window.__ModuleLoader__.load({
           setNotice(caught.message || String(caught))
         }
       }
-      return h('div', null,
+      return h('div', { className: 'eng-fill' },
         skills.error ? h(Banner, { bad: true }, skills.error) : null,
         notice ? h(Banner, null, notice) : null,
         h('div', { className: 'eng-split', 'data-open': current === null ? 'false' : 'true' },
