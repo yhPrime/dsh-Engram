@@ -265,8 +265,9 @@ check('添加技能弹窗：拖拽区 + 固定安装位置，不再有路径输�
   for (const text of ['拖拽技能到此处', '选择文件夹', '选择文件', '安装位置', '技能文件夹需包含 SKILL.md', '取消', '安装']) {
     assert.ok(tree.includes(text), `弹窗缺少：${text}`)
   }
-  assert.equal(tree.includes('SKILL.md 路径（绝对路径）'), false, '还有路径输入框')
-  assert.equal(tree.includes('C:\\\\Users\\\\you\\\\my-skill'), false, '路径占位符还在')
+  assert.equal(tree.includes('SKILL.md 路径（绝对路径）'), false, '还有旧的安装路径输入框')
+  assert.ok(tree.includes('来源路径'), '没有「来源路径」兜底输入（拖拽被宿主拦死时用）')
+  assert.ok(loaded.source.includes("sourcePath.trim() !== '' ? { path:"), '来源路径没有走服务端直读分支')
   assert.ok(tree.includes('onDrop') || tree.includes('[fn]'), '拖拽事件没挂上')
   assert.ok(tree.includes('webkitdirectory'), '没有「选择文件夹」的目录选择器')
   assert.ok(tree.includes('exp/skills/'), '没写固定安装位置')

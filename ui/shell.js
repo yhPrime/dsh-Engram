@@ -592,10 +592,15 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 GET/POST')
       const body = await readBody(req)
       const action = String((body && body.action) || 'push').trim().toLowerCase()
-      if (!['init', 'push', 'pull', 'status'].includes(action)) return fail(res, 400, 'bad-action', `未知动作：${action}`)
+      if (!['init', 'push', 'pull', 'status', 'disconnect'].includes(action)) return fail(res, 400, 'bad-action', `未知动作：${action}`)
       if (action === 'status') return json(res, 200, { ok: true, data: await gitStatus(dataDir, config) })
       if (action === 'init') return json(res, 200, { ok: true, data: await gitInit(dataDir, config) })
       if (action === 'pull') return json(res, 200, { ok: true, data: await gitPull(dataDir, config) })
+      if (action === 'disconnect') {
+        // 只断开「备份到哪个仓库」：清掉 repoUrl，本地提交历史与 GitHub 登录令牌都留着。
+        writeGitConfig({ repoUrl: '' })
+        return json(res, 200, { ok: true, data: { ok: true, action: 'disconnect', disconnected: true } })
+      }
       return json(res, 200, { ok: true, data: await gitPush(dataDir, config, { message: body && body.message }) })
     }
     if (route === '/chat-save-probe') {
