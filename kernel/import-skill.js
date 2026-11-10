@@ -61,17 +61,36 @@ export function parseSkillMarkdown(text) {
   const raw = normalizeNewlines(text)
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/)
   if (match === null) return { name: '', description: '', body: raw.trim() }
-  const head = match[1]
-  let name = ''
-  let description = ''
-  for (const line of head.split('\n')) {
-    const field = line.match(/^([A-Za-z_-]+):\s*(.*)$/)
+  const lines = match[1].split('\n')
+  const fields = {}
+  for (let index = 0; index < lines.length; index += 1) {
+    const field = lines[index].match(/^([A-Za-z_-]+):\s*(.*)$/)
     if (field === null) continue
-    const value = field[2].trim().replace(/^['"]|['"]$/g, '').trim()
-    if (field[1] === 'name') name = value
-    if (field[1] === 'description') description = value
+    const key = field[1]
+    let value = field[2].trim().replace(/^['"]|['"]$/g, '').trim()
+    // YAML 块标量（`description: |` / `>`）：值在下面缩进的行里，
+    // 不认这个会把描述解析成「|」或「>」，技能路由直接废掉（ai-base-tools / ppt-master 就是这样）。
+    if (/^[|>][+-]?$/.test(value)) {
+      const block = []
+      let cursor = index + 1
+      for (; cursor < lines.length; cursor += 1) {
+        const line = lines[cursor]
+        if (line.trim() !== '' && !/^\s/.test(line)) break
+        block.push(line)
+      }
+      const nonEmpty = block.filter((line) => line.trim() !== '')
+      const indent = nonEmpty.length === 0 ? 0 : Math.min(...nonEmpty.map((line) => (line.match(/^\s*/) || [''])[0].length))
+      const dedented = block.map((line) => line.slice(indent)).join('\n').trim()
+      value = value.startsWith('>') ? dedented.replace(/\n(?=\S)/gu, ' ') : dedented
+      index = cursor - 1
+    }
+    fields[key] = value
   }
-  return { name, description, body: raw.slice(match[0].length).trim() }
+  return {
+    name: fields.name || '',
+    description: fields.description || '',
+    body: raw.slice(match[0].length).trim(),
+  }
 }
 
 /** 从正文里抽词：中文按 2 字以上连续块，英文/数字按 3 字以上标识符。 */
