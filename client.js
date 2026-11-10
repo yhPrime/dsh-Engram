@@ -186,6 +186,11 @@ window.__ModuleLoader__.load({
 .eng-graph-pill button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
 .eng-graph-pill button[data-active="true"] { color: #fff; background: var(--dsw-alias-brand-primary); }
 .eng-graph-pill button[data-tone="codex"][data-active="true"] { background: linear-gradient(90deg, #4d93f8 0%, #6d28d9 42%, #9333ea 74%, #c084fc 100%); }
+/* 左下角：画布深浅背景切换（与右上角配色胶囊同一套皮肤） */
+.eng-graph-pill-bottom { top: auto; right: auto; bottom: 14px; left: 14px; }
+.eng-graph-pill button[data-tone="light"] { color: #1f2430; }
+.eng-graph-pill button[data-tone="light"][data-active="true"] { color: #1f2430; background: #eef1f6; }
+.eng-graph-pill button[data-tone="dark"][data-active="true"] { color: #f4f6fb; background: #171b28; }
 `
     function ensureStyles() {
       try {
@@ -1470,6 +1475,7 @@ window.__ModuleLoader__.load({
       // 图上那个胶囊：手动切「跟随主题 / 蓝紫星辰」，写进 ui.graphPalette。
       const graphUi = (settings.data && settings.data.ui) || {}
       const paletteNow = GRAPH_PALETTES[graphUi.graphPalette] ? graphUi.graphPalette : 'dsh'
+      const surfaceNow = ['theme', 'light', 'dark'].includes(graphUi.graphSurface) ? graphUi.graphSurface : 'theme'
       const pickPalette = async (key) => {
         if (key === paletteNow) return
         try {
@@ -1477,6 +1483,15 @@ window.__ModuleLoader__.load({
           await settings.reload()
         } catch (caught) {
           console.error('[engram] graph palette save failed', caught)
+        }
+      }
+      const pickSurface = async (key) => {
+        if (key === surfaceNow) return
+        try {
+          await request('/settings', { method: 'POST', body: { ui: { graphSurface: key } } })
+          await settings.reload()
+        } catch (caught) {
+          console.error('[engram] graph surface save failed', caught)
         }
       }
       useEffect(() => {
@@ -1492,6 +1507,15 @@ window.__ModuleLoader__.load({
               // 保留调色板自己的第二色/高亮色，别再压成单色（否则自选配色也没有渐变层次）
               return { ...base, nodeLight: lightenColor(base.node, 0.5) }
             })()
+        // 左下角胶囊强制深/浅背景时，画布底色和「暗色主题」判定一起跟着切。
+        if (ui.graphSurface === 'dark' || ui.graphSurface === 'light') {
+          const forcedDark = ui.graphSurface === 'dark'
+          palette = {
+            ...palette,
+            dark: forcedDark,
+            ringFill: forcedDark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
+          }
+        }
         const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
@@ -1919,8 +1943,20 @@ window.__ModuleLoader__.load({
           canvas.removeEventListener('wheel', onWheel)
         }
       }, [graph.data, settings.data])
-      return h('div', { className: 'eng-graph-canvas-wrap' },
+      const surfaceStyle = surfaceNow === 'dark'
+        ? { background: '#0b1020' }
+        : surfaceNow === 'light' ? { background: '#f6f8fc' } : undefined
+      return h('div', { className: 'eng-graph-canvas-wrap', style: surfaceStyle },
         h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '3D 记忆海' }),
+        h('div', { className: 'eng-graph-pill eng-graph-pill-bottom', role: 'group', 'aria-label': '关系图背景深浅' },
+          [['theme', '跟随主题'], ['light', '浅色'], ['dark', '深色']].map(([key, label]) => h('button', {
+            key,
+            type: 'button',
+            'data-tone': key,
+            'data-active': surfaceNow === key ? 'true' : 'false',
+            title: key === 'theme' ? '背景跟随当前主题（默认）' : key === 'light' ? '固定浅色背景' : '固定深色背景',
+            onClick: () => pickSurface(key),
+          }, label))),
         h('div', { className: 'eng-graph-pill', role: 'group', 'aria-label': '关系图配色' },
           [['dsh', '跟随主题'], ['codex', '蓝紫星辰']].map(([key, label]) => h('button', {
             key,

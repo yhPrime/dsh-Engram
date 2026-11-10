@@ -347,6 +347,12 @@ check('关系图页：整块画布 + 右上角配色胶囊（跟随主题 / 蓝�
   assert.ok(tree.includes('eng-graph-pill'), '没有配色胶囊')
   assert.ok(tree.includes('跟随主题'), '胶囊缺少「跟随主题」')
   assert.ok(tree.includes('蓝紫星辰'), '胶囊缺少「蓝紫星辰」')
+  assert.ok(tree.includes('eng-graph-pill-bottom'), '缺少左下角背景胶囊')
+  assert.ok(tree.includes('浅色') && tree.includes('深色'), '左侧胶囊缺少深浅两项')
+  const source = loaded.source
+  assert.ok(source.includes('graphSurface'), '背景深浅没有写进 ui 设置')
+  assert.ok(source.includes("#0b1020"), '深色背景没有实际底色')
+  assert.ok(source.includes("#f6f8fc"), '浅色背景没有实际底色')
 })
 check('关系图配色：多层背景只取 linear 那层；浅色停靠点压进可读区间；有「蓝紫星辰」', () => {
   const parse = module.parseGradientStops

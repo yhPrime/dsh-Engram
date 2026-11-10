@@ -555,6 +555,10 @@ export function updateSkillMeta(dataDir, slug, patch = {}) {
   if (Array.isArray(patch.notes)) {
     meta.notes = patch.notes.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 50)
   }
+  // 排序：新建默认高（90），用户可手动调；范围 0~100。
+  if (patch.order !== undefined && Number.isFinite(Number(patch.order))) {
+    meta.order = Math.max(0, Math.min(100, Math.round(Number(patch.order))))
+  }
   writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
   const committed = commitSkills(dataDir, `skill(${slug}): meta`)
   if (!committed) {
