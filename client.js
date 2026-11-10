@@ -796,7 +796,7 @@ window.__ModuleLoader__.load({
       const [content, setContent] = useState('')
       const [fileName, setFileName] = useState('')
       const [dragging, setDragging] = useState(false)
-      const [showPaste, setShowPaste] = useState(false)
+      const [showAdvanced, setShowAdvanced] = useState(false)
       const [sourcePath, setSourcePath] = useState('')
       const [categoriesDraft, setCategoriesDraft] = useState('')
       const [notesDraft, setNotesDraft] = useState('')
@@ -831,9 +831,38 @@ window.__ModuleLoader__.load({
           setError(`读取失败：${caught && caught.message ? caught.message : String(caught)}`)
         }
       }
+      /** 从拖放里尽量抠出本地绝对路径：宿主拦截了 File 对象时，uri-list / text 里往往还留着 file:// 路径。 */
+      const droppedPathOf = (event) => {
+        const dt = event && event.dataTransfer
+        if (!dt || typeof dt.getData !== 'function') return ''
+        let raw = ''
+        try {
+          raw = dt.getData('text/uri-list') || dt.getData('text/plain') || ''
+        } catch {
+          raw = ''
+        }
+        const first = String(raw || '').split(/\r?\n/u).map((line) => line.trim()).find((line) => line !== '') || ''
+        if (/^file:\/\//iu.test(first)) {
+          try {
+            return decodeURIComponent(first.replace(/^file:\/\/\/?/iu, ''))
+          } catch {
+            return ''
+          }
+        }
+        return /^[A-Za-z]:[\\/]/u.test(first) ? first : ''
+      }
       const onDrop = async (event) => {
         event.preventDefault()
         setDragging(false)
+        // 1) 能拿到路径就先填路径：服务端直读最稳，不依赖宿主是否肯给 File
+        const droppedPath = droppedPathOf(event)
+        if (droppedPath !== '') {
+          setSourcePath(droppedPath)
+          setContent('')
+          setFileName('')
+          setError('')
+          return
+        }
         const items = (event.dataTransfer && event.dataTransfer.items) || []
         const files = []
         for (const item of items) {
@@ -850,8 +879,11 @@ window.__ModuleLoader__.load({
           const file = item.getAsFile()
           if (file !== null) files.push(file)
         }
-        const picked = files.find((file) => /^skill\.md$/iu.test(file.name)) || files.find((file) => /\.md$/iu.test(file.name)) || files[0]
-        if (picked === undefined) setError('没找到 SKILL.md：把技能文件夹或 SKILL.md 拖进来')
+        // 2) items 为空时退回 dataTransfer.files
+        const fallback = Array.from((event.dataTransfer && event.dataTransfer.files) || [])
+        const all = files.length > 0 ? files : fallback
+        const picked = all.find((file) => /^skill\.md$/iu.test(file.name)) || all.find((file) => /\.md$/iu.test(file.name)) || all[0]
+        if (picked === undefined) setError('没读到文件：在下面「来源路径」粘上绝对路径也能导入（服务端直接读）')
         else await takeFile(picked)
       }
       const onPicked = async (event) => {
@@ -883,50 +915,27 @@ window.__ModuleLoader__.load({
           h('h3', { className: 'eng-modal-title' }, '添加技能'),
           h('div', { className: 'eng-dropzone', 'data-dragging': dragging ? 'true' : 'false', role: 'button', tabIndex: 0, title: '拖入技能文件夹或 SKILL.md', onClick: () => { if (fileInputRef.current) fileInputRef.current.click() }, onDragOver: (event) => { event.preventDefault(); setDragging(true) }, onDragLeave: () => setDragging(false), onDrop: onDrop },
             h('div', { className: 'eng-dropzone-title' }, '拖拽技能到此处'),
-            h('div', { className: 'eng-dropzone-sub' }, '支持技能文件夹或单个 SKILL.md'),
             h('div', { className: 'eng-dropzone-actions' },
               h('button', { type: 'button', className: 'eng-dropzone-link', onClick: (event) => { event.stopPropagation(); if (dirInputRef.current) dirInputRef.current.click() } }, '选择文件夹'),
               h('span', { className: 'eng-muted' }, '/'),
               h('button', { type: 'button', className: 'eng-dropzone-link', onClick: (event) => { event.stopPropagation(); if (fileInputRef.current) fileInputRef.current.click() } }, '选择文件')),
-            fileName === '' ? null : h('div', { className: 'eng-dropzone-file' }, `已选择：${fileName}（${content.length} 字）`)),
+            fileName === '' ? null : h('div', { className: 'eng-dropzone-file' }, `已选择：${fileName}`)),
           h('input', { ref: fileInputRef, type: 'file', accept: '.md,.markdown,text/markdown', style: { display: 'none' }, onChange: onPicked }),
           h('input', { ref: dirInputRef, type: 'file', webkitdirectory: '', directory: '', multiple: true, style: { display: 'none' }, onChange: onPicked }),
-          h('div', { className: 'eng-fixed-target' },
-            h('span', { className: 'eng-muted' }, '安装位置'),
-            h('code', { className: 'eng-mono', style: { fontSize: 12 } }, '经验库 .exp/skills/<slug>/（固定，不用填）')),
-          h('div', { className: 'eng-fixed-target', style: { marginTop: 10 } },
-            h('span', { className: 'eng-muted' }, '来源路径'),
-            h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, value: sourcePath, placeholder: 'C:\\Users\\you\\my-skill（技能文件夹或 SKILL.md）', onChange: (event) => setSourcePath(event.target.value) })),
-          h('div', { className: 'eng-muted', style: { marginTop: 4, fontSize: 12 } }, '拖拽被宿主窗口拦掉时用这个：粘绝对路径由服务端直接读（文件夹或 SKILL.md；zip 请先解压）。'),
-          h('div', { className: 'eng-fixed-target', style: { marginTop: 10 } },
-            h('span', { className: 'eng-muted' }, '分类'),
-            h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, value: categoriesDraft, placeholder: '逗号分隔，可多个（技能套件常用）', onChange: (event) => setCategoriesDraft(event.target.value) })),
-          h('div', { className: 'eng-fixed-target', style: { marginTop: 8 } },
-            h('span', { className: 'eng-muted' }, '便签'),
-            h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, value: notesDraft, placeholder: '逗号分隔，可多条（给人看的备注）', onChange: (event) => setNotesDraft(event.target.value) })),
-          h('div', { className: 'eng-muted', style: { marginTop: 4, fontSize: 12 } }, '分类与便签会写到每条导入的技能上，之后还能在技能详情里改。'),
-          h('ul', { className: 'eng-req' },
-            h('li', null, '技能文件夹需包含 SKILL.md'),
-            h('li', null, '套件文件夹：子目录各带 SKILL.md 时按套件逐个导入（需用「来源路径」）'),
-            h('li', null, 'SKILL.md 需带 YAML 的 name 与 description'),
-            h('li', null, '导入只复制正文；scripts/ 等附件可在导入后用 exp_skill_attach 挂上')),
-          showPaste
-            ? h('textarea', { className: 'eng-textarea', rows: 8, style: { marginTop: 10 }, value: content, onChange: (event) => { setContent(event.target.value); setFileName('') }, placeholder: '--- name: 我的技能 description: 一句话说明 --- 再接正文' })
-            : h('button', { type: 'button', className: 'eng-dropzone-link', style: { marginTop: 8, fontSize: 12 }, onClick: () => setShowPaste(true) }, '没有文件？直接粘贴 SKILL.md 正文'),
-          h('div', { className: 'eng-modal-warn' },
-            h('div', null, h('b', null, '会产生额外消耗：'), '导入时会开一个临时模型会话读一遍正文，算出分类、标签、排序分——这是一次真实的模型调用（按当前模型计费）。'),
-            h('div', { style: { marginTop: 4 } }, '宿主没有可用的模型服务时会退回本地关键词归类，那种情况不消耗模型，结果里会标明「本地」。')),
-          error ? h(Banner, { bad: true }, error) : null,
-          result
-            ? h('div', { className: 'eng-card', style: { padding: 12, marginTop: 12 } },
-              h('div', { style: { fontWeight: 620, marginBottom: 6 } }, result.suite ? `已导入技能套件：${result.count} 个技能` : `已导入：${(result.items && result.items[0] ? result.items[0].name : result.name)}（${(result.items && result.items[0] ? result.items[0].action : result.action)}）`),
-              (result.items || [result]).map((item) => h('div', { key: item.slug || item.name, className: 'eng-muted', style: { lineHeight: 1.8 } },
-                `· ${item.name}（${item.slug}）分类：${item.category || '未分类'}${item.classifier === 'local' ? '（本地归类）' : ''}`)),
-              h('div', { className: 'eng-muted', style: { marginTop: 6 } }, '导入完成后会自动关掉弹窗，列表随即刷新。'))
+          h('input', { className: 'eng-input', style: { marginTop: 10 }, autoFocus: true, value: sourcePath, onKeyDown: (event) => { if (event.key === 'Enter' && canSubmit && !busy) submit() }, placeholder: '或粘贴来源路径：C:\\Users\\you\\my-skill（最稳，服务端直接读）', onChange: (event) => setSourcePath(event.target.value) }),
+          h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, '文件夹需含 SKILL.md；套件（子目录各带 SKILL.md）逐个导入；只复制正文，脚本用 exp_skill_attach 补；导入会用一次模型调用做分类。'),
+          showAdvanced
+            ? h('div', null,
+              h('input', { className: 'eng-input', style: { marginTop: 8 }, value: categoriesDraft, placeholder: '分类（逗号分隔，可多个）', onChange: (event) => setCategoriesDraft(event.target.value) }),
+              h('input', { className: 'eng-input', style: { marginTop: 8 }, value: notesDraft, placeholder: '便签（逗号分隔，可多条）', onChange: (event) => setNotesDraft(event.target.value) }),
+              h('textarea', { className: 'eng-textarea', rows: 6, style: { marginTop: 8 }, value: content, onChange: (event) => { setContent(event.target.value); setFileName(''); setSourcePath('') }, placeholder: '或者直接粘贴 SKILL.md 正文' }))
             : null,
+          error ? h(Banner, { bad: true }, error) : null,
           h('div', { className: 'eng-modal-actions' },
-            h(Button, { small: true, onClick: props.onClose }, result ? '关闭' : '取消'),
-            h(Button, { small: true, kind: 'primary', disabled: !canSubmit, onClick: submit }, busy ? '安装中…（会调一次模型，套件按个数累加）' : '安装'))))
+            h('button', { type: 'button', className: 'eng-dropzone-link', style: { marginRight: 'auto', alignSelf: 'center' }, onClick: () => setShowAdvanced(!showAdvanced) }, showAdvanced ? '收起高级' : '高级：分类 / 便签 / 粘贴正文'),
+            h(Button, { small: true, onClick: props.onClose }, '取消'),
+            h(Button, { small: true, kind: 'primary', disabled: !canSubmit, onClick: submit }, busy ? '导入中…' : '安装'))))
+
     }
 
     function Types(props) {

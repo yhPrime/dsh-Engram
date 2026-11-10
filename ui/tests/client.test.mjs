@@ -283,27 +283,24 @@ check('导入成功后弹窗自动关闭并刷新列表，同时留一条「已�
   assert.ok(source.includes('setImportOpen(false)'), '导入成功没有关弹窗')
   assert.ok(source.includes('setImportNotice('), '导入成功没有留下可见回执')
   assert.ok(source.includes('refreshAll()'), '导入成功后没有刷新列表')
-  assert.ok(source.includes('导入完成后会自动关掉弹窗'), '弹窗里没说明会自动关')
   const tree = JSON.stringify(module.ImportSkillDialog({ onClose: () => {}, onImported: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
-  assert.ok(tree.includes('分类'), '导入弹窗没有分类输入（套件要多分类）')
-  assert.ok(tree.includes('便签'), '导入弹窗没有便签输入')
+  assert.ok(tree.includes('高级'), '弹窗没有「高级」折叠入口（分类/便签藏在里面）')
+  assert.ok(source.includes('分类（逗号分隔，可多个）') && source.includes('便签（逗号分隔，可多条）'), '高级里没有分类/便签输入')
 })
-check('添加技能弹窗：拖拽区 + 固定安装位置，不再有路径输入', () => {
+check('添加技能弹窗：拖拽区 + 来源路径，高级选项折叠（做过减法）', () => {
   const dialog = module.ImportSkillDialog
   assert.equal(typeof dialog, 'function', '弹窗没导出给测试')
   const tree = JSON.stringify(dialog({ onClose: () => {}, onImported: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
-  for (const text of ['拖拽技能到此处', '选择文件夹', '选择文件', '安装位置', '技能文件夹需包含 SKILL.md', '取消', '安装']) {
+  for (const text of ['拖拽技能到此处', '选择文件夹', '选择文件', '或粘贴来源路径', '取消', '安装', '高级：分类 / 便签 / 粘贴正文']) {
     assert.ok(tree.includes(text), `弹窗缺少：${text}`)
   }
   assert.equal(tree.includes('SKILL.md 路径（绝对路径）'), false, '还有旧的安装路径输入框')
-  assert.ok(tree.includes('来源路径'), '没有「来源路径」兜底输入（拖拽被宿主拦死时用）')
-  assert.ok(loaded.source.includes("sourcePath.trim() !== '' ? { path:"), '来源路径没有走服务端直读分支')
-  assert.ok(tree.includes('onDrop') || tree.includes('[fn]'), '拖拽事件没挂上')
+  assert.equal(tree.includes('安装位置'), false, '安装位置那块说明已经砍掉')
+  assert.equal(tree.includes('会产生额外消耗'), false, '长篇费用说明已压成一行小字')
   assert.ok(tree.includes('webkitdirectory'), '没有「选择文件夹」的目录选择器')
-  assert.ok(tree.includes('exp/skills/'), '没写固定安装位置')
   const source = loaded.source
-  assert.ok(source.includes('findSkillFileInEntry'), '拖文件夹时没有往下找 SKILL.md')
-  assert.ok(source.includes('浏览器里解不开 zip'), 'zip 没有给出可理解的提示')
+  assert.ok(source.includes("sourcePath.trim() !== '' ? { path:"), '来源路径没有走服务端直读分支')
+  assert.ok(source.includes('droppedPathOf'), '拖放没有从 uri-list 里抠路径的兜底')
 })
 check('推送前发现远端有新提交：弹窗给「覆盖 / 换远端仓库 / 另建分支」三条路', () => {
   const dialog = module.PushConflictDialog
