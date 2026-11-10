@@ -481,13 +481,16 @@ export function unregisterSkillFromDsh(dataDir, slug) {
   if (path.resolve(target) === path.resolve(expected)) {
     let isLink = false
     try {
-      isLink = fs.lstatSync(target).isSymbolicLink()
+      // Windows 的 junction 在 lstat 里被报成「目录 + 重解析点」，isSymbolicLink() 是 false，
+      // 只认它就会永远删不掉链接——表现就是点了「取消注册」毫无反应。
+      // readlinkSync 对 symlink 和 junction 都能读出目标，用它判更可靠。
+      isLink = fs.lstatSync(target).isSymbolicLink() || fs.readlinkSync(target) !== ''
     } catch {
       isLink = false
     }
     if (isLink) {
       try {
-        fs.rmSync(target, { force: true })
+        fs.rmSync(target, { recursive: true, force: true })
         removed = true
       } catch {
         removed = false
