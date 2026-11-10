@@ -311,6 +311,17 @@ check('每个页面都渲染出 eng-fill + 自己的滚动窗口', () => {
   }
 })
 
+check('顶部刷新有可见回执；真实数据不再占位子', () => {
+  const source = loaded.source
+  assert.equal(source.includes('数据：${source.label}'), false, '还在显示「数据：…」徽标')
+  assert.ok(source.includes("刷新中…"), '刷新没有进行中状态')
+  assert.ok(source.includes('已刷新'), '刷新完成没有时间回执')
+  assert.ok(source.includes('reloadToken'), '刷新没有重新挂载当前页，列表不会重新请求')
+  const tree = JSON.stringify(module.Console({}), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(tree.includes('刷新'), '顶部没有刷新按钮')
+  assert.ok(tree.includes('经验与技能的本地控制台'), '控制台标题没渲染')
+})
+
 check('经验 / 技能页：左右两栏各自独立滚动（页面不再整页滚）', () => {
   const source = loaded.source
   assert.ok(source.includes('.eng-content[data-fill="true"]'), '缺少 data-fill 布局规则')
