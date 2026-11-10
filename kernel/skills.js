@@ -158,6 +158,9 @@ function defaultMeta(id) {
   return {
     id,
     typeName: '',
+    // 一个技能可以挂多个分类（技能套件常见：一个套件覆盖多类任务），便签是给人看的备注
+    typeNames: [],
+    notes: [],
     context: [],
     triggers: [],
     confidence: { uses: 0, helped: 0, hurt: 0, lastUsedAt: null },
@@ -176,6 +179,8 @@ function normalizeMeta(raw, id) {
   meta.obstacles = raw && raw.obstacles && typeof raw.obstacles === 'object' ? raw.obstacles : {}
   meta.resolved = Array.isArray(raw && raw.resolved) ? raw.resolved.slice(-RESOLVED_LIMIT) : []
   meta.derivedFrom = Array.isArray(raw && raw.derivedFrom) ? raw.derivedFrom : []
+  meta.typeNames = Array.isArray(raw && raw.typeNames) ? raw.typeNames.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()).slice(0, 12) : []
+  meta.notes = Array.isArray(raw && raw.notes) ? raw.notes.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()).slice(0, 50) : []
   meta.triggers = Array.isArray(raw && raw.triggers) ? raw.triggers : []
   meta.context = Array.isArray(raw && raw.context) ? raw.context : []
   meta.files = Array.isArray(raw && raw.files)
@@ -503,6 +508,30 @@ export function unregisterSkillFromDsh(dataDir, slug) {
   return { slug, targetDir: target, removed, registered: false }
 }
 
+/**
+ * 改技能的「分类 + 便签」这类元数据。
+ * 技能套件常用：一个技能挂多个分类、加几条给人看的便签；这些不参与排序打分，只做标识。
+ */
+export function updateSkillMeta(dataDir, slug, patch = {}) {
+  const skill = readSkillBySlug(dataDir, slug)
+  if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  const meta = skill.meta
+  if (patch.typeName !== undefined) meta.typeName = String(patch.typeName || '').trim()
+  if (Array.isArray(patch.typeNames)) {
+    meta.typeNames = patch.typeNames.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 12)
+  }
+  if (Array.isArray(patch.notes)) {
+    meta.notes = patch.notes.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 50)
+  }
+  writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
+  const committed = commitSkills(dataDir, `skill(${slug}): meta`)
+  if (!committed) {
+    meta.pendingCommit = true
+    writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
+  }
+  return { slug, typeName: meta.typeName, typeNames: meta.typeNames, notes: meta.notes, commit: committed }
+}
+
 /** 忘记技能 = 删除这个技能目录（注册着的先取消注册，免得留悬空链接）。 */
 export function forgetSkill(dataDir, slug) {
   const skill = readSkillBySlug(dataDir, slug)
@@ -679,6 +708,8 @@ function createSkillUnlocked(dataDir, draft) {
   const action = existing === null ? 'created' : 'updated'
   const meta = existing === null ? defaultMeta(slug) : existing.meta
   meta.typeName = draft.typeName || meta.typeName || ''
+  if (Array.isArray(draft.typeNames)) meta.typeNames = draft.typeNames.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 12)
+  if (Array.isArray(draft.notes)) meta.notes = draft.notes.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 50)
   meta.context = Array.isArray(draft.context) ? draft.context : meta.context
   meta.triggers = Array.isArray(draft.triggers) ? draft.triggers : meta.triggers
   if (draft.order !== undefined && Number.isFinite(Number(draft.order))) {

@@ -295,13 +295,57 @@ export function readImportSource({ filePath = '', content = '' } = {}) {
   return { text: pasted, source: '粘贴内容' }
 }
 
+function findSkillDoc(dir) {
+  let names = []
+  try {
+    names = fs.readdirSync(dir)
+  } catch {
+    return null
+  }
+  const found = names.find((name) => /^skill\.md$/iu.test(name))
+  return found === undefined ? null : path.join(dir, found)
+}
+
+/**
+ * 读来源，可能返回多条：
+ * - 给文件 → 一条；
+ * - 给「单个技能文件夹」（根上有 SKILL.md）→ 一条；
+ * - 给「技能套件文件夹」（根上没有，但子目录各带 SKILL.md）→ 每个子技能一条。
+ * 浏览器拖进来的文件夹只会走 content（单条），套件需要服务端直读路径。
+ */
+export function readImportSources({ filePath = '', content = '' } = {}) {
+  const target = String(filePath || '').trim()
+  if (target !== '') {
+    let stat = null
+    try {
+      stat = fs.statSync(target)
+    } catch {
+      throw new Error(`读不到这个路径：${target}`)
+    }
+    if (stat.isFile()) return [readImportSource({ filePath: target })]
+    if (!stat.isDirectory()) throw new Error(`不是一个文件或文件夹：${target}`)
+    if (findSkillDoc(target) !== null) return [readImportSource({ filePath: target })]
+    const items = []
+    for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      if (findSkillDoc(path.join(target, entry.name)) === null) continue
+      items.push(readImportSource({ filePath: path.join(target, entry.name) }))
+    }
+    if (items.length === 0) {
+      throw new Error(`这个文件夹里没有 SKILL.md，也没有带 SKILL.md 的子目录（技能套件要求每个技能一个子目录）：${target}`)
+    }
+    return items
+  }
+  return [readImportSource({ content })]
+}
+
 /**
  * 导入一条外部技能。
  *
  * 返回里带 classifier（'session' 或 'local'）与 note，调用方要原样展示——
  * 用户有权知道这次导入到底花没花模型调用。
  */
-export async function importSkill({ dataDir, filePath = '', content = '', typeNames = [], deps = {} } = {}) {
+export async function importSkill({ dataDir, filePath = '', content = '', typeNames = [], categories = [], notes = [], deps = {} } = {}) {
   if (String(dataDir || '') === '') throw new Error('没有数据目录，无法写入技能')
   const { text, source } = readImportSource({ filePath, content })
   const parsed = parseSkillMarkdown(text)
@@ -334,6 +378,8 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
     description: parsed.description,
     body,
     typeName: decided.category,
+    typeNames: Array.isArray(categories) ? categories : [],
+    notes: Array.isArray(notes) ? notes : [],
     context: decided.tags,
     triggers: decided.tags,
     order: decided.order,
@@ -351,4 +397,17 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
     model: decided.model || '',
     note: decided.note,
   }
+}
+
+/**
+ * 导入一到多个技能：路径给的是套件文件夹时逐个导入，返回 items。
+ * 每条都会真实走一次分类（模型会话或本地关键词），所以套件导入是 N 次分类调用——界面上要如实说明。
+ */
+export async function importSkills({ dataDir, filePath = '', content = '', typeNames = [], categories = [], notes = [], deps = {} } = {}) {
+  const sources = readImportSources({ filePath, content })
+  const items = []
+  for (const source of sources) {
+    items.push(await importSkill({ dataDir, content: source.text, typeNames, categories, notes, deps }))
+  }
+  return { suite: sources.length > 1, count: items.length, items }
 }

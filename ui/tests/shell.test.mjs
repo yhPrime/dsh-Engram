@@ -614,6 +614,36 @@ await check('POST /skill-global：注册到全局 / 取消注册；缺 slug、�
   assert.equal((await call(source, '/skill-global', { method: 'POST', body: { slug: 'global-api', action: 'nope' } })).payload.error.code, 'bad-action')
 })
 
+await check('POST /skills/import：技能套件文件夹 → 逐个导入并返回 items', async () => {
+  const dir = tempDir()
+  const suite = path.join(tempDir(), 'suite')
+  fs.mkdirSync(path.join(suite, 'one'), { recursive: true })
+  fs.mkdirSync(path.join(suite, 'two'), { recursive: true })
+  fs.writeFileSync(path.join(suite, 'one', 'SKILL.md'), '---\nname: 套件一\ndescription: 一\n---\n\n# 一\n', 'utf8')
+  fs.writeFileSync(path.join(suite, 'two', 'SKILL.md'), '---\nname: 套件二\ndescription: 二\n---\n\n# 二\n', 'utf8')
+  const source = createLiveSource({ dataDir: dir })
+  const out = await call(source, '/skills/import', { method: 'POST', body: { path: suite, categories: ['套件类'], notes: ['便签'] } })
+  assert.equal(out.status, 200)
+  assert.equal(out.payload.data.suite, true)
+  assert.equal(out.payload.data.count, 2)
+  assert.equal(out.payload.data.items.length, 2)
+  const listed = await call(source, '/skills')
+  assert.equal(listed.payload.data.skills.length, 2)
+  assert.deepEqual([...listed.payload.data.skills[0].typeNames], ['套件类'])
+})
+
+await check('POST /skill-meta：改分类与便签；缺 slug 400', async () => {
+  const dir = tempDir()
+  createSkill(dir, { slug: 'meta-demo', name: '元数据', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })
+  const source = createLiveSource({ dataDir: dir })
+  const out = await call(source, '/skill-meta', { method: 'POST', body: { slug: 'meta-demo', typeNames: ['甲', '乙'], notes: ['备注一'] } })
+  assert.equal(out.status, 200)
+  assert.deepEqual([...out.payload.data.typeNames], ['甲', '乙'])
+  const row = (await call(source, '/skills')).payload.data.skills.find((item) => item.id === 'meta-demo')
+  assert.deepEqual([...row.notes], ['备注一'])
+  assert.equal((await call(source, '/skill-meta', { method: 'POST', body: {} })).payload.error.code, 'slug-required')
+})
+
 await check('POST /skill-forget：删掉技能目录；缺 slug 400', async () => {
   const dir = tempDir()
   createSkill(dir, { slug: 'forget-me', name: '待忘技能', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })

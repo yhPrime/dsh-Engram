@@ -367,12 +367,22 @@ body: `{ intent, context? }` → `{ action, slug?, derivedFromCount? }`；mock �
 ### `POST /skill-feedback`
 body: `{ slug, result: helped|hurt|neutral }` → `{ id, result, G_before?, G_after? }`
 
+### `POST /skills/import`
+body: `{ path?, content?, categories?: string[], notes?: string[] }` → `{ suite, count, items: [{ slug, name, category, tags, order, classifier, note }] }`
+
+- `path` 指向文件夹时：根上有 SKILL.md → 单条；根上没有、但子目录各带 SKILL.md → 按**技能套件**逐个导入（`suite:true`）。
+- `categories` / `notes` 会写到每条导入技能的 `skill.json`（一个技能可挂多个分类、多条便签）。
+- 每条都会走一次分类（临时模型会话或本地关键词），套件是 N 次分类调用。
+
 ### `POST /skill-global`
 body: `{ slug, action: register|unregister }` → `{ slug, targetDir, mode, registered }`
 
 `register`：把 `<dataDir>/skills/<slug>/` **链接**（优先 junction，建不了才复制）到 `$DSH_HOME/skills/<slug>/`，之后按普通 DSH 技能加载。
 注册后**经验库不再排序/召回这个技能**（`listSkills({onlyLocal:true})` 会过滤掉它），避免两个引擎同时抢着用；`unregister` 删掉这条链接并清掉记录，技能回到经验库排序池。
 目标已被别人占用时返回 400 `skill-global-failed`，绝不覆盖。错误码：`slug-required` / `bad-action` / `unsupported`。
+
+### `POST /skill-meta`
+body: `{ slug, typeNames?: string[], notes?: string[] }` → `{ slug, typeName, typeNames, notes }`：改技能的分类（可多个）与便签（可多条）。错误码：`slug-required` / `skill-meta-failed`。
 
 ### `POST /skill-forget`
 body: `{ slug }` → `{ slug, deleted, unregistered }`：删除技能目录（注册着的会先取消注册）。错误码：`slug-required` / `skill-forget-failed`。

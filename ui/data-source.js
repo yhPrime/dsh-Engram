@@ -438,6 +438,8 @@ export function skillRowOf(input = {}) {
     description: String(input.description || ''),
     body: String(input.body || ''),
     typeName: String(input.typeName || '未分类'),
+    typeNames: Array.isArray(input.typeNames) ? input.typeNames.map(String) : [],
+    notes: Array.isArray(input.notes) ? input.notes.map(String) : [],
     context: Array.isArray(input.context) ? input.context.map(String) : [],
     triggers: Array.isArray(input.triggers) ? input.triggers.map(String) : [],
     order: Math.max(0, Math.min(100, Math.trunc(Number(input.order) || 0))),

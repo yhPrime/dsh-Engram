@@ -261,8 +261,21 @@ check('技能：全局注册 / 忘记技能都由人点按钮，模型没有自�
   assert.ok(source.includes('忘记技能'), '没有「忘记技能」按钮')
   assert.ok(source.includes("current.globalRegistered ? '取消注册' : '注册技能到全局'"), '注册后按钮没有变成「取消注册」')
   assert.ok(source.includes('确认忘记'), '忘记技能没有两步确认')
+  assert.ok(source.includes('/skill-meta'), '没有保存分类/便签的接口')
+  assert.ok(source.includes('SkillMetaEditor'), '没有分类/便签编辑器')
+  assert.ok(source.includes('分类（逗号分隔，可多个）'), '技能详情里没有多分类输入')
+  assert.ok(source.includes('便签（每行一条）'), '技能详情里没有便签输入')
   const tree = JSON.stringify(module.Skills({ onChanged: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
   assert.ok(tree.includes('eng-skill-row') || tree.includes('还没有固化技能'), '技能页没渲染')
+})
+check('导入完弹窗不自动关（不重挂页面），关掉才刷新', () => {
+  const source = loaded.source
+  assert.ok(source.includes('onClose: () => { setImportOpen(false); refreshAll() }'), '关弹窗时没有刷新列表')
+  assert.ok(source.includes('onImported: () => {}'), '导入成功还在立刻刷新（会换 key 把弹窗卸载掉）')
+  assert.ok(source.includes('弹窗不会自动关'), '没有告诉用户弹窗会保留')
+  const tree = JSON.stringify(module.ImportSkillDialog({ onClose: () => {}, onImported: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(tree.includes('分类'), '导入弹窗没有分类输入（套件要多分类）')
+  assert.ok(tree.includes('便签'), '导入弹窗没有便签输入')
 })
 check('添加技能弹窗：拖拽区 + 固定安装位置，不再有路径输入', () => {
   const dialog = module.ImportSkillDialog
