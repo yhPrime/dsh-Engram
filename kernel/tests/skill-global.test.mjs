@@ -78,6 +78,25 @@ await check('目标被别的技能占用时拒绝注册（不覆盖别人的技�
   fs.rmSync(path.join(globalRoot, 'global-demo'), { recursive: true, force: true })
 })
 
+await check('junction 取消注册：链接真的被删掉（Windows 重解析点不能只靠 isSymbolicLink）', () => {
+  createSkill(dataDir, { slug: 'junction-demo', name: '链接演示', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })
+  const linkRoot = path.join(root, 'junction-root')
+  const out = registerSkillGlobally(dataDir, 'junction-demo', { root: linkRoot })
+  assert.ok(fs.existsSync(out.targetDir), '链接没建出来')
+  let isLink = false
+  try {
+    isLink = fs.lstatSync(out.targetDir).isSymbolicLink() || fs.readlinkSync(out.targetDir) !== ''
+  } catch {
+    isLink = false
+  }
+  assert.equal(isLink, true, '目标不是链接（注册时退成了复制）')
+  const removed = unregisterSkillFromDsh(dataDir, 'junction-demo')
+  assert.equal(removed.removed, true, '取消注册没真的删掉链接')
+  assert.equal(fs.existsSync(out.targetDir), false, '链接还在')
+  assert.equal(fs.existsSync(path.join(dataDir, 'skills', 'junction-demo', 'SKILL.md')), true, '库里的技能被误删')
+  forgetSkill(dataDir, 'junction-demo')
+})
+
 await check('忘记技能：删掉技能目录；注册着的先取消注册，不留悬空链接', () => {
   const out = registerSkillGlobally(dataDir, 'global-demo', { root: globalRoot })
   assert.ok(fs.existsSync(out.targetDir))
