@@ -90,10 +90,14 @@ await check('junction 取消注册：链接真的被删掉（Windows 重解析�
     isLink = false
   }
   assert.equal(isLink, true, '目标不是链接（注册时退成了复制）')
+  // 库里再放一个脚本，专门验证「删链接不会顺着 junction 把目标内容删掉」
+  fs.mkdirSync(path.join(dataDir, 'skills', 'junction-demo', 'scripts'), { recursive: true })
+  fs.writeFileSync(path.join(dataDir, 'skills', 'junction-demo', 'scripts', 'keep.py'), 'print(1)\n', 'utf8')
   const removed = unregisterSkillFromDsh(dataDir, 'junction-demo')
   assert.equal(removed.removed, true, '取消注册没真的删掉链接')
   assert.equal(fs.existsSync(out.targetDir), false, '链接还在')
-  assert.equal(fs.existsSync(path.join(dataDir, 'skills', 'junction-demo', 'SKILL.md')), true, '库里的技能被误删')
+  assert.equal(fs.existsSync(path.join(dataDir, 'skills', 'junction-demo', 'SKILL.md')), true, '库里的 SKILL.md 被删了')
+  assert.equal(fs.existsSync(path.join(dataDir, 'skills', 'junction-demo', 'scripts', 'keep.py')), true, '库里的 scripts/ 被删了（递归删链接时跟进了目标）')
   forgetSkill(dataDir, 'junction-demo')
 })
 

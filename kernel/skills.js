@@ -489,8 +489,16 @@ export function unregisterSkillFromDsh(dataDir, slug) {
       isLink = false
     }
     if (isLink) {
+      // 关键：**绝不能**对链接用递归删除。Windows 上 fs.rm(recursive) 会先顺着 junction
+      // 进去把目标目录（也就是经验库里的技能）里的文件删光，再删掉链接本身——
+      // 实测这一下直接把 `.exp/skills/<slug>/SKILL.md` 和 scripts/ 删了。
+      // 删链接只能用 unlink（symlink）或 rmdir（junction），两者都不跟进去。
       try {
-        fs.rmSync(target, { recursive: true, force: true })
+        try {
+          fs.unlinkSync(target)
+        } catch {
+          fs.rmdirSync(target)
+        }
         removed = true
       } catch {
         removed = false
