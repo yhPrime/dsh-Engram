@@ -110,7 +110,7 @@ check('同 slug 再次沉淀 → updated，derivedFrom 合并且不重复建目�
   assert.equal(listSkills(agent.dataDir).length, 1)
 })
 
-check('沉淀 → 3 次 helped → exp_recall 只返回技能', () => {
+check('沉淀 → 3 次 helped → exp_recall 返回技能（经验候选并列）', () => {
   const agent = newAgent()
   seed(agent)
   const made = agent.call('exp_consolidate', { intent: '给 PPT 插页' })
@@ -118,7 +118,8 @@ check('沉淀 → 3 次 helped → exp_recall 只返回技能', () => {
   const recalled = agent.call('exp_recall', { intent: '给 PPT 插页' })
   assert.equal(recalled.mode, 'skill')
   assert.equal(recalled.skill.id, made.slug)
-  assert.equal(recalled.candidates.length, 0)
+  // 0.13 起技能与经验并列返回：技能给正文，候选给同类经验参考。
+  assert.ok(Array.isArray(recalled.candidates), 'candidates 不是数组')
 })
 
 check('技能召回后遇阻：record 带 skillId+blockedBy 进入签名计数', () => {

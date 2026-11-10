@@ -100,6 +100,20 @@ await check('召回决策：无关意图不硬塞技能', async () => {
   assert.notEqual(result.mode, 'skill-trial')
 })
 
+await check('技能命中时经验候选并列返回（不再被技能模式吞掉）', async () => {
+  const engine = engineModule.createEngine({ dataDir, env: process.env })
+  await engine.record({ intent: '把 Aelos 人形机器人的舞蹈动作左右镜像', action: '先按 200−x 反转 19 号舵机，再互换 A↔B', outcome: 'success' })
+  const result = await engine.recall({ intent: '把 Aelos 人形机器人的舞蹈动作左右镜像' })
+  assert.equal(result.mode, 'skill-trial')
+  assert.ok(Array.isArray(result.candidates), 'candidates 不是数组')
+  assert.ok(result.candidates.length > 0, '技能模式把经验候选吞掉了')
+})
+
+await check('新技能默认排在高位（order 90），后续靠使用回归', () => {
+  const created = skills.createSkill(dataDir, { slug: 'fresh-order', name: '新技能排序', description: '刚加进来的技能' })
+  const meta = JSON.parse(fs.readFileSync(path.join(created.dir, 'skill.json'), 'utf8'))
+  assert.equal(meta.order, 90, `新技能 order=${meta.order}`)
+})
 fs.rmSync(root, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

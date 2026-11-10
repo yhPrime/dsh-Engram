@@ -48,12 +48,12 @@ const setup = () => {
   return { dataDir, call, made, skill }
 }
 
-check('高确定技能：召回只返回技能，不列经验', () => {
+check('高确定技能：召回返回技能（经验候选并列）', () => {
   const { call, made, dataDir } = setup()
   for (let i = 0; i < 3; i += 1) applySkillOutcome(dataDir, made.slug, 'helped')
   const recalled = call('exp_recall', { intent: INTENT })
   assert.equal(recalled.mode, 'skill')
-  assert.equal(recalled.candidates.length, 0)
+  assert.ok(Array.isArray(recalled.candidates), 'candidates 应为数组')
   assert.equal(recalled.skill.id, made.slug)
   assert.ok(recalled.skill.body.includes('## 做法'))
   assert.ok(typeof recalled.skill.confidence.reason === 'string', JSON.stringify(recalled.skill.confidence))

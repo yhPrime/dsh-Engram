@@ -218,17 +218,31 @@ export function buildTools(defineTool, config = {}) {
       // 例如问页码时池里只剩 pptx-existing-deck-edit；此时 overall 的 pptx-page-number(0.525)
       // 明显更像，应该按「试用技能」给它，而不是错配给养熟的旧技能。
       const overallClearlyBetter = overallHit !== null
-        && (confidentHit === null || (overallHit.skill.slug !== confidentHit.skill.slug && overallHit.score >= confidentHit.score * 1.25))
+        && (confidentHit === null || (overallHit.skill.slug !== confidentHit.skill.slug && overallHit.score >= confidentHit.score))
       const picked = overallClearlyBetter ? { hit: overallHit, trial: true } : (confidentHit !== null ? { hit: confidentHit, trial: false } : (overallHit !== null ? { hit: overallHit, trial: true } : null))
+      const routing = args.all === true
+        ? 'off'
+        : (config.routing === 'shadow' ? 'shadow' : config.routing === 'off' ? 'off' : 'on')
+      let clusterId
+      if (args.cluster !== undefined && args.cluster !== null && String(args.cluster).trim() !== '') {
+        const type = findType(store.types, String(args.cluster))
+        if (type === null) throw new Error(`没有这个簇：${String(args.cluster)}（用 exp_type list 看现有类型）`)
+        clusterId = type.id
+      }
+      const result = rankExperiences(store, String(args.intent || ''), args.limit || 8, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context })
+      result.pendingSkills = pendingSkills
+      // 技能命中时不再吞掉经验候选：技能给正文，经验给参考（并列返回），
+      // 否则同一意图下刚写的经验会被技能模式完全遮住（验收时发现的读路径问题）。
       if (picked !== null) {
         const hit = picked.hit
         const mode = picked.trial ? 'skill-trial' : 'skill'
+        const candidates = (result.candidates || []).slice(0, 3)
         logUsage(dataDir, {
           tool: 'exp_recall',
           intent: String(args.intent || ''),
           mode,
           skill: hit.skill.slug,
-          candidates: 0,
+          candidates: candidates.length,
           hit: true,
           marked: args.mark === true,
         }, usageOptions)
@@ -245,25 +259,15 @@ export function buildTools(defineTool, config = {}) {
             confidence: { ...hit.skill.meta.confidence, reason: confidenceReason(hit.skill.meta) },
             score: Math.round(hit.score * 1000) / 1000,
           },
-          candidates: [],
+          candidates,
+          brief: result.brief,
+          route: result.route,
           pendingSkills,
           note: picked.trial
-            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：可以按它做，但先自行核对；用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后自动升级为高确定技能。`
-            : `高确定技能：直接用。成功用 exp_feedback("skill:${hit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
+            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：可以按它做，但先自行核对；用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后自动升级为高确定技能。下面的 candidates 是同类经验，可当参考。`
+            : `高确定技能：直接用，下面的 candidates 是同类经验（可参考、不必再排一遍）。成功用 exp_feedback("skill:${hit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
         }
-      }
-      const routing = args.all === true
-        ? 'off'
-        : (config.routing === 'shadow' ? 'shadow' : config.routing === 'off' ? 'off' : 'on')
-      let clusterId
-      if (args.cluster !== undefined && args.cluster !== null && String(args.cluster).trim() !== '') {
-        const type = findType(store.types, String(args.cluster))
-        if (type === null) throw new Error(`没有这个簇：${String(args.cluster)}（用 exp_type list 看现有类型）`)
-        clusterId = type.id
-      }
-      const result = rankExperiences(store, String(args.intent || ''), args.limit || 8, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context })
-      result.pendingSkills = pendingSkills
-      // 归纳提示（实验，2026-11-07）：同族样本够多时给一段原料让模型自己归纳；config.induction=false 可关。
+      }      // 归纳提示（实验，2026-11-07）：同族样本够多时给一段原料让模型自己归纳；config.induction=false 可关。
       if (config.induction !== false) {
         const induction = buildInduction(result.candidates, { minSamples: config.inductionMinSamples })
         if (induction !== null) result.induction = induction

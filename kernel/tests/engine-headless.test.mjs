@@ -68,7 +68,7 @@ await check('headless 全链路：记录 → 沉淀 → 采用 → 遇阻覆盖 
   for (let i = 0; i < 3; i += 1) engine.feedback({ id: `skill:${made.slug}`, result: 'helped' })
   const hit = engine.recall({ intent: '给 PPT 插页' })
   assert.equal(hit.mode, 'skill')
-  assert.equal(hit.candidates.length, 0)
+  assert.ok(Array.isArray(hit.candidates), 'candidates 应为数组（技能与经验并列返回）')
 
   let last = null
   for (let i = 0; i < 3; i += 1) {
