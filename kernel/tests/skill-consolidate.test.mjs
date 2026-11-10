@@ -67,6 +67,14 @@ check('同族 2 正 1 负 → 生成技能目录，含 derivedFrom/typeName/cont
   assert.ok(skill.body.includes('## 常见例外'))
 })
 
+check('自动沉淀的技能天生高排序（order 90）', () => {
+  const agent = newAgent()
+  seed(agent)
+  const made = agent.call('exp_consolidate', { intent: '给 PPT 插页' })
+  const skill = readSkill(path.join(skillsRootOf(agent.dataDir), made.slug))
+  assert.equal(skill.meta.order, 90, '沉淀出来的技能默认 order 应为 90')
+})
+
 check('技能正文含动作词，不被意图词（ppt/插页）占满', () => {
   const agent = newAgent()
   seed(agent)
