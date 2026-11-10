@@ -31,6 +31,7 @@ import fs from 'node:fs'
 import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
+import { exportSkillToDsh } from '../kernel/skills.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -570,6 +571,16 @@ export async function handleRequest(req, res, source) {
       if (action === 'init') return json(res, 200, { ok: true, data: await gitInit(dataDir, config) })
       if (action === 'pull') return json(res, 200, { ok: true, data: await gitPull(dataDir, config) })
       return json(res, 200, { ok: true, data: await gitPush(dataDir, config, { message: body && body.message }) })
+    }
+    if (route === '/skill-install') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const slug = String((body && body.slug) || '').trim()
+      if (slug === '') return fail(res, 400, 'slug-required', '缺少 slug')
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      const targetRoot = String((body && body.targetRoot) || '').trim()
+      const exported = exportSkillToDsh(dataDir, slug, targetRoot === '' ? {} : { targetRoot })
+      return json(res, 200, { ok: true, data: exported })
     }
     if (route === '/github') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')

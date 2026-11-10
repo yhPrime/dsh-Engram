@@ -27,7 +27,7 @@ import {
 } from './store.js'
 import { routeCluster } from './cluster.js'
 import { resolveEngramDataDir } from './settings.js'
-import { applySkillObstacle, applySkillOutcome, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill } from './skills.js'
+import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, exportSkillToDsh, listSkills, matchSkill, readSkillBySlug } from './skills.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 
@@ -228,6 +228,7 @@ export function buildTools(defineTool, config = {}) {
             description: skillHit.skill.description,
             body: skillHit.skill.body,
             context: skillHit.skill.meta.context,
+            files: (skillHit.skill.meta.files || []).map((item) => item.path),
             confidence: { ...skillHit.skill.meta.confidence, reason: confidenceReason(skillHit.skill.meta) },
             score: Math.round(skillHit.score * 1000) / 1000,
           },
@@ -344,12 +345,15 @@ export function buildTools(defineTool, config = {}) {
 
   const consolidateTool = defineTool({
     name: 'exp_consolidate',
-    description: '把同族经验沉淀成技能：同族 ≥3 条且 ≥2 正 1 负时，生成 .exp/skills/<slug>/（SKILL.md 标准模板 + skill.json 账本）；相同 slug 再次沉淀会更新定义。技能仍由 Â/障碍计数管理，不注册进 DSH。',
+    description: '把同族经验沉淀成技能：同族 ≥3 条且 ≥2 正 1 负时，生成 .exp/skills/<slug>/（SKILL.md 标准模板 + skill.json 账本）；相同 slug 再次沉淀会更新定义。可传 body 写正文、files 挂脚本（复制进 scripts/ 并在 SKILL.md 生成「## 脚本」清单）、install=true 同时装成 DSH 可加载的真技能。技能仍由 Â/障碍计数管理。',
     parameters: {
       intent: { type: 'string', required: true, description: '要沉淀的技能对应的任务意图（与 exp_recall 同一口径）。' },
       type: { type: 'string', description: '可选：技能名（默认「类型：共同词」）。' },
       context: { type: 'array', description: '可选：技能的情境线索（写入 skill.json 与匹配）。' },
       minSamples: { type: 'number', description: '可选：最少同族条数，默认 3。' },
+      body: { type: 'string', description: '可选：手写 SKILL.md 正文（覆盖自动生成模板；脚本用法/步骤写这里）。' },
+      files: { type: 'array', description: '可选：附件路径列表（脚本等），复制进 <skill>/scripts/ 并登记到 skill.json。' },
+      install: { type: 'boolean', description: '可选：true = 同时装成 DSH 真正可加载的技能（复制到 $DSH_HOME/skills/<slug>/）。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
@@ -367,19 +371,71 @@ export function buildTools(defineTool, config = {}) {
       if (draft === null) {
         return { action: 'skipped', reason: '同族样本不足或无正负对照（需要 ≥3 条，其中 ≥2 正 ≥1 负；全成功/全失败不沉淀）' }
       }
-      const made = createSkill(dataDir, draft)
+      const made = createSkill(dataDir, {
+        ...draft,
+        ...(typeof args.body === 'string' && args.body.trim() !== '' ? { body: args.body } : {}),
+      })
+      const attached = Array.isArray(args.files) && args.files.length > 0 ? attachSkillFiles(dataDir, made.slug, args.files) : null
+      const installed = args.install === true ? exportSkillToDsh(dataDir, made.slug) : null
       logUsage(dataDir, {
         tool: 'exp_consolidate',
         slug: made.slug,
         derivedFrom: draft.derivedFrom.length,
         commit: made.commit,
+        files: attached === null ? 0 : attached.added.length,
+        installed: installed !== null,
       }, usageOptions)
       return {
         action: made.action,
         slug: made.slug,
         derivedFromCount: draft.derivedFrom.length,
         commit: made.commit,
-        hint: `技能已写入 .exp/skills/${made.slug}/；先用 exp_feedback("skill:${made.slug}", "helped") 累积，≥3 次且比例 ≥0.8 后 exp_recall 会只返回它。`,
+        files: attached === null ? [] : attached.files.map((item) => item.path),
+        installedPath: installed === null ? null : installed.targetDir,
+        hint: `技能已写入 .exp/skills/${made.slug}/；${attached === null ? '' : `附件 ${attached.files.length} 个（scripts/）；`}${installed === null ? '要当 DSH 真技能用就传 install=true；' : `已装到 ${installed.targetDir}；`}先用 exp_feedback("skill:${made.slug}", "helped") 累积，≥3 次且比例 ≥0.8 后 exp_recall 会只返回它。`,
+      }
+    },
+  })
+
+  const skillAttachTool = defineTool({
+    name: 'exp_skill_attach',
+    description: '给已有技能挂附件/补正文：files 里的文件复制进 <skill>/scripts/ 并在 SKILL.md 维护「## 脚本」清单；body 会并进正文（保留已有「常见例外/已内化」）；install=true 同时复制到 $DSH_HOME/skills/<slug>/ 变成 DSH 可加载的真技能。',
+    parameters: {
+      slug: { type: 'string', required: true, description: '技能 slug（.exp/skills/ 下的目录名）。' },
+      files: { type: 'array', description: '可选：要挂的文件路径列表（脚本/参考材料）；单文件 ≤2MB、总量 ≤8MB。' },
+      body: { type: 'string', description: '可选：补进 SKILL.md 的正文（markdown）。' },
+      install: { type: 'boolean', description: '可选：true = 复制到 $DSH_HOME/skills/<slug>/（DSH 真技能目录）。' },
+    },
+    output: { schema: OUTPUT_SCHEMA, render: renderJson },
+    execute(args = {}) {
+      const dataDir = dataDirOf()
+      const slug = String(args.slug || '').trim()
+      if (slug === '') throw new Error('slug 必填')
+      let merged = null
+      if (typeof args.body === 'string' && args.body.trim() !== '') {
+        const current = readSkillBySlug(dataDir, slug)
+        if (current === null) throw new Error(`没有这个技能：${slug}`)
+        merged = createSkill(dataDir, {
+          slug,
+          name: current.name,
+          description: current.description,
+          body: args.body,
+          typeName: current.meta.typeName,
+          context: current.meta.context,
+          triggers: current.meta.triggers,
+        })
+      }
+      // 先写正文、再挂附件：附件会在正文末尾追加「## 脚本」，反过来会被正文重写覆盖。
+      const attached = Array.isArray(args.files) && args.files.length > 0 ? attachSkillFiles(dataDir, slug, args.files) : null
+      const installed = args.install === true ? exportSkillToDsh(dataDir, slug) : null
+      const skill = readSkillBySlug(dataDir, slug)
+      logUsage(dataDir, { tool: 'exp_skill_attach', slug, files: attached === null ? 0 : attached.added.length, installed: installed !== null }, usageOptions)
+      return {
+        action: 'attached',
+        slug,
+        files: skill === null ? [] : (skill.meta.files || []).map((item) => item.path),
+        bodyUpdated: merged !== null,
+        installedPath: installed === null ? null : installed.targetDir,
       }
     },
   })
@@ -432,7 +488,7 @@ export function buildTools(defineTool, config = {}) {
 
   // 失败调用也要留痕：否则「调用次数」的分母只含成功调用，使用率会被高估。
   // 成功行由各工具自己写（带业务字段）；这里只兜异常。
-  const guarded = [record, recall, feedback, consolidateTool, typeTool].map((tool) => ({
+  const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool].map((tool) => ({
     ...tool,
     execute(args = {}) {
       try {

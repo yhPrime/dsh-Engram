@@ -8,12 +8,17 @@
  *   同一签名连续 3 次 → 覆盖技能并归档，之后复发从 1 重新累计。
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 
 import { abstractState, stateSimilarity } from './kernel.js'
 
 export const SKILLS_DIRNAME = 'skills'
+export const SCRIPTS_DIRNAME = 'scripts'
+const MAX_ATTACH_FILE_BYTES = 2 * 1024 * 1024
+const MAX_ATTACH_TOTAL_BYTES = 8 * 1024 * 1024
 export const SKILL_FILENAME = 'SKILL.md'
 export const META_FILENAME = 'skill.json'
 export const EXCEPTION_LIMIT = 5
@@ -172,6 +177,9 @@ function normalizeMeta(raw, id) {
   meta.derivedFrom = Array.isArray(raw && raw.derivedFrom) ? raw.derivedFrom : []
   meta.triggers = Array.isArray(raw && raw.triggers) ? raw.triggers : []
   meta.context = Array.isArray(raw && raw.context) ? raw.context : []
+  meta.files = Array.isArray(raw && raw.files)
+    ? raw.files.filter((item) => item && typeof item.path === 'string').slice(0, 40)
+    : []
   return meta
 }
 
@@ -295,6 +303,137 @@ export function writeSkill(dir, draft, meta) {
   writeJsonFile(path.join(dir, META_FILENAME), meta)
 }
 
+/* -------------------------------------------------------------------------- */
+/* 附件（scripts/ + SKILL.md 的「## 脚本」节）                                  */
+/* -------------------------------------------------------------------------- */
+
+function safeAttachName(name) {
+  const base = String(name || '').split(/[\\/]/).pop() || ''
+  const cleaned = base.replace(/[^\w.\-]+/gu, '_').replace(/^\.+/u, '').slice(0, 80)
+  if (cleaned === '' || cleaned === '.' || cleaned === '..') throw new Error(`附件文件名不可用：${base}`)
+  return cleaned
+}
+
+function formatBytes(bytes) {
+  const size = Number(bytes) || 0
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** 把附件写进 SKILL.md 的 `## 脚本` 节（保留原有其它节）。 */
+function appendScriptsSection(dir, files) {
+  const skillFile = path.join(dir, SKILL_FILENAME)
+  const { fields, body } = parseFrontmatter(fs.readFileSync(skillFile, 'utf8'))
+  const lines = String(body || '').split(/\r?\n/)
+  const section = [
+    '## 脚本',
+    ...(files.length === 0 ? ['- （暂无附件）'] : files.map((item) => `- \`${item.path}\`（${formatBytes(item.bytes)}）`)),
+    '',
+    '> 运行前先确认解释器与依赖；命令示例可以补在对应条目下面。',
+  ]
+  const index = headingIndex(lines, '脚本')
+  let next
+  if (index >= 0) {
+    const { to } = sectionBounds(lines, index)
+    next = [...lines.slice(0, index), ...section, ...lines.slice(to)]
+  } else {
+    next = [...lines, '', ...section]
+  }
+  writeFileAtomic(skillFile, renderSkillMd(fields.name || path.basename(dir), fields.description || '', next.join('\n')))
+}
+
+/**
+ * 给技能挂脚本附件：复制到 `<skill>/scripts/`，登记进 skill.json 的 files，
+ * 并在 SKILL.md 里维护「## 脚本」清单。这样技能才是可执行的完整包。
+ */
+export function attachSkillFiles(dataDir, slug, sources, options = {}) {
+  const skill = readSkillBySlug(dataDir, slug)
+  if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  const scriptsDir = path.join(skill.dir, SCRIPTS_DIRNAME)
+  const files = Array.isArray(skill.meta.files) ? [...skill.meta.files] : []
+  let total = files.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0)
+  const added = []
+  for (const source of Array.isArray(sources) ? sources : []) {
+    const raw = String(source || '').trim()
+    if (raw === '') continue
+    const resolved = path.resolve(raw)
+    let stat
+    try {
+      stat = fs.statSync(resolved)
+    } catch {
+      throw new Error(`附件不存在：${raw}`)
+    }
+    if (!stat.isFile()) throw new Error(`附件不是文件：${raw}`)
+    if (stat.size > MAX_ATTACH_FILE_BYTES) throw new Error(`单个附件不能超过 2MB：${raw}`)
+    if (total + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(total)}）`)
+    fs.mkdirSync(scriptsDir, { recursive: true })
+    const name = safeAttachName(resolved)
+    const target = path.join(scriptsDir, name)
+    fs.copyFileSync(resolved, target)
+    const rel = `${SCRIPTS_DIRNAME}/${name}`
+    const entry = {
+      path: rel,
+      bytes: stat.size,
+      sha256: createHash('sha256').update(fs.readFileSync(target)).digest('hex'),
+      addedAt: new Date().toISOString(),
+    }
+    const index = files.findIndex((item) => item.path === rel)
+    if (index >= 0) files[index] = entry
+    else files.push(entry)
+    total += stat.size
+    added.push(entry)
+  }
+  skill.meta.files = files
+  appendScriptsSection(skill.dir, files)
+  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+  const committed = commitSkills(dataDir, `skill(${slug}): attach ${added.length} file(s)`)
+  if (!committed) {
+    skill.meta.pendingCommit = true
+    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+  }
+  return { slug, files, added, commit: committed }
+}
+
+
+/** 把这个技能装成 DSH 真正可加载的技能（默认 ~/.dsh/skills/<slug>/）。 */
+export function exportSkillToDsh(dataDir, slug, options = {}) {
+  const skill = readSkillBySlug(dataDir, slug)
+  if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  const dshHome = String(process.env.DSH_HOME || '').trim() === ''
+    ? path.join(os.homedir(), '.dsh')
+    : path.resolve(String(process.env.DSH_HOME).replace(/^~(?=$|[\\/])/u, os.homedir()))
+  const root = path.resolve(options.targetRoot || path.join(dshHome, 'skills'))
+  const target = path.join(root, skill.slug)
+  fs.mkdirSync(target, { recursive: true })
+  fs.copyFileSync(path.join(skill.dir, SKILL_FILENAME), path.join(target, SKILL_FILENAME))
+  for (const dirName of [SCRIPTS_DIRNAME, 'references', 'assets']) {
+    const from = path.join(skill.dir, dirName)
+    if (fs.existsSync(from) && fs.statSync(from).isDirectory()) {
+      const to = path.join(target, dirName)
+      fs.rmSync(to, { recursive: true, force: true })
+      copyTree(from, to)
+    }
+  }
+  skill.meta.installedAt = new Date().toISOString()
+  skill.meta.installedPath = target
+  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+  return { slug, targetDir: target, installedAt: skill.meta.installedAt }
+}
+
+function copyTree(fromDir, toDir) {
+  fs.mkdirSync(toDir, { recursive: true })
+  for (const entry of fs.readdirSync(fromDir, { withFileTypes: true })) {
+    const from = path.join(fromDir, entry.name)
+    const to = path.join(toDir, entry.name)
+    if (entry.isDirectory()) copyTree(from, to)
+    else fs.copyFileSync(from, to)
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* git                                                                        */
+/* -------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------- */
 /* git                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -501,6 +640,14 @@ export function validateSkill(skill) {
   if (uses !== helped + hurt) problems.push('uses != helped + hurt')
   if (helped < 0 || hurt < 0 || uses < 0) problems.push('confidence 出现负数')
   if (typeof meta.pendingCommit !== 'boolean') problems.push('pendingCommit 不是布尔')
+  for (const file of Array.isArray(meta.files) ? meta.files : []) {
+    if (!file || typeof file.path !== 'string' || file.path.trim() === '') {
+      problems.push('files 有条目缺少 path')
+      continue
+    }
+    const abs = path.join(skill.dir || '', file.path)
+    if (skill.dir === undefined || !fs.existsSync(abs)) problems.push(`附件缺失：${file.path}`)
+  }
   const obstacles = meta.obstacles && typeof meta.obstacles === 'object' ? meta.obstacles : {}
   for (const [signature, entry] of Object.entries(obstacles)) {
     const total = Number(entry.total) || 0

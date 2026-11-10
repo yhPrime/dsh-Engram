@@ -381,6 +381,11 @@ body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结�
   `tip` 是给鼠标悬停提示框用的长说明（有歧义的项才有）。
 - 设置项保存：`POST /settings` body 可带 `currentRoot` / `config` / `ui` / `git` 任意组合；传 `null` 或空串等于「恢复默认」（删键）。
 
+### `POST /skill-install`
+body: `{ slug, targetRoot? }` → `{ slug, targetDir, installedAt }`：把 `<dataDir>/skills/<slug>/` 复制成 DSH 可加载的真技能（默认 `$DSH_HOME/skills/<slug>/`；`targetRoot` 仅供测试/自定义）。错误码：`slug-required`。
+
+> 技能现在可以带脚本：`<skill>/scripts/` 下的附件会登记在 `skill.json` 的 `files`，并在 `SKILL.md` 里维护「## 脚本」清单；工具侧用 `exp_consolidate` 的 `body`/`files`/`install` 或 `exp_skill_attach` 补齐。
+
 ### `GET /sync`
 → Git 备份状态：
 
