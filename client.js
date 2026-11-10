@@ -402,7 +402,7 @@ window.__ModuleLoader__.load({
             h('option', { value: '' }, '全部结果'), Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0]))),
           h('span', { className: 'eng-muted' }, `${list.data ? list.data.total : '—'} 条`),
           h(Button, { small: true, disabled: searchDraft.trim() === '', onClick: () => props.onSearch(searchDraft.trim()) }, '检索'),
-          h(Button, { small: true, onClick: list.reload }, '刷新')),
+          h(Button, { small: true, disabled: list.loading, onClick: list.reload }, list.loading ? '刷新中…' : '刷新')),
         h('div', { className: 'eng-split', 'data-open': selected === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
             rows.length === 0 ? h(Empty, null, list.loading ? '读取中…' : '没有符合条件的经验') : h('div', { className: 'eng-list' }, rows.map((row) => {
@@ -1722,6 +1722,9 @@ window.__ModuleLoader__.load({
       const [fitHeight, setFitHeight] = useState(null)
       const [state, setState] = useState(null)
       const [error, setError] = useState('')
+      const [refreshing, setRefreshing] = useState(false)
+      const [refreshedAt, setRefreshedAt] = useState('')
+      const [reloadToken, setReloadToken] = useState(0)
       const loadState = useCallback(async () => {
         try {
           setState(await request('/state'))
@@ -1731,6 +1734,18 @@ window.__ModuleLoader__.load({
         }
       }, [])
       useEffect(() => { loadState() }, [loadState])
+      // 顶部「刷新」= 重新拉整体状态 + 重挂当前页（页面自己的列表随之重新请求），
+      // 并且必须给出可见回执：按钮转「刷新中…」、完成后显示「已刷新 hh:mm:ss」。
+      const refreshAll = useCallback(async () => {
+        setRefreshing(true)
+        try {
+          await loadState()
+          setRefreshedAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
+          setReloadToken((token) => token + 1)
+        } finally {
+          setRefreshing(false)
+        }
+      }, [loadState])
       useEffect(() => {
         const measure = () => {
           const node = rootRef.current
@@ -1788,21 +1803,22 @@ window.__ModuleLoader__.load({
           h('nav', { className: 'eng-nav' }, NAV.map(navButton)),
           h('div', { className: 'eng-rail-foot' },
             h('div', { className: 'eng-mono', style: { marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: state ? state.dataDir : '' }, state ? state.dataDir : '读取中…'),
-            h('div', null, source ? source.label : '—'))),
+            source && source.mode === 'mock' ? h('div', null, '示例数据（非真实库）') : null)),
         h('main', { className: 'eng-main' },
           h('header', { className: 'eng-top' },
             h('div', null, h('h1', { className: 'eng-title' }, TITLE), h('div', { className: 'eng-sub' }, '经验与技能的本地控制台')),
             h('div', { className: 'eng-top-right' },
-              source ? h(Badge, { tone: source.mode === 'mock' ? 'warn' : 'ok' }, source.mode === 'mock' ? '示例数据' : `数据：${source.label}`) : null,
+              source && source.mode === 'mock' ? h(Badge, { tone: 'warn' }, '示例数据') : null,
               state ? h('span', { className: 'eng-muted' }, `v${state.version}`) : null,
-              h(Button, { small: true, onClick: loadState }, '刷新'))),
+              refreshedAt ? h('span', { className: 'eng-muted', title: '最近一次刷新完成时间' }, `已刷新 ${refreshedAt}`) : null,
+              h(Button, { small: true, disabled: refreshing, onClick: refreshAll }, refreshing ? '刷新中…' : '刷新'))),
           h('div', {
             className: tab === 'graph' ? 'eng-content eng-content-full' : 'eng-content',
             'data-fill': tab === 'graph' ? 'false' : 'true',
           },
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
-            h(PageBoundary, { key: tab }, content))))
+            h(PageBoundary, { key: `${tab}:${reloadToken}` }, content))))
     }
 
     /**
@@ -1880,6 +1896,7 @@ window.__ModuleLoader__.load({
     return {
       // 暴露给测试：详情面板/设置页/各页面都要能单独渲染，防「点击后空白」「设置页堆成一坨」「整页滚」回归。
       DetailPane,
+      Console,
       Settings,
       Overview,
       Skills,
