@@ -93,7 +93,10 @@ window.__ModuleLoader__.load({
 .eng-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
 .eng-tip:hover, .eng-tip:focus-visible { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); outline: none; }
 .eng-tip-bubble { display: none; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 30; width: max-content; max-width: 300px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 96%, transparent); color: var(--dsw-alias-label-primary); font-size: 11px; line-height: 1.55; box-shadow: 0 8px 24px rgba(0,0,0,.18); pointer-events: none; }
-.eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
+.eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-subnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.eng-subnav-item { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.eng-subnav-item[data-active="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
 .eng-git-repo { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-git-repo:last-child { border-bottom: 0; }.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .eng-banner { margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: 12px; }
@@ -1236,6 +1239,7 @@ window.__ModuleLoader__.load({
       const [newRepoName, setNewRepoName] = useState('')
       const [newRepoPrivate, setNewRepoPrivate] = useState(true)
       const [device, setDevice] = useState(null)
+      const [section, setSection] = useState(props && props.section ? String(props.section) : 'storage')
       const deviceStart = async () => {
         setGhBusy(true); setGhNotice('')
         try {
@@ -1420,7 +1424,17 @@ window.__ModuleLoader__.load({
       if (settings.error) return h(Banner, { bad: true }, settings.error)
       const data = settings.data || {}
       const spec = data.spec || { config: [], ui: [], git: [] }
+      const nav = [['storage', '存储位置'], ['backup', '备份与账号'], ['kernel', '内核参数'], ['ui', '界面与关系图'], ['maintenance', '维护']]
+      const subnav = h('div', { className: 'eng-subnav' }, nav.map(([id, label]) => h('button', {
+        key: id,
+        type: 'button',
+        className: 'eng-subnav-item',
+        'data-active': section === id ? 'true' : 'false',
+        onClick: () => setSection(id),
+      }, label)))
       return h('div', { className: 'eng-stack' },
+        subnav,
+        section === 'storage' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '存储位置'),
           h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '经验库根目录（包含 exp-lib.json 的 .exp 目录）；留空点「恢复默认」。'),
@@ -1434,7 +1448,9 @@ window.__ModuleLoader__.load({
             h('dt', null, '生效目录'), h('dd', { className: 'eng-mono' }, data.dataDir || '—'),
             h('dt', null, '经验库文件'), h('dd', { className: 'eng-mono' }, data.file || '—'),
             h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
-            h('dt', null, '版本'), h('dd', null, data.version || '—'))),
+            h('dt', null, '版本'), h('dd', null, data.version || '—')))
+        ] : null,
+        section === 'backup' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, 'Git 仓库备份'),
           h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '把经验库当普通 git 仓库提交并推送到远端：只提交当前数据目录，拉取只做 fast-forward，冲突交回给人。'),
@@ -1492,21 +1508,36 @@ window.__ModuleLoader__.load({
             h('dt', null, '领先 / 落后'), h('dd', null, sync.data ? `${sync.data.ahead} / ${sync.data.behind}` : '—'),
             h('dt', null, '最近提交'), h('dd', null, sync.data && sync.data.lastCommitAt ? `${fmtTime(sync.data.lastCommitAt)} ${sync.data.lastCommitSubject}` : '—'),
             h('dt', null, '自动备份'), h('dd', null, sync.data && sync.data.autoBackupMinutes ? `每 ${sync.data.autoBackupMinutes} 分钟` : '关闭'),
-            sync.data && sync.data.error ? h('dt', null, '错误') : null, sync.data && sync.data.error ? h('dd', { className: 'eng-mono' }, sync.data.error) : null)),
+            sync.data && sync.data.error ? h('dt', null, '错误') : null, sync.data && sync.data.error ? h('dd', { className: 'eng-mono' }, sync.data.error) : null))
+        ] : null,
+        section === 'ui' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '界面与关系图'),
           h('div', { className: 'eng-form-grid' }, renderFields(spec.ui, uiDraft, setUiDraft)),
-          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ ui: uiDraft }) }, '保存数据源'))),
+          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ ui: uiDraft }) }, '保存数据源')))
+        ] : null,
+        section === 'kernel' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '内核参数'),
           h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '关系图主题/配色/旋转/泛光/浮尘都在「界面与关系图」里切换；内核算力参数保存后动态生效。'),
           h('div', { className: 'eng-form-grid' }, renderFields(spec.config, configDraft, setConfigDraft)),
-          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ config: configDraft }) }, '保存内核参数'))),
+          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ config: configDraft }) }, '保存内核参数')))
+        ] : null,
+        section === 'maintenance' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '技能校验'),
           validation.data && validation.data.problems && validation.data.problems.length > 0
             ? validation.data.problems.map((item) => h('div', { key: item.slug, className: 'eng-muted', style: { marginBottom: 6 } }, `${item.slug}：${item.problems.join('；')}`))
-            : h('div', { className: 'eng-muted' }, '全部健康')))
+            : h('div', { className: 'eng-muted' }, '全部健康')),
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, '运行信息'),
+          h('dl', { className: 'eng-kv' },
+            h('dt', null, '当前根'), h('dd', { className: 'eng-mono' }, data.currentRoot || '（未设置，用默认）'),
+            h('dt', null, '生效目录'), h('dd', { className: 'eng-mono' }, data.dataDir || '—'),
+            h('dt', null, '经验库文件'), h('dd', { className: 'eng-mono' }, data.file || '—'),
+            h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
+            h('dt', null, '版本'), h('dd', null, data.version || '—')))
+        ] : null)
     }
 
     const NAV = [
@@ -1627,8 +1658,9 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      // 暴露给测试：详情面板必须能单独渲染出内容，防「点击后空白」回归。
+      // 暴露给测试：详情面板/设置页都要能单独渲染，防「点击后空白」「设置页堆成一坨」回归。
       DetailPane,
+      Settings,
       inject: ['slots', 'layout'],
       apply(ctx) {
         try {
