@@ -726,6 +726,23 @@ window.__ModuleLoader__.load({
       return `rgba(${mix(r)}, ${mix(g)}, ${mix(b)}, ${a})`
     }
 
+    /** 给任意颜色套一个 alpha（hex / rgb / rgba 都吃），用于「中心亮 → 边缘透明」的发光渐变。 */
+    function withAlpha(color, alpha) {
+      const text = String(color || '').trim()
+      const value = Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 1))
+      const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/iu)
+      if (hex) {
+        const full = hex[1].length === 3 ? hex[1].split('').map((ch) => ch + ch).join('') : hex[1]
+        return `rgba(${parseInt(full.slice(0, 2), 16)}, ${parseInt(full.slice(2, 4), 16)}, ${parseInt(full.slice(4, 6), 16)}, ${value})`
+      }
+      const rgb = text.match(/^rgba?\(([^)]+)\)$/iu)
+      if (rgb) {
+        const parts = rgb[1].split(/[\s,\/]+/u).filter(Boolean)
+        return `rgba(${Math.round(Number(parts[0]) || 0)}, ${Math.round(Number(parts[1]) || 0)}, ${Math.round(Number(parts[2]) || 0)}, ${value})`
+      }
+      return `rgba(128, 128, 128, ${value})`
+    }
+
     // 「蓝紫星辰」= dsh-codex-effort-slider 那条推理能量滑条的渐变：
     // #4d93f8 蓝 → #6d28d9 深紫 → #9333ea 紫 → #c084fc 淡紫（滑条实色为 #3b1178→#c084fc，
     // 两端取更亮的一档，保证图上节点在浅色/深色主题都看得清）。
@@ -1375,13 +1392,28 @@ window.__ModuleLoader__.load({
               ctx.globalAlpha = Math.max(0, Math.min(1, alphaBase * alphaMultiplier))
               ctx.shadowBlur = 0
               ctx.shadowColor = 'transparent'
-              const fill = ctx.createRadialGradient(-screenRadius * 0.35, -screenRadius * 0.35, screenRadius * 0.12, 0, 0, screenRadius * 1.15)
-              fill.addColorStop(0, palette.nodeLight || color)
-              fill.addColorStop(1, color)
-              ctx.fillStyle = fill
-              ctx.strokeStyle = palette.highlight
-              ctx.lineWidth = isSelected ? 1.6 : 0.7
               ctx.scale(breathing, breathing)
+              // 发光型：亮心在正中间、能量往外散；不是球体高光（高光会把亮斑偏到左上，
+              // 看着像玻璃珠；这里要的是「中心向外发光」）。
+              const glowColor = palette.glow || color
+              const haloRadius = screenRadius * 2.4
+              if (haloRadius > 1.2) {
+                const halo = ctx.createRadialGradient(0, 0, screenRadius * 0.12, 0, 0, haloRadius)
+                halo.addColorStop(0, withAlpha(glowColor, 0.34))
+                halo.addColorStop(0.45, withAlpha(glowColor, 0.12))
+                halo.addColorStop(1, withAlpha(glowColor, 0))
+                ctx.fillStyle = halo
+                ctx.beginPath()
+                ctx.arc(0, 0, haloRadius, 0, Math.PI * 2)
+                ctx.fill()
+              }
+              const core = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(0.6, screenRadius))
+              core.addColorStop(0, withAlpha(palette.nodeLight || color, 0.96))
+              core.addColorStop(0.38, withAlpha(color, 0.92))
+              core.addColorStop(1, withAlpha(color, 0.55))
+              ctx.fillStyle = core
+              ctx.strokeStyle = withAlpha(palette.highlight || color, 0.9)
+              ctx.lineWidth = isSelected ? 1.6 : 0.7
               drawGraphShape(ctx, screenRadius, theme)
               if (node.kind === 'skill') {
                 ctx.beginPath()
@@ -1994,6 +2026,7 @@ window.__ModuleLoader__.load({
       SaveExperienceAction,
       parseGradientStops,
       graphStops,
+      withAlpha,
       sliceLinearGradient,
       GRAPH_PALETTES,
       inject: ['slots', 'layout'],

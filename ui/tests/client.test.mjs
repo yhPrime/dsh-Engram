@@ -244,6 +244,17 @@ check('关系图配色：能从主题背景渐变里取颜色停靠点（自带�
   assert.equal(gradient.length, 2)
 })
 
+check('关系图节点是「中心向外发光」而不是球体高光', () => {
+  const source = loaded.source
+  assert.equal(source.includes('createRadialGradient(-screenRadius * 0.35'), false, '还在用左上偏移的球体高光')
+  assert.ok(source.includes('createRadialGradient(0, 0, 0, 0, 0'), '亮心没有落在正中心')
+  assert.ok(source.includes('haloRadius'), '没有向外的光晕层')
+  const withAlpha = module.withAlpha
+  assert.equal(typeof withAlpha, 'function', 'withAlpha 没导出')
+  assert.equal(withAlpha('#4d93f8', 0.5), 'rgba(77, 147, 248, 0.5)')
+  assert.equal(withAlpha('rgba(147, 51, 234, 1)', 0.2), 'rgba(147, 51, 234, 0.2)')
+  assert.equal(withAlpha('nonsense', 0.3), 'rgba(128, 128, 128, 0.3)')
+})
 check('关系图页：整块画布 + 右上角配色胶囊（跟随主题 / 蓝紫星辰）', () => {
   const tree = JSON.stringify(module.Graph({}), (key, value) => (typeof value === 'function' ? '[fn]' : value))
   assert.ok(tree.includes('eng-graph-canvas'), '没有画布')
