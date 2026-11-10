@@ -97,7 +97,7 @@ export function writeUiConfig(patch, env = process.env) {
  * Git 备份配置（像记忆插件那样把库推到远端仓库）。
  * 存在同一个 settings.json 的 `git` 键下；token 也在这里（本机文件，README 有安全提示）。
  */
-export const GIT_DEFAULTS = { branch: 'main', autoBackupMinutes: 0, pushStrategy: 'overwrite' }
+export const GIT_DEFAULTS = { branch: 'main', autoBackupMinutes: 0, pushStrategy: 'ask' }
 
 export function readGitConfig(env = process.env) {
   const raw = readSettings(env).git

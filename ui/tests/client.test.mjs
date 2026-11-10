@@ -270,7 +270,9 @@ check('技能：全局注册 / 忘记技能都由人点按钮，模型没有自�
   const cardBlock = source.slice(cardAt, source.indexOf('eng-detail-card', cardAt))
   assert.ok(cardBlock.includes("'注册技能到全局'),"), '注册按钮没放进管理卡片')
   assert.ok(cardBlock.includes("'忘记技能'"), '忘记按钮没放进管理卡片')
-  assert.ok(source.indexOf("eng-card eng-skill-actions") < source.lastIndexOf('eng-card eng-detail-card'), '管理卡片应在详情卡片上面')
+  assert.ok(source.indexOf("eng-card eng-skill-actions") < source.lastIndexOf('eng-card eng-detail-card'), 'JSX 里管理卡片应在详情卡片前面')
+  // 详情卡全局 order:-1 会把管理卡顶到它下面，所以管理卡必须是更小的 order（-2）
+  assert.ok(/\.eng-split\[data-open="true"\] \.eng-stack > \.eng-skill-actions \{[^}]*order:\s*-2/u.test(source), '管理卡没设 order:-2，会被详情卡压到下面')
   assert.ok(source.includes('便签（每行一条）'), '技能详情里没有便签输入')
   const tree = JSON.stringify(module.Skills({ onChanged: () => {} }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
   assert.ok(tree.includes('eng-skill-row') || tree.includes('还没有固化技能'), '技能页没渲染')
@@ -302,6 +304,26 @@ check('添加技能弹窗：拖拽区 + 固定安装位置，不再有路径输�
   const source = loaded.source
   assert.ok(source.includes('findSkillFileInEntry'), '拖文件夹时没有往下找 SKILL.md')
   assert.ok(source.includes('浏览器里解不开 zip'), 'zip 没有给出可理解的提示')
+})
+check('推送前发现远端有新提交：弹窗给「覆盖 / 换远端仓库 / 另建分支」三条路', () => {
+  const dialog = module.PushConflictDialog
+  assert.equal(typeof dialog, 'function', '冲突弹窗没导出给测试')
+  const tree = JSON.stringify(dialog({
+    conflict: { remoteAhead: 3, branch: 'main' },
+    busy: false,
+    onClose: () => {},
+    onOverwrite: () => {},
+    onNewBranch: () => {},
+    onSwitchRepo: () => {},
+  }), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  for (const text of ['远端有本机没有的提交', '覆盖远端', '换远端仓库', '另建分支', 'refs/engram/overwritten']) {
+    assert.ok(tree.includes(text), `弹窗缺少：${text}`)
+  }
+  const source = loaded.source
+  assert.ok(source.includes('needsDecision'), '前端没处理内核的 needsDecision')
+  assert.ok(source.includes('runPush({ force: true })'), '覆盖分支没走 force 推送')
+  assert.ok(source.includes('engram-'), '另建分支没生成新分支名')
+  assert.ok(source.includes('resolvePushConflict'), '冲突没有统一的处置入口')
 })
 check('关系图节点是「中心向外发光」而不是球体高光', () => {
   const source = loaded.source

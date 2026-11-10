@@ -148,6 +148,9 @@ window.__ModuleLoader__.load({
 @container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
+/* 选中技能时详情卡置顶；管理卡再压它上面（order -2 < -1）。
+   注意：这两条是全局的——之前只给详情 -1、没管管理卡，管理卡就掉到详情下面去了。 */
+.eng-split[data-open="true"] .eng-stack > .eng-skill-actions { order: -2; }
 .eng-split[data-open="true"] .eng-stack > .eng-detail-card { order: -1; }
 /* 控制台所有页：抬头 / 表单 / 子导航留在原位，长内容在自己的窗口里滚，不再整页拖走 */
 .eng-content[data-fill="true"] { display: flex; flex-direction: column; overflow: hidden; }
@@ -766,6 +769,29 @@ window.__ModuleLoader__.load({
      * 分类 / 标签 / 排序由宿主开一个**临时模型会话**算，这会真实产生一次模型调用；
      * 宿主没有模型服务时退回本地关键词归类，界面上必须如实说明是哪一种。
      */
+    /**
+     * 推送时发现远端有本机没有的提交：三种处置交给用户决定。
+     * 复用 eng-modal 那套样式，不新造弹窗皮肤。
+     */
+    function PushConflictDialog(props) {
+      const conflict = props.conflict || {}
+      const ahead = Number(conflict.remoteAhead) > 0 ? Number(conflict.remoteAhead) : 1
+      return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '推送前确认' },
+        h('div', { className: 'eng-modal', style: { width: 'min(520px, 100%)' } },
+          h('h3', { className: 'eng-modal-title' }, '远端有本机没有的提交'),
+          h('div', { className: 'eng-muted', style: { lineHeight: 1.8, marginTop: 6 } },
+            `这个仓库比本机多 ${ahead} 个提交（分支 ${conflict.branch || '—'}）。要继续推送，先选一种处置：`),
+          h('ul', { className: 'eng-req', style: { marginTop: 10 } },
+            h('li', null, h('b', null, '覆盖远端'), '：用本机内容强推。覆盖前会把旧远端 HEAD 存进本地的 refs/engram/overwritten/*，需要时能捞回来。'),
+            h('li', null, h('b', null, '换远端仓库'), '：不动这个仓库，改成推到另一个仓库。'),
+            h('li', null, h('b', null, '另建分支'), '：推到新分支上，原分支保持原样；之后的备份默认走新分支。')),
+          h('div', { className: 'eng-modal-actions', style: { flexWrap: 'wrap' } },
+            h(Button, { small: true, onClick: props.onClose }, '取消'),
+            h(Button, { small: true, disabled: props.busy, onClick: props.onNewBranch }, '另建分支'),
+            h(Button, { small: true, disabled: props.busy, onClick: props.onSwitchRepo }, '换远端仓库'),
+            h(Button, { small: true, kind: 'primary', disabled: props.busy, onClick: props.onOverwrite }, '覆盖远端'))))
+    }
+
     function ImportSkillDialog(props) {
       const [content, setContent] = useState('')
       const [fileName, setFileName] = useState('')
@@ -1899,6 +1925,8 @@ window.__ModuleLoader__.load({
       const [newRepoPrivate, setNewRepoPrivate] = useState(true)
       const [device, setDevice] = useState(null)
       const [repoSearch, setRepoSearch] = useState('')
+      const [pushConflict, setPushConflict] = useState(null)
+      const repoInputRef = useRef(null)
       const [section, setSection] = useState(props && props.section ? String(props.section) : 'storage')
       const deviceStart = async () => {
         setGhBusy(true); setGhNotice('')
@@ -2019,6 +2047,9 @@ window.__ModuleLoader__.load({
               setGhNotice(`${label}：初始化失败 —— ${initResult.reason || '未知原因'}`)
             } else if (pushResult === null) {
               setGhNotice(`${label}：仓库已就绪，但还没推送（没有远端或初始化未完成）`)
+            } else if (pushResult.needsDecision) {
+              setPushConflict(pushResult)
+              setGhNotice(`${label}：远端有本机没有的提交，等你决定`)
             } else if (pushResult.ok) {
               setGhNotice(`${label}：已提交并推送${pushResult.commit ? `（${pushResult.commit}）` : ''}${pushResult.reason ? `；${pushResult.reason}` : ''}`)
             } else {
@@ -2041,6 +2072,10 @@ window.__ModuleLoader__.load({
         if (settings.data.git && settings.data.git.login) setGhUser({ login: settings.data.git.login })
       }, [settings.data])
       const syncAction = async (action, label) => {
+        if (action === 'push') {
+          await runPush({})
+          return
+        }
         setBusy(true); setSyncNotice('')
         try {
           const result = await request('/sync', { method: 'POST', body: { action } })
@@ -2065,6 +2100,61 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy(false)
         }
+      }
+      /**
+       * 统一推送入口：碰到「远端有本机没有的提交」时抛给弹窗决定，
+       * 覆盖 = force 再推一次；另建分支 = 换个目标分支再推。
+       */
+      const runPush = async (options = {}) => {
+        setBusy(true); setSyncNotice('')
+        try {
+          const body = { action: 'push' }
+          if (options.force === true) body.force = true
+          if (options.branch) body.branch = options.branch
+          const result = await request('/sync', { method: 'POST', body })
+          await sync.reload()
+          if (result && result.needsDecision) {
+            setPushConflict(result)
+            setSyncNotice(result.reason || '远端有本机没有的提交')
+            return
+          }
+          const reason = result && typeof result.reason === 'string' ? result.reason : ''
+          const overwriteNote = result && result.overwrote
+            ? `（用本地覆盖了远端${result.backupRef ? `；旧远端 HEAD 存在 ${result.backupRef}` : ''}）`
+            : ''
+          setSyncNotice(reason === '' ? `同步完成${overwriteNote}` : `同步：${reason}`)
+        } catch (caught) {
+          setSyncNotice(caught.message || String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const resolvePushConflict = async (choice) => {
+        const conflict = pushConflict
+        setPushConflict(null)
+        if (choice === 'switch') {
+          setSyncNotice('选一个仓库或粘贴地址，再点「连接并同步」')
+          if (repoInputRef.current && typeof repoInputRef.current.focus === 'function') repoInputRef.current.focus()
+          return
+        }
+        if (choice === 'overwrite') {
+          await runPush({ force: true })
+          return
+        }
+        // 另建分支：推到新分支上，原分支不动；成功后把备份目标改成新分支。
+        const stamp = new Date()
+        const pad = (value) => String(value).padStart(2, '0')
+        const name = `engram-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}`
+        try {
+          await request('/settings', { method: 'POST', body: { git: { ...gitDraft, branch: name } } })
+          setGitDraft({ ...gitDraft, branch: name })
+          await settings.reload()
+        } catch (caught) {
+          setSyncNotice(caught.message || String(caught))
+          return
+        }
+        await runPush({ branch: name })
+        if (conflict) setSyncNotice(`已推到新分支 ${name}；原分支保持原样`)
       }
       const post = async (payload) => {
         setBusy(true); setNotice('')
@@ -2192,7 +2282,7 @@ window.__ModuleLoader__.load({
             h(Badge, { tone: connectedNow ? 'ok' : 'muted' }, connectedNow ? '已连接' : '未连接'),
             h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, connectedNow ? gitUrlNow : '选一个仓库，或填地址连接'),
             h('span', { className: 'eng-muted' }, `分支 ${branchNow}`),
-            h('span', { className: 'eng-muted' }, String(gitDraft.pushStrategy || 'overwrite') === 'fast-forward' ? '策略：只允许快进' : '策略：本地覆盖云端'),
+            h('span', { className: 'eng-muted' }, String(gitDraft.pushStrategy || 'overwrite') === 'fast-forward' ? '策略：只允许快进' : String(gitDraft.pushStrategy || 'ask') === 'ask' ? '策略：远端有新提交时问我' : '策略：本地覆盖云端'),
             syncData ? h('span', { className: 'eng-muted' }, `${syncData.dirtyCount} 个未提交`) : null,
             syncData && syncData.lastCommitAt ? h('span', { className: 'eng-muted' }, `上次同步 ${fmtTime(syncData.lastCommitAt)}`) : null),
           h('div', { className: 'eng-actions', style: { margin: '10px 0 14px' } },
@@ -2223,7 +2313,7 @@ window.__ModuleLoader__.load({
                 : `登录未完成：${device.status === 'expired' ? '设备码过期' : '授权被拒绝'}`),
           h('div', { className: 'eng-label', style: { margin: '4px 0 8px' } }, '仓库地址'),
           h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
-            h('input', { className: 'eng-input', style: { flex: '1 1 280px' }, placeholder: 'https://github.com/<你>/<仓库>.git', value: gitDraft.repoUrl || '', onChange: (event) => setGitDraft({ ...gitDraft, repoUrl: event.target.value }) }),
+            h('input', { ref: repoInputRef, className: 'eng-input', style: { flex: '1 1 280px' }, placeholder: 'https://github.com/<你>/<仓库>.git', value: gitDraft.repoUrl || '', onChange: (event) => setGitDraft({ ...gitDraft, repoUrl: event.target.value }) }),
             h('input', { className: 'eng-input', style: { width: 120 }, placeholder: '分支', value: gitDraft.branch || '', onChange: (event) => setGitDraft({ ...gitDraft, branch: event.target.value }) }),
             h(Button, { disabled: busy || String(gitDraft.repoUrl || '').trim() === '', onClick: connectRepo }, '连接并同步')),
           h('div', { className: 'eng-label', style: { margin: '16px 0 8px' } }, '我的仓库'),
@@ -2259,7 +2349,17 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-actions', style: { marginTop: 10 } }, h(Button, { disabled: busy, onClick: () => post({ git: gitDraft }) }, '保存高级设置')),
           syncNotice ? h(Banner, null, syncNotice) : null,
           ghNotice ? h(Banner, null, ghNotice) : null,
-          sync.error ? h(Banner, { bad: true }, sync.error) : null)
+          sync.error ? h(Banner, { bad: true }, sync.error) : null,
+          pushConflict
+            ? h(PushConflictDialog, {
+              conflict: pushConflict,
+              busy,
+              onClose: () => setPushConflict(null),
+              onOverwrite: () => resolvePushConflict('overwrite'),
+              onNewBranch: () => resolvePushConflict('branch'),
+              onSwitchRepo: () => resolvePushConflict('switch'),
+            })
+            : null)
         ] : null,
 
         section === 'ui' ? [
@@ -2521,6 +2621,7 @@ window.__ModuleLoader__.load({
       // 暴露给测试：详情面板/设置页/各页面都要能单独渲染，防「点击后空白」「设置页堆成一坨」「整页滚」回归。
       DetailPane,
       ImportSkillDialog,
+      PushConflictDialog,
       Console,
       Settings,
       Overview,

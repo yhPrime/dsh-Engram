@@ -41,7 +41,8 @@ export function resolveGitConfig(config = {}) {
   const autoBackupMinutes = Math.max(0, Math.min(10080, Math.trunc(Number(config.autoBackupMinutes) || 0)))
   // 冲突时谁赢：overwrite = 本地覆盖云端（默认，经验库是本机资产，云端只是备份）；
   // fast-forward = 只允许快进，分叉就交回给人。
-  const pushStrategy = String(config.pushStrategy || 'overwrite').trim() === 'fast-forward' ? 'fast-forward' : 'overwrite'
+  const strategyValue = String(config.pushStrategy || 'ask').trim()
+  const pushStrategy = ['ask', 'overwrite', 'fast-forward'].includes(strategyValue) ? strategyValue : 'ask'
   return {
     repoUrl: String(config.repoUrl || '').trim(),
     branch,
@@ -204,9 +205,29 @@ export async function gitPush(dataDir, config = {}, options = {}) {
   const remoteSha = remoteHead.code === 0 ? remoteHead.stdout.trim() : ''
   const ancestor = remoteSha === '' ? null : await runGit(['merge-base', '--is-ancestor', remoteSha, 'HEAD'], { cwd: dataDir })
   const behindRemote = remoteSha !== '' && ancestor !== null && ancestor.code !== 0
+  const targetBranch = String((options && options.branch) || branch).trim() || branch
+  if (behindRemote && options.force !== true && resolved.pushStrategy !== 'overwrite') {
+    if (resolved.pushStrategy === 'fast-forward') {
+      const hint = '（远端有本机没有的提交；可在设置里把推送策略改成「先问我」或「本地覆盖云端」）'
+      return { ok: false, action: 'push', committed, pushed: false, reason: '远端有本机没有的提交，拒绝非快进推送' + hint }
+    }
+    // 'ask'：不自作主张。把决定权交回界面：覆盖 / 换远端仓库 / 另建分支。
+    const ahead = await runGit(['rev-list', '--count', `HEAD..origin/${branch}`], { cwd: dataDir })
+    return {
+      ok: false,
+      action: 'push',
+      committed,
+      pushed: false,
+      needsDecision: true,
+      reason: `远端比本机多 ${ahead.code === 0 ? ahead.stdout.trim() : '若干'} 个提交`,
+      remoteHead: remoteSha,
+      remoteAhead: ahead.code === 0 ? Number(ahead.stdout.trim()) || 1 : 1,
+      branch,
+    }
+  }
   let backupRef = ''
-  if (resolved.pushStrategy === 'overwrite' && behindRemote) {
-    // 本地覆盖云端前把旧的远端 HEAD 留一个本地 ref，万一云端有别的设备的提交还能捞回来。
+  if (behindRemote) {
+    // 覆盖云端前把旧的远端 HEAD 留一个本地 ref，万一云端有别的设备的提交还能捞回来。
     backupRef = `refs/engram/overwritten/${new Date().toISOString().replace(/[:.]/gu, '-')}`
     const saved = await runGit(['update-ref', backupRef, remoteSha], { cwd: dataDir })
     if (saved.code !== 0) backupRef = ''
@@ -214,26 +235,24 @@ export async function gitPush(dataDir, config = {}, options = {}) {
   // 推 HEAD，不推「本地同名分支」：本地分支可能叫 master、配置里的目标分支叫 main
   // （新建仓库默认 main），直接 `push origin main` 会报 src refspec does not match any。
   const pushArgs = [...tokenArgs(repoUrl, resolved.token), 'push', '-u']
-  // 默认策略「本地覆盖云端」：远端有本地没有的提交时强推，不让人先去手动合并。
-  if (resolved.pushStrategy === 'overwrite') pushArgs.push('--force')
-  pushArgs.push('origin', `HEAD:refs/heads/${branch}`)
+  if (behindRemote) pushArgs.push('--force')
+  pushArgs.push('origin', `HEAD:refs/heads/${targetBranch}`)
   const push = await runGit(pushArgs, { cwd: dataDir })
   if (push.code !== 0) {
-    const hint = behindRemote ? '（远端有你本地没有的提交；可在「高级」把推送策略改成「本地覆盖云端」）' : ''
-    return { ok: false, action: 'push', committed, pushed: false, reason: mask(tail(push.stderr || push.stdout), resolved.token) + hint }
+    return { ok: false, action: 'push', committed, pushed: false, reason: mask(tail(push.stderr || push.stdout), resolved.token) }
   }
   const head = await runGit(['rev-parse', '--short', 'HEAD'], { cwd: dataDir })
   // 用 HEAD:refs/heads/<branch> 推上去时 git 不一定给本地分支建上游，这里显式补一次
   // （失败也只是少了 upstream，不影响备份本身）。
-  await runGit(['branch', `--set-upstream-to=origin/${branch}`], { cwd: dataDir })
+  await runGit(['branch', `--set-upstream-to=origin/${targetBranch}`], { cwd: dataDir })
   return {
     ok: true,
     action: 'push',
     committed,
     pushed: true,
-    remoteBranch: branch,
+    remoteBranch: targetBranch,
     strategy: resolved.pushStrategy,
-    overwrote: behindRemote && resolved.pushStrategy === 'overwrite',
+    overwrote: behindRemote,
     backupRef,
     commit: head.code === 0 ? head.stdout.trim() : '',
     message,
