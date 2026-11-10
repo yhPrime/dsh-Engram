@@ -1785,6 +1785,7 @@ window.__ModuleLoader__.load({
     function SaveExperienceAction(props) {
       const [state, setState] = useState('idle')
       const [hover, setHover] = useState(false)
+      const [detail, setDetail] = useState('')
       const save = async (event) => {
         if (event && typeof event.stopPropagation === 'function') event.stopPropagation()
         if (state === 'busy') return null
@@ -1798,12 +1799,19 @@ window.__ModuleLoader__.load({
           window.setTimeout(() => setState('idle'), 2500)
           return receipt
         } catch (error) {
+          const message = error && error.message ? String(error.message) : String(error)
+          setDetail(message)
+          console.error('[engram] chat-save failed', message)
           setState('err')
-          window.setTimeout(() => setState('idle'), 3000)
+          window.setTimeout(() => setState('idle'), 4000)
           return null
         }
       }
-      const title = state === 'ok' ? '已存入经验库' : state === 'err' ? '存入失败，点一下重试' : '把这条对话存进经验库'
+      const title = state === 'ok'
+        ? '已存入经验库（控制台「经验」页可看到，结果待回填）'
+        : state === 'err'
+          ? `存入失败：${detail || '未知原因'}（点一下重试）`
+          : '把这条对话存进经验库'
       // 和宿主 MessageIconActions 完全同一套尺寸/配色（28px 盒子、6px 内边距、radius-sm、tertiary 色、hover 变色）
       const style = {
         display: 'inline-flex',
