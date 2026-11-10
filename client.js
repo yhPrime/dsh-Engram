@@ -239,13 +239,14 @@ window.__ModuleLoader__.load({
     /** 经验库标记（B：记忆螺旋）——外圈收进内圈，中心一点；侧栏、面板头、卡片共用。 */
     function EngramGlyph(props) {
       const size = props && Number(props.size) > 0 ? Number(props.size) : 16
+      const weight = props && Number(props.strokeWidth) > 0 ? Number(props.strokeWidth) : 1.25
       return h('svg', {
         width: size,
         height: size,
         viewBox: '0 0 16 16',
         fill: 'none',
         stroke: 'currentColor',
-        strokeWidth: 1.25,
+        strokeWidth: weight,
         strokeLinecap: 'round',
         strokeLinejoin: 'round',
         'aria-hidden': 'true',
@@ -1803,27 +1804,28 @@ window.__ModuleLoader__.load({
         }
       }
       const title = state === 'ok' ? '已存入经验库' : state === 'err' ? '存入失败，点一下重试' : '把这条对话存进经验库'
+      // 和宿主 MessageIconActions 完全同一套尺寸/配色（28px 盒子、6px 内边距、radius-sm、tertiary 色、hover 变色）
       const style = {
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        width: '24px',
-        height: '24px',
-        padding: '0',
+        width: 'calc(28px + var(--dsh-content-font-delta, 0px))',
+        height: 'calc(28px + var(--dsh-content-font-delta, 0px))',
+        padding: '6px',
         margin: '0',
-        border: '0',
-        borderRadius: '6px',
+        border: 'none',
+        borderRadius: 'var(--dsw-radius-sm)',
         background: hover && state !== 'busy' ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
-        color: state === 'err' ? '#d24b45' : 'currentColor',
-        opacity: state === 'busy' ? 0.45 : 0.78,
+        color: state === 'err' ? 'var(--dsw-alias-label-error, #d24b45)' : state === 'busy' ? 'var(--dsw-alias-label-tertiary)' : hover ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-tertiary)',
+        opacity: state === 'busy' ? 0.45 : 1,
         cursor: state === 'busy' ? 'default' : 'pointer',
         font: 'inherit',
         lineHeight: 1,
       }
       const glyph = state === 'ok'
-        ? h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+        ? h('svg', { width: 17, height: 17, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
           h('path', { d: 'M3.2 8.4 6.4 11.6 12.8 4.8' }))
-        : h(EngramGlyph, { size: 16 })
+        : h(EngramGlyph, { size: 17, strokeWidth: 1.5 })
       return h('button', {
         type: 'button',
         className: 'eng-save-exp',
