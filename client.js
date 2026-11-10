@@ -96,9 +96,7 @@ window.__ModuleLoader__.load({
 .eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-subnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 .eng-subnav-item { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.eng-subnav-item[data-active="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }.eng-save-exp { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; font: inherit; font-size: 11px; }
-.eng-save-exp:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-brand-primary); }
-.eng-save-exp:disabled { opacity: .6; cursor: default; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
+.eng-subnav-item[data-active="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
 .eng-git-repo { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-git-repo:last-child { border-bottom: 0; }.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .eng-banner { margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: 12px; }
@@ -769,6 +767,117 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 从 `linear-gradient(...)` / `radial-gradient(...)` 字符串里取颜色停靠点。
+     * 丢掉透明与接近透明的停靠点；返回 rgba 字符串数组。
+     */
+    function parseGradientStops(value) {
+      const text = String(value || '')
+      if (!/gradient\(/iu.test(text)) return []
+      const colors = []
+      const pattern = /(#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|\b(?:transparent|white|black)\b)/giu
+      for (const match of text.matchAll(pattern)) {
+        const raw = String(match[0]).trim().toLowerCase()
+        if (raw === 'transparent' || raw === '') continue
+        if (raw === 'white' || raw === 'black') {
+          colors.push(raw)
+          continue
+        }
+        if (raw.startsWith('#') && raw.length > 7) continue
+        const rgba = raw.match(/^rgba?\(([^)]+)\)$/u)
+        if (rgba) {
+          const parts = rgba[1].split(/[\s,\/]+/u).filter(Boolean)
+          const alpha = parts[3] === undefined ? 1 : Number(parts[3])
+          if (Number.isFinite(alpha) && alpha <= 0.05) continue
+        }
+        colors.push(raw)
+      }
+      const unique = []
+      for (const color of colors) {
+        const key = color.replace(/\s+/gu, '')
+        if (!unique.some((item) => item.replace(/\s+/gu, '') === key)) unique.push(color)
+      }
+      return unique.slice(0, 6)
+    }
+
+    /** 颜色亮度（0~1）；解析失败按 0.5 处理。 */
+    function colorLuminance(color) {
+      const text = String(color || '').trim()
+      const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/iu)
+      if (hex) {
+        const value = hex[1].length === 3 ? hex[1].split('').map((ch) => ch + ch).join('') : hex[1]
+        const r = parseInt(value.slice(0, 2), 16)
+        const g = parseInt(value.slice(2, 4), 16)
+        const b = parseInt(value.slice(4, 6), 16)
+        return (r * 0.299 + g * 0.587 + b * 0.114) / 255
+      }
+      const rgb = text.match(/^rgba?\(([^)]+)\)$/iu)
+      if (rgb) {
+        const parts = rgb[1].split(/[\s,\/]+/u).filter(Boolean)
+        return ((Number(parts[0]) || 0) * 0.299 + (Number(parts[1]) || 0) * 0.587 + (Number(parts[2]) || 0) * 0.114) / 255
+      }
+      return 0.5
+    }
+
+    /** 往黑色方向压暗；主题渐变的浅色停靠点在浅色背景上会看不见。 */
+    function shadeColor(color, amount = 0.35) {
+      const text = String(color || '').trim()
+      let r = 0
+      let g = 0
+      let b = 0
+      let a = 1
+      const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/iu)
+      const rgb = text.match(/^rgba?\(([^)]+)\)$/iu)
+      if (hex) {
+        const value = hex[1].length === 3 ? hex[1].split('').map((ch) => ch + ch).join('') : hex[1]
+        r = parseInt(value.slice(0, 2), 16)
+        g = parseInt(value.slice(2, 4), 16)
+        b = parseInt(value.slice(4, 6), 16)
+      } else if (rgb) {
+        const parts = rgb[1].split(/[\s,\/]+/u).filter(Boolean)
+        r = Number(parts[0]) || 0
+        g = Number(parts[1]) || 0
+        b = Number(parts[2]) || 0
+        a = parts[3] === undefined ? 1 : Number(parts[3])
+      } else if (text === 'white') {
+        r = 255; g = 255; b = 255
+      } else if (text === 'black') {
+        r = 0; g = 0; b = 0
+      } else {
+        return color
+      }
+      const mix = (channel) => Math.round(channel * (1 - amount))
+      return `rgba(${mix(r)}, ${mix(g)}, ${mix(b)}, ${a})`
+    }
+
+    /** 主题渐变停靠点：按明暗主题把太浅/太暗的停靠点拉回可读区间。 */
+    function adjustGradientStops(stops, dark) {
+      return stops.map((color) => {
+        const luminance = colorLuminance(color)
+        if (dark && luminance < 0.16) return lightenColor(color, 0.45)
+        if (!dark && luminance > 0.84) return shadeColor(color, 0.42)
+        return color
+      })
+    }
+    /** 读当前主题页面的背景渐变（像昔涟主题那样自带渐变时直接沿用）。 */
+    function readThemeGradientStops() {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return []
+      const candidates = []
+      try {
+        candidates.push(getComputedStyle(document.body).backgroundImage)
+        candidates.push(getComputedStyle(document.documentElement).backgroundImage)
+        const app = document.querySelector('.dsh-app')
+        if (app !== null) candidates.push(getComputedStyle(app).backgroundImage)
+      } catch {
+        return []
+      }
+      for (const value of candidates) {
+        const stops = parseGradientStops(value)
+        if (stops.length >= 2) return stops
+      }
+      return []
+    }
+
     function readDshGraphPalette(canvas) {
       const local = getComputedStyle(canvas)
       const root = getComputedStyle(document.documentElement)
@@ -781,15 +890,18 @@ window.__ModuleLoader__.load({
       // 完全跟着 DSH 主题 token：品牌色、深标签、描边、弱化文字
       const brand = read('--dsw-alias-brand-primary', dark ? '#38bdf8' : '#0369a1')
       const deep = read('--dsw-alias-label-deep-diving', brand)
+      // 主题自带渐变（例如昔涟主题的背景渐变）时，直接沿用它的颜色停靠点
+      const themeStops = adjustGradientStops(readThemeGradientStops(), dark)
+      const hasThemeGradient = themeStops.length >= 2
       return {
         bg: bgInner,
         bgInner: bg,
-        node: brand,
-        nodeLight: lightenColor(brand, 0.58),
-        node2: deep,
-        edge: read('--dsw-alias-border-l3', dark ? '#64748b' : '#94a3b8'),
-        highlight: brand,
-        glow: brand,
+        node: hasThemeGradient ? themeStops[0] : brand,
+        nodeLight: hasThemeGradient ? themeStops[1] : lightenColor(brand, 0.58),
+        node2: hasThemeGradient ? themeStops[themeStops.length - 1] : deep,
+        edge: hasThemeGradient ? themeStops[1] : read('--dsw-alias-border-l3', dark ? '#64748b' : '#94a3b8'),
+        highlight: hasThemeGradient ? lightenColor(themeStops[0], 0.35) : brand,
+        glow: hasThemeGradient ? themeStops[0] : brand,
         dust: read('--dsw-alias-label-dimmed', dark ? '#94a3b8' : '#cbd5e1'),
         ringFill: dark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
         dark,
@@ -1664,11 +1776,17 @@ window.__ModuleLoader__.load({
             h(PageBoundary, { key: tab }, content))))
     }
 
-    /** 会话底部「存入经验」按钮：按当前消息 id 让 host 读会话文件，落一条经验。 */
+    /**
+     * 会话底部的「存入经验」按钮。
+     * 聊天区可能在 shadow DOM 里，外部样式表进不去，所以全部用内联样式，
+     * 尺寸/颜色/悬停都对齐旁边那些图标按钮（只留图标，不带文字和边框）。
+     */
     function SaveExperienceAction(props) {
       const [state, setState] = useState('idle')
+      const [hover, setHover] = useState(false)
       const save = async (event) => {
         if (event && typeof event.stopPropagation === 'function') event.stopPropagation()
+        if (state === 'busy') return null
         setState('busy')
         try {
           const receipt = await request('/chat-save', {
@@ -1684,21 +1802,49 @@ window.__ModuleLoader__.load({
           return null
         }
       }
-      const label = state === 'ok' ? '已存' : state === 'err' ? '失败' : '存经验'
+      const title = state === 'ok' ? '已存入经验库' : state === 'err' ? '存入失败，点一下重试' : '把这条对话存进经验库'
+      const style = {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '24px',
+        height: '24px',
+        padding: '0',
+        margin: '0',
+        border: '0',
+        borderRadius: '6px',
+        background: hover && state !== 'busy' ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+        color: state === 'err' ? '#d24b45' : 'currentColor',
+        opacity: state === 'busy' ? 0.45 : 0.78,
+        cursor: state === 'busy' ? 'default' : 'pointer',
+        font: 'inherit',
+        lineHeight: 1,
+      }
+      const glyph = state === 'ok'
+        ? h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+          h('path', { d: 'M3.2 8.4 6.4 11.6 12.8 4.8' }))
+        : h(EngramGlyph, { size: 16 })
       return h('button', {
         type: 'button',
         className: 'eng-save-exp',
-        title: '把这条对话存进经验库（结果可之后回填）',
+        style,
+        title,
         'aria-label': '存入经验库',
+        'data-state': state,
         disabled: state === 'busy',
         onClick: save,
-      }, h(EngramGlyph, { size: 14 }), h('span', null, label))
+        onMouseEnter: () => setHover(true),
+        onMouseLeave: () => setHover(false),
+        onFocus: () => setHover(true),
+        onBlur: () => setHover(false),
+      }, glyph)
     }
     return {
       // 暴露给测试：详情面板/设置页都要能单独渲染，防「点击后空白」「设置页堆成一坨」回归。
       DetailPane,
       Settings,
       SaveExperienceAction,
+      parseGradientStops,
       inject: ['slots', 'layout'],
       apply(ctx) {
         try {
@@ -1731,7 +1877,7 @@ window.__ModuleLoader__.load({
           disposers.push(ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register({
             name: 'conversation.chat.assistant-actions',
             id: 'save-experience',
-            order: 5,
+            order: 95,
             inject: (sessionId) => ({ props: { sessionId } }),
           }, SaveExperienceAction)))
         } catch (error) { failures.push(`chat-save:${error && error.message ? error.message : String(error)}`); console.error('[engram] chat save registration failed', error) }
