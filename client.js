@@ -694,12 +694,13 @@ window.__ModuleLoader__.load({
       const [fileName, setFileName] = useState('')
       const [dragging, setDragging] = useState(false)
       const [showPaste, setShowPaste] = useState(false)
+      const [sourcePath, setSourcePath] = useState('')
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
       const [result, setResult] = useState(null)
       const fileInputRef = useRef(null)
       const dirInputRef = useRef(null)
-      const canSubmit = busy === false && content.trim() !== ''
+      const canSubmit = busy === false && (sourcePath.trim() !== '' || content.trim() !== '')
       const takeFile = async (file) => {
         if (file === null || file === undefined) return
         const name = String(file.name || '')
@@ -719,6 +720,7 @@ window.__ModuleLoader__.load({
           }
           setContent(text)
           setFileName(name)
+          setSourcePath('')
           setError('')
         } catch (caught) {
           setError(`读取失败：${caught && caught.message ? caught.message : String(caught)}`)
@@ -758,7 +760,8 @@ window.__ModuleLoader__.load({
         setBusy(true)
         setError('')
         try {
-          const out = await request('/skills/import', { method: 'POST', body: { content } })
+          const body = sourcePath.trim() !== '' ? { path: sourcePath.trim() } : { content }
+          const out = await request('/skills/import', { method: 'POST', body })
           setResult(out)
           props.onImported(out)
         } catch (caught) {
@@ -783,6 +786,10 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-fixed-target' },
             h('span', { className: 'eng-muted' }, '安装位置'),
             h('code', { className: 'eng-mono', style: { fontSize: 12 } }, '经验库 .exp/skills/<slug>/（固定，不用填）')),
+          h('div', { className: 'eng-fixed-target', style: { marginTop: 10 } },
+            h('span', { className: 'eng-muted' }, '来源路径'),
+            h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, value: sourcePath, placeholder: 'C:\\Users\\you\\my-skill（技能文件夹或 SKILL.md）', onChange: (event) => setSourcePath(event.target.value) })),
+          h('div', { className: 'eng-muted', style: { marginTop: 4, fontSize: 12 } }, '拖拽被宿主窗口拦掉时用这个：粘绝对路径由服务端直接读（文件夹或 SKILL.md；zip 请先解压）。'),
           h('ul', { className: 'eng-req' },
             h('li', null, '技能文件夹需包含 SKILL.md'),
             h('li', null, 'SKILL.md 需带 YAML 的 name 与 description'),
@@ -2036,64 +2043,81 @@ window.__ModuleLoader__.load({
         ] : null,
         section === 'backup' ? [
         h('div', { className: 'eng-card eng-detail' },
-          h('h3', { className: 'eng-detail-title' }, 'Git 仓库备份'),
-          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '把经验库当普通 git 仓库提交并推送到远端：只提交当前数据目录，拉取只做 fast-forward，冲突交回给人。'),
-          h('div', { className: 'eng-form-grid' }, renderFields(spec.git, gitDraft, setGitDraft)),
-          h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
-            h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ git: gitDraft }) }, '保存 Git 设置'),
-            h(Button, { disabled: busy, onClick: sync.reload }, '检查状态'),
-            h(Button, { disabled: busy, onClick: () => syncAction('init', '初始化') }, '初始化仓库'),
-            h(Button, { disabled: busy, onClick: () => syncAction('push', '推送') }, '提交并推送'),
-            h(Button, { disabled: busy, onClick: () => syncAction('pull', '拉取') }, '拉取')),
-          syncNotice ? h(Banner, null, syncNotice) : null,
-          sync.error ? h(Banner, { bad: true }, sync.error) : null,
-          h('div', { className: 'eng-label', style: { margin: '14px 0 8px' } }, 'GitHub 账号'),
-          h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, '点下面按钮走 GitHub 设备码登录：浏览器打开验证页、输入一次性代码即可，不用建 token。'),
+          h('h3', { className: 'eng-detail-title' }, 'Git 同步'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 12 } }, '把经验库当普通 git 仓库同步到远端：只提交当前数据目录，拉取只做 fast-forward，冲突交回给人。选好仓库就等于连上了，不用再点第二次。'),
+          h('div', { className: 'eng-git-status' },
+            h(Badge, { tone: connectedNow ? 'ok' : 'muted' }, connectedNow ? '已连接' : '未连接'),
+            h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, connectedNow ? remoteNow : '选一个仓库，或填地址连接'),
+            h('span', { className: 'eng-muted' }, `分支 ${branchNow}`),
+            syncData ? h('span', { className: 'eng-muted' }, `${syncData.dirtyCount} 个未提交`) : null,
+            syncData && syncData.lastCommitAt ? h('span', { className: 'eng-muted' }, `上次同步 ${fmtTime(syncData.lastCommitAt)}`) : null),
+          h('div', { className: 'eng-actions', style: { margin: '10px 0 14px' } },
+            h(Button, { kind: 'primary', disabled: busy || !connectedNow, onClick: () => syncAction('push', '同步') }, '立即同步'),
+            h(Button, { disabled: busy || !connectedNow, onClick: () => syncAction('pull', '拉取') }, '拉取'),
+            h(Button, { disabled: busy, onClick: () => syncAction('status', '检查') }, '检查远端'),
+            h(Button, { disabled: busy || !connectedNow, onClick: () => syncAction('disconnect', '断开') }, '断开')),
+          h('div', { className: 'eng-label', style: { margin: '16px 0 8px' } }, 'GitHub 账号'),
           h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
             device === null || device.status !== 'waiting'
-              ? h(Button, { kind: 'primary', disabled: busy || ghBusy, onClick: deviceStart }, '用 GitHub 登录（免 token）')
+              ? h(Button, { kind: ghUser ? undefined : 'primary', disabled: ghBusy, onClick: deviceStart }, ghUser ? '重新登录 GitHub' : '用 GitHub 登录')
               : h(Button, { disabled: ghBusy, onClick: deviceCancel }, '取消登录'),
-            h(Button, { disabled: busy || ghBusy, onClick: () => ghRun('login', {}, '登录') }, ghUser ? `已登录：${ghUser.login}` : '用已填 token 登录'),
-            h(Button, { disabled: busy || ghBusy, onClick: () => ghRun('repos', {}, '读取仓库') }, '加载我的仓库')),
-          device === null ? null : h('div', { className: 'eng-banner', style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+            ghUser ? h(Badge, { tone: 'brand' }, `@${ghUser.login}`) : h('span', { className: 'eng-muted' }, '未登录'),
+            h(Button, { disabled: ghBusy || ghUser === null, onClick: () => ghRun('repos', {}, '读取仓库') }, '刷新仓库列表')),
+          device === null ? null : h('div', { className: 'eng-banner', style: { display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 } },
             device.status === 'waiting'
               ? h('div', null,
                 '在浏览器打开 ',
                 h('a', { href: device.verificationUri || 'https://github.com/login/device', target: '_blank', rel: 'noreferrer' }, device.verificationUri || 'https://github.com/login/device'),
-                '，输入代码 ',
+                '，输入设备码 ',
                 h('span', { className: 'eng-mono', style: { fontWeight: 700, letterSpacing: '.08em' } }, device.userCode || ''),
-                '，授权后这里会自动跳转（本页保持打开）。',
-                h('div', { className: 'eng-actions' },
-                  h(Button, { small: true, onClick: async () => { try { await navigator.clipboard.writeText(device.userCode || ''); setGhNotice('验证码已复制') } catch { setGhNotice('浏览器不讓复制，请手动选中验证码') } } }, '复制验证码'),
+                '；授权后会自动继续。',
+                h('div', { className: 'eng-actions', style: { marginTop: 6 } },
+                  h(Button, { small: true, onClick: async () => { try { await navigator.clipboard.writeText(device.userCode || ''); setGhNotice('设备码已复制') } catch { setGhNotice('浏览器不让复制，请手动选中设备码') } } }, '复制设备码'),
                   h(Button, { kind: 'primary', small: true, disabled: ghBusy, onClick: deviceCheckNow }, '我已授权，立即检查')))
               : device.status === 'authorized'
-                ? '✓ 登录成功，token 已保存（不需要再贴 token）'
+                ? '登录成功，令牌已保存在这台电脑'
                 : `登录未完成：${device.status === 'expired' ? '设备码过期' : '授权被拒绝'}`),
-          ghNotice ? h(Banner, null, ghNotice) : null,
-          ghRepos === null ? null : h('div', { className: 'eng-git-repos' },
-            ghRepos.length === 0
-              ? h('div', { className: 'eng-muted', style: { padding: '10px 12px' } }, '这个账号还没有仓库，用下面的「新建仓库并推送」。')
-              : ghRepos.map((repo) => h('div', { key: repo.fullName, className: 'eng-git-repo' },
-                h('div', { className: 'eng-row-main' },
-                  h('div', { className: 'eng-row-intent' }, repo.fullName),
-                  h('div', { className: 'eng-row-sub' }, `${repo.private ? '私有' : '公开'} · ${repo.defaultBranch || 'main'} · ${fmtTime(repo.updatedAt)}`)),
-                h(Button, { small: true, disabled: busy || ghBusy, onClick: () => ghRun('select', { repoUrl: repo.cloneUrl }, `选中 ${repo.fullName}`) }, '用这个')))),
-          h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
+          h('div', { className: 'eng-label', style: { margin: '4px 0 8px' } }, '仓库地址'),
+          h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
+            h('input', { className: 'eng-input', style: { flex: '1 1 280px' }, placeholder: 'https://github.com/<你>/<仓库>.git', value: gitDraft.repoUrl || '', onChange: (event) => setGitDraft({ ...gitDraft, repoUrl: event.target.value }) }),
+            h('input', { className: 'eng-input', style: { width: 120 }, placeholder: '分支', value: gitDraft.branch || '', onChange: (event) => setGitDraft({ ...gitDraft, branch: event.target.value }) }),
+            h(Button, { disabled: busy || String(gitDraft.repoUrl || '').trim() === '', onClick: connectRepo }, '连接并同步')),
+          h('div', { className: 'eng-label', style: { margin: '16px 0 8px' } }, '我的仓库'),
+          h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
+            h('input', { className: 'eng-input', style: { flex: '1 1 240px' }, placeholder: '搜索仓库，或输入新仓库名', value: repoSearch, onChange: (event) => setRepoSearch(event.target.value) })),
+          ghRepos === null
+            ? h('div', { className: 'eng-muted', style: { padding: '4px 0 10px' } }, ghUser === null ? '登录 GitHub 后可以直接选仓库或新建' : '点「刷新仓库列表」读取仓库')
+            : h('div', { className: 'eng-git-repos' }, filteredRepos.length === 0
+              ? h('div', { className: 'eng-muted', style: { padding: '10px 12px' } }, ghRepos.length === 0 ? '这个账号还没有仓库，用下面的「新建并连接」' : '没有匹配的仓库')
+              : filteredRepos.map((repo) => {
+                const isCurrent = connectedNow && remoteNow === repo.cloneUrl
+                return h('div', { key: repo.fullName, className: 'eng-git-repo' },
+                  h('div', { className: 'eng-row-main' },
+                    h('div', { className: 'eng-row-intent' }, repo.fullName),
+                    h('div', { className: 'eng-row-sub' }, `${repo.private ? '私有' : '公开'} · ${repo.defaultBranch || 'main'} · ${fmtTime(repo.updatedAt)}`)),
+                  isCurrent
+                    ? h(Badge, { tone: 'ok' }, '当前')
+                    : h(Button, { small: true, disabled: busy || ghBusy, onClick: () => ghRun('select', { repoUrl: repo.cloneUrl }, `连接 ${repo.fullName}`) }, '连接'))
+              })),
+          h('div', { className: 'eng-actions', style: { margin: '10px 0 4px' } },
             h('input', { className: 'eng-input', style: { flex: '1 1 200px' }, placeholder: '新仓库名，例如 engram-backup', value: newRepoName, onChange: (event) => setNewRepoName(event.target.value) }),
             h('label', { className: 'eng-actions', style: { fontWeight: 400 } },
               h('input', { type: 'checkbox', checked: newRepoPrivate, onChange: (event) => setNewRepoPrivate(event.target.checked) }),
               h('span', { className: 'eng-muted' }, newRepoPrivate ? '私有' : '公开')),
-            h(Button, { kind: 'primary', disabled: busy || ghBusy || newRepoName.trim() === '', onClick: () => ghRun('create', { name: newRepoName.trim(), private: newRepoPrivate }, '新建并推送') }, '新建仓库并推送')),
-          h('dl', { className: 'eng-kv' },
-            h('dt', null, '仓库'), h('dd', null, sync.data ? (sync.data.isRepo ? '已初始化' : '未初始化（点「初始化仓库」）') : '读取中…'),
-            h('dt', null, '分支'), h('dd', { className: 'eng-mono' }, sync.data && sync.data.branch ? sync.data.branch : (sync.data && sync.data.targetBranch) || '—'),
-            h('dt', null, '远端'), h('dd', { className: 'eng-mono' }, sync.data && sync.data.remote ? sync.data.remote : (sync.data && sync.data.configured ? '已填地址，未初始化' : '未配置')),
-            h('dt', null, '未提交'), h('dd', null, sync.data ? `${sync.data.dirtyCount} 个改动` : '—'),
-            h('dt', null, '领先 / 落后'), h('dd', null, sync.data ? `${sync.data.ahead} / ${sync.data.behind}` : '—'),
-            h('dt', null, '最近提交'), h('dd', null, sync.data && sync.data.lastCommitAt ? `${fmtTime(sync.data.lastCommitAt)} ${sync.data.lastCommitSubject}` : '—'),
-            h('dt', null, '自动备份'), h('dd', null, sync.data && sync.data.autoBackupMinutes ? `每 ${sync.data.autoBackupMinutes} 分钟` : '关闭'),
-            sync.data && sync.data.error ? h('dt', null, '错误') : null, sync.data && sync.data.error ? h('dd', { className: 'eng-mono' }, sync.data.error) : null))
+            h(Button, { kind: 'primary', disabled: busy || ghBusy || newRepoName.trim() === '', onClick: () => ghRun('create', { name: newRepoName.trim(), private: newRepoPrivate }, '新建并连接') }, '新建并连接')),
+          h('div', { className: 'eng-label', style: { margin: '16px 0 8px' } }, '自动同步'),
+          h('div', { className: 'eng-actions' },
+            h('select', { className: 'eng-select', value: String(gitDraft.autoBackupMinutes === undefined ? 0 : gitDraft.autoBackupMinutes), onChange: (event) => saveAutoBackup(Number(event.target.value)) },
+              [[0, '关闭（只手动同步）'], [60, '每小时'], [360, '每 6 小时'], [1440, '每天']].map(([value, label]) => h('option', { key: value, value: String(value) }, label))),
+            h('span', { className: 'eng-muted' }, '到点自动 commit + push；没有改动就跳过')),
+          h('div', { className: 'eng-label', style: { margin: '16px 0 8px' } }, '高级（令牌 / 提交作者）'),
+          h('div', { className: 'eng-form-grid' }, renderFields(advancedGitFields, gitDraft, setGitDraft)),
+          h('div', { className: 'eng-actions', style: { marginTop: 10 } }, h(Button, { disabled: busy, onClick: () => post({ git: gitDraft }) }, '保存高级设置')),
+          syncNotice ? h(Banner, null, syncNotice) : null,
+          ghNotice ? h(Banner, null, ghNotice) : null,
+          sync.error ? h(Banner, { bad: true }, sync.error) : null)
         ] : null,
+
         section === 'ui' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '界面与关系图'),
