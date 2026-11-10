@@ -687,7 +687,9 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性'),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
+                // 管理动作单独一行、与上一行左对齐：注册到全局 + 忘记技能（危险动作排最后）
+                h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
                   h(Button, {
                     small: true,
                     kind: current.globalRegistered ? undefined : 'primary',
@@ -892,7 +894,7 @@ window.__ModuleLoader__.load({
               h('div', { style: { fontWeight: 620, marginBottom: 6 } }, result.suite ? `已导入技能套件：${result.count} 个技能` : `已导入：${(result.items && result.items[0] ? result.items[0].name : result.name)}（${(result.items && result.items[0] ? result.items[0].action : result.action)}）`),
               (result.items || [result]).map((item) => h('div', { key: item.slug || item.name, className: 'eng-muted', style: { lineHeight: 1.8 } },
                 `· ${item.name}（${item.slug}）分类：${item.category || '未分类'}${item.classifier === 'local' ? '（本地归类）' : ''}`)),
-              h('div', { className: 'eng-muted', style: { marginTop: 6 } }, '导入的内容已在技能列表里，弹窗不会自动关，方便你核对；关掉后列表自动刷新。'))
+              h('div', { className: 'eng-muted', style: { marginTop: 6 } }, '导入完成后会自动关掉弹窗，列表随即刷新。'))
             : null,
           h('div', { className: 'eng-modal-actions' },
             h(Button, { small: true, onClick: props.onClose }, result ? '关闭' : '取消'),
@@ -2326,6 +2328,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(null)
       const [error, setError] = useState('')
       const [refreshing, setRefreshing] = useState(false)
+      const [importNotice, setImportNotice] = useState('')
       const [refreshedAt, setRefreshedAt] = useState('')
       const [reloadToken, setReloadToken] = useState(0)
       // 「添加技能」弹层：只在技能页出现，放在顶部右侧、版本号左边。
@@ -2424,13 +2427,18 @@ window.__ModuleLoader__.load({
           },
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
+            importNotice ? h(Banner, null, importNotice) : null,
             h(PageBoundary, { key: `${tab}:${reloadToken}` }, content))),
         importOpen
           ? h(ImportSkillDialog, {
-            // 导入成功**不**重挂页面：refreshAll 会换 PageBoundary 的 key，弹窗会被一起卸载，
-            // 用户就看不到导入结果了。改成关弹窗时再刷新。
-            onClose: () => { setImportOpen(false); refreshAll() },
-            onImported: () => {},
+            // 用户要的是「装完弹窗就消失」：导入成功 → 关弹窗 + 刷新列表（refreshAll 顺带重挂页面）。
+            onClose: () => setImportOpen(false),
+            onImported: (out) => {
+              setImportOpen(false)
+              const count = out && out.suite ? Number(out.count) || 0 : 1
+              setImportNotice(`已导入${count > 1 ? `技能套件 ${count} 个技能` : '技能'}，列表已刷新`)
+              refreshAll()
+            },
           })
           : null)
     }
