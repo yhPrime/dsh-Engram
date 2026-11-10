@@ -249,6 +249,10 @@ check('关系图节点是「中心向外发光」而不是球体高光', () => {
   assert.equal(source.includes('createRadialGradient(-screenRadius * 0.35'), false, '还在用左上偏移的球体高光')
   assert.ok(source.includes('createRadialGradient(0, 0, 0, 0, 0'), '亮心没有落在正中心')
   assert.ok(source.includes('haloRadius'), '没有向外的光晕层')
+  assert.ok(source.includes('drawStarFlare'), '没有十字星芒（恒星感）')
+  assert.ok(source.includes("globalCompositeOperation = 'lighter'"), '光晕没用叠加混合，浅色主题会叠成脏晕')
+  assert.ok(/core\.addColorStop\(0, withAlpha\(hot/u.test(source), '星心不是发亮的（hot）')
+  assert.ok(source.includes('screenRadius * 0.34'), '星心没有那一圈高光')
   const withAlpha = module.withAlpha
   assert.equal(typeof withAlpha, 'function', 'withAlpha 没导出')
   assert.equal(withAlpha('#4d93f8', 0.5), 'rgba(77, 147, 248, 0.5)')

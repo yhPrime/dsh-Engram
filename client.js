@@ -840,6 +840,34 @@ window.__ModuleLoader__.load({
       lava: { bg: '#080302', bgInner: '#1c0805', node: '#ff7a18', node2: '#ff2d2d', edge: '#8a2b12', highlight: '#ffc27a', warn: '#ffb347', glow: '#ff9a3c', dust: '#ffc27a', bloom: 24, ringFill: 'rgba(8,3,2,.55)' },
     }
 
+    /**
+     * 十字星芒：给大一点的节点加两长两短的细光线，读起来才像「恒星」而不是一团晕。
+     * 线宽和透明度都随半径走，缩远了自动看不见，不会糊成一片。
+     */
+    function drawStarFlare(ctx, length, color, alpha) {
+      if (!(length > 2.4)) return
+      ctx.save()
+      ctx.strokeStyle = withAlpha(color, alpha)
+      ctx.lineCap = 'round'
+      ctx.lineWidth = Math.max(0.5, Math.min(1.4, length * 0.045))
+      ctx.beginPath()
+      ctx.moveTo(-length, 0)
+      ctx.lineTo(length, 0)
+      ctx.moveTo(0, -length)
+      ctx.lineTo(0, length)
+      ctx.stroke()
+      ctx.globalAlpha *= 0.6
+      ctx.lineWidth = Math.max(0.4, Math.min(1, length * 0.03))
+      const diagonal = length * 0.62
+      ctx.beginPath()
+      ctx.moveTo(-diagonal * 0.7, -diagonal * 0.7)
+      ctx.lineTo(diagonal * 0.7, diagonal * 0.7)
+      ctx.moveTo(diagonal * 0.7, -diagonal * 0.7)
+      ctx.lineTo(-diagonal * 0.7, diagonal * 0.7)
+      ctx.stroke()
+      ctx.restore()
+    }
+
     function drawGraphShape(ctx, radius, theme) {
       if (radius <= 0.2) return
       ctx.beginPath()
@@ -1479,28 +1507,44 @@ window.__ModuleLoader__.load({
               ctx.shadowBlur = 0
               ctx.shadowColor = 'transparent'
               ctx.scale(breathing, breathing)
-              // 发光型：亮心在正中间、能量往外散；不是球体高光（高光会把亮斑偏到左上，
-              // 看着像玻璃珠；这里要的是「中心向外发光」）。
+              // 恒星感 = 白热星心 + 本体色 + 十字星芒 + 很淡的外晕。
+              // 之前外晕太浓太大、星心用中间调，叠在一起就成一团发霉的污渍。
               const glowColor = palette.glow || color
-              const haloRadius = screenRadius * 2.4
-              if (haloRadius > 1.2) {
-                const halo = ctx.createRadialGradient(0, 0, screenRadius * 0.12, 0, 0, haloRadius)
-                halo.addColorStop(0, withAlpha(glowColor, 0.34))
-                halo.addColorStop(0.45, withAlpha(glowColor, 0.12))
+              const hot = lightenColor(color, palette.dark ? 0.55 : 0.72)
+              const haloRadius = screenRadius * 2
+              if (screenRadius > 1.6) {
+                // 光晕和星芒用叠加混合：亮处更亮（星星是发光体），
+                // 浅色主题上也不会叠出一片脏兮兮的暗晕。
+                ctx.save()
+                ctx.globalCompositeOperation = 'lighter'
+                const halo = ctx.createRadialGradient(0, 0, screenRadius * 0.34, 0, 0, haloRadius)
+                halo.addColorStop(0, withAlpha(glowColor, 0.3))
+                halo.addColorStop(0.42, withAlpha(glowColor, 0.1))
                 halo.addColorStop(1, withAlpha(glowColor, 0))
                 ctx.fillStyle = halo
                 ctx.beginPath()
                 ctx.arc(0, 0, haloRadius, 0, Math.PI * 2)
                 ctx.fill()
+                // 小星点只给光晕，大一点的才加星芒，免得缩远后一片刺
+                if (screenRadius > 3.2) drawStarFlare(ctx, screenRadius * 2.6, glowColor, 0.26)
+                ctx.restore()
               }
               const core = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(0.6, screenRadius))
-              core.addColorStop(0, withAlpha(palette.nodeLight || color, 0.96))
-              core.addColorStop(0.38, withAlpha(color, 0.92))
-              core.addColorStop(1, withAlpha(color, 0.55))
+              core.addColorStop(0, withAlpha(hot, 0.98))
+              core.addColorStop(0.5, withAlpha(color, 0.96))
+              // 边缘留一点实色，别糊成一团：星星是「亮点 + 星芒」，不是一团雾
+              core.addColorStop(1, withAlpha(color, 0.72))
               ctx.fillStyle = core
-              ctx.strokeStyle = withAlpha(palette.highlight || color, 0.9)
-              ctx.lineWidth = isSelected ? 1.6 : 0.7
+              ctx.strokeStyle = withAlpha(palette.highlight || color, 0.85)
+              ctx.lineWidth = isSelected ? 1.6 : 0.6
               drawGraphShape(ctx, screenRadius, theme)
+              if (screenRadius > 1.6) {
+                // 星心那一点高光：整颗星最亮的位置，定出「光源在中心」
+                ctx.fillStyle = withAlpha(hot, 0.95)
+                ctx.beginPath()
+                ctx.arc(0, 0, Math.max(0.7, screenRadius * 0.34), 0, Math.PI * 2)
+                ctx.fill()
+              }
               if (node.kind === 'skill') {
                 ctx.beginPath()
                 ctx.arc(0, 0, screenRadius * 1.9, 0, Math.PI * 2)
