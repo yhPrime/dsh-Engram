@@ -348,7 +348,8 @@ export async function buildImportSkill(source, body = {}, deps = {}) {
   if (filePath === '' && content.trim() === '') throw codedError('source-required', '要么拖入/选择 SKILL.md，要么粘贴正文')
   const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
   const notes = Array.isArray(body.notes) ? body.notes.map(String) : []
-  return importSkills({ dataDir, filePath, content, typeNames, categories, notes, deps })
+  const contents = Array.isArray(body.contents) ? body.contents.map(String) : []
+  return importSkills({ dataDir, filePath, content, contents, typeNames, categories, notes, deps })
 }
 
 export function buildSkillFeedback(source, body = {}) {

@@ -137,11 +137,11 @@ window.__ModuleLoader__.load({
 .eng-toolbar .eng-select { width: min(140px, 100%); }
 .eng-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
 .eng-stack { display: flex; flex-direction: column; gap: 12px; }
-.eng-skill-row { padding: 13px 15px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-skill-row { padding: 10px 14px; display: flex; gap: 12px; align-items: center; cursor: pointer; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-skill-row:last-child { border-bottom: 0; }
 .eng-skill-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .eng-skill-row[data-on="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent); }
-.eng-skill-name { font-weight: 620; }
+.eng-skill-name { font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eng-skill-desc { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
 .eng-nav-sep { height: 1px; margin: 10px 8px; background: var(--dsw-alias-border-l1); }
 @container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
@@ -663,8 +663,8 @@ window.__ModuleLoader__.load({
               const [label, tone] = skillStateOf(row.status)
               return h('div', { key: row.id, className: 'eng-skill-row', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => { setSelected(row.id); setConfirmForget('') } },
                 h('div', { style: { flex: 1, minWidth: 0 } },
-                  h('div', { className: 'eng-skill-name' }, row.name),
-                  h('div', { className: 'eng-skill-desc' }, row.description || '—'),
+                  // 列表里不铺描述：统一成一行，详情点开再看（描述留在 title 里悬停可见）
+                  h('div', { className: 'eng-skill-name', title: row.description || row.name }, row.name),
                   h('div', { className: 'eng-actions', style: { marginTop: 6 } },
                     h(Badge, { tone }, label),
                     h('span', { className: 'eng-muted' }, `uses ${row.uses || 0} · helped ${row.helped || 0} · hurt ${row.hurt || 0}`),
@@ -809,7 +809,9 @@ window.__ModuleLoader__.load({
       const [result, setResult] = useState(null)
       const fileInputRef = useRef(null)
       const dirInputRef = useRef(null)
-      const canSubmit = busy === false && (sourcePath.trim() !== '' || content.trim() !== '')
+      // 浏览器选文件夹时一次可能读到多个 SKILL.md（套件），先攒起来再一次性提交
+      const [contentsDraft, setContentsDraft] = useState([])
+      const canSubmit = busy === false && (sourcePath.trim() !== '' || content.trim() !== '' || contentsDraft.length > 0)
       const takeFile = async (file) => {
         if (file === null || file === undefined) return
         const name = String(file.name || '')
@@ -892,17 +894,39 @@ window.__ModuleLoader__.load({
       }
       const onPicked = async (event) => {
         const list = Array.from((event.target && event.target.files) || [])
-        // 选的是整个文件夹时，文件列表里第一个不一定是 SKILL.md，先挑它
-        const picked = list.find((file) => /^skill\.md$/iu.test(file.name)) || list.find((file) => /\.md$/iu.test(file.name)) || list[0]
-        if (picked !== undefined) await takeFile(picked)
         if (event.target) event.target.value = ''
+        if (list.length === 0) return
+        // 文件夹里可能是一个技能（1 个 SKILL.md），也可能是套件（每个子目录一个 SKILL.md）
+        const skillDocs = list.filter((file) => /^skill\.md$/iu.test(file.name))
+        if (skillDocs.length > 1) {
+          const texts = []
+          for (const file of skillDocs.slice(0, 30)) {
+            try {
+              const text = await file.text()
+              if (String(text || '').trim() !== '') texts.push(text)
+            } catch {
+              // 单个读失败跳过，不让整次选择失败
+            }
+          }
+          setContentsDraft(texts)
+          setContent('')
+          setSourcePath('')
+          setFileName(`${texts.length} 个技能（套件）`)
+          setError('')
+          return
+        }
+        setContentsDraft([])
+        const picked = skillDocs[0] || list.find((file) => /\.md$/iu.test(file.name)) || list[0]
+        if (picked !== undefined) await takeFile(picked)
       }
       const submit = async () => {
         setBusy(true)
         setError('')
         try {
           const splitList = (text) => String(text || '').split(/[,，\n]/u).map((item) => item.trim()).filter((item) => item !== '')
-          const body = sourcePath.trim() !== '' ? { path: sourcePath.trim() } : { content }
+          const body = sourcePath.trim() !== ''
+            ? { path: sourcePath.trim() }
+            : (contentsDraft.length > 1 ? { contents: contentsDraft } : { content })
           body.categories = splitList(categoriesDraft)
           body.notes = splitList(notesDraft)
           const out = await request('/skills/import', { method: 'POST', body })

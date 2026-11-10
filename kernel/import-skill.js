@@ -328,17 +328,20 @@ export function readImportSources({ filePath = '', content = '' } = {}) {
     }
     if (stat.isFile()) return [readImportSource({ filePath: target })]
     if (!stat.isDirectory()) throw new Error(`不是一个文件或文件夹：${target}`)
-    if (findSkillDoc(target) !== null) return [readImportSource({ filePath: target })]
-    const items = []
-    for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      if (findSkillDoc(path.join(target, entry.name)) === null) continue
-      items.push(readImportSource({ filePath: path.join(target, entry.name) }))
+    const subSkills = fs.readdirSync(target, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(target, entry.name))
+      .filter((dir) => findSkillDoc(dir) !== null)
+    // 根上有 SKILL.md：可能是单个技能，也可能是「套件总入口 + 一堆子技能」（ai-base-tools 就是）。
+    // 有子技能就一起按套件导入——不然点了整包也只进得去总入口那一条。
+    if (findSkillDoc(target) !== null) {
+      if (subSkills.length === 0) return [readImportSource({ filePath: target })]
+      return [readImportSource({ filePath: target }), ...subSkills.map((dir) => readImportSource({ filePath: dir }))]
     }
-    if (items.length === 0) {
+    if (subSkills.length === 0) {
       throw new Error(`这个文件夹里没有 SKILL.md，也没有带 SKILL.md 的子目录（技能套件要求每个技能一个子目录）：${target}`)
     }
-    return items
+    return subSkills.map((dir) => readImportSource({ filePath: dir }))
   }
   return [readImportSource({ content })]
 }
@@ -502,8 +505,11 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
  * 导入一到多个技能：路径给的是套件文件夹时逐个导入，返回 items。
  * 每条都会真实走一次分类（模型会话或本地关键词），所以套件导入是 N 次分类调用——界面上要如实说明。
  */
-export async function importSkills({ dataDir, filePath = '', content = '', typeNames = [], categories = [], notes = [], deps = {} } = {}) {
-  const sources = readImportSources({ filePath, content })
+export async function importSkills({ dataDir, filePath = '', content = '', contents = [], typeNames = [], categories = [], notes = [], deps = {} } = {}) {
+  // 浏览器一次只能把文件读成文本：整包/套件靠 contents 数组送过来
+  const sources = Array.isArray(contents) && contents.length > 0
+    ? contents.filter((text) => typeof text === 'string' && text.trim() !== '').map((text) => ({ text, source: '粘贴内容', file: '' }))
+    : readImportSources({ filePath, content })
   const items = []
   for (const source of sources) {
     // 有来源文件就再走一次 filePath：这样 importSkill 才拿得到目录，把整包一起复制进去

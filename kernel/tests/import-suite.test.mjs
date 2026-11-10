@@ -41,6 +41,17 @@ await check('套件文件夹：根上没有 SKILL.md 时按子目录各取一条
   assert.deepEqual([...names], ['乙', '甲'])
 })
 
+await check('根上有 SKILL.md 且子目录也各自有：按「总入口 + 子技能」一起导入', () => {
+  const withRoot = path.join(root, 'with-root')
+  fs.mkdirSync(path.join(withRoot, 'child-a'), { recursive: true })
+  fs.mkdirSync(path.join(withRoot, 'child-b'), { recursive: true })
+  fs.writeFileSync(path.join(withRoot, 'SKILL.md'), '---\nname: 套件总入口\ndescription: 入口\n---\n\n# 入口\n', 'utf8')
+  fs.writeFileSync(path.join(withRoot, 'child-a', 'SKILL.md'), '---\nname: 子技能甲\ndescription: 甲\n---\n\n# 甲\n', 'utf8')
+  fs.writeFileSync(path.join(withRoot, 'child-b', 'SKILL.md'), '---\nname: 子技能乙\ndescription: 乙\n---\n\n# 乙\n', 'utf8')
+  const sources = readImportSources({ filePath: withRoot })
+  assert.equal(sources.length, 3, `总入口 + 两个子技能应得 3 条，实际 ${sources.length}`)
+})
+
 await check('套件文件夹：一个 SKILL.md 都没有时报清楚', () => {
   const empty = path.join(root, 'nothing')
   fs.mkdirSync(path.join(empty, 'scripts'), { recursive: true })
