@@ -49,7 +49,25 @@ function parseFrontmatter(text) {
   for (; idx < lines.length; idx += 1) {
     if (lines[idx] === '---') break
     const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(lines[idx])
-    if (match) fields[match[1]] = match[2].trim()
+    if (!match) continue
+    let value = match[2].trim()
+    // YAML 块标量（`description: |` / `>`）：值在缩进块里，不认就会只得到「|」
+    if (/^[|>][+-]?$/.test(value)) {
+      const block = []
+      let cursor = idx + 1
+      for (; cursor < lines.length; cursor += 1) {
+        const inner = lines[cursor]
+        if (inner === '---') break
+        if (inner.trim() !== '' && !/^\s/.test(inner)) break
+        block.push(inner)
+      }
+      const nonEmpty = block.filter((inner) => inner.trim() !== '')
+      const indent = nonEmpty.length === 0 ? 0 : Math.min(...nonEmpty.map((inner) => (inner.match(/^\s*/) || [''])[0].length))
+      const dedented = block.map((inner) => inner.slice(indent)).join('\n').trim()
+      value = value.startsWith('>') ? dedented.replace(/\n(?=\S)/gu, ' ') : dedented
+      idx = cursor - 1
+    }
+    fields[match[1]] = value
   }
   return { fields, body: lines.slice(idx + 1).join('\n').replace(/^\n+/, '') }
 }

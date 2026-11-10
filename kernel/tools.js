@@ -30,6 +30,8 @@ import { resolveEngramDataDir } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug } from './skills.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
+// 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
+const TRIAL_MIN_SIMILARITY = 0.18
 
 function renderJson(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value) }]
@@ -209,33 +211,44 @@ export function buildTools(defineTool, config = {}) {
       // 只拿还没全局注册的技能：注册过的交给 DSH 当普通技能用，经验库不再排序它
       const skills = listSkills(dataDir, { onlyLocal: true })
       const pendingSkills = skills.filter((skill) => skill.meta.pendingCommit === true).length
-      const skillHit = matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: true })
-      if (skillHit !== null) {
+      const confidentHit = matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: true })
+      const overallHit = matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: false, minSimilarity: TRIAL_MIN_SIMILARITY })
+      // 先算两种命中再决定用哪个：高确定命中可能只因为「候选池被置信过滤缩小」而赢，
+      // 例如问页码时池里只剩 pptx-existing-deck-edit；此时 overall 的 pptx-page-number(0.525)
+      // 明显更像，应该按「试用技能」给它，而不是错配给养熟的旧技能。
+      const overallClearlyBetter = overallHit !== null
+        && (confidentHit === null || (overallHit.skill.slug !== confidentHit.skill.slug && overallHit.score >= confidentHit.score * 1.25))
+      const picked = overallClearlyBetter ? { hit: overallHit, trial: true } : (confidentHit !== null ? { hit: confidentHit, trial: false } : (overallHit !== null ? { hit: overallHit, trial: true } : null))
+      if (picked !== null) {
+        const hit = picked.hit
+        const mode = picked.trial ? 'skill-trial' : 'skill'
         logUsage(dataDir, {
           tool: 'exp_recall',
           intent: String(args.intent || ''),
-          mode: 'skill',
-          skill: skillHit.skill.slug,
+          mode,
+          skill: hit.skill.slug,
           candidates: 0,
           hit: true,
           marked: args.mark === true,
         }, usageOptions)
         return {
-          mode: 'skill',
+          mode,
           intent: String(args.intent || ''),
           skill: {
-            id: skillHit.skill.slug,
-            name: skillHit.skill.name,
-            description: skillHit.skill.description,
-            body: skillHit.skill.body,
-            context: skillHit.skill.meta.context,
-            files: (skillHit.skill.meta.files || []).map((item) => item.path),
-            confidence: { ...skillHit.skill.meta.confidence, reason: confidenceReason(skillHit.skill.meta) },
-            score: Math.round(skillHit.score * 1000) / 1000,
+            id: hit.skill.slug,
+            name: hit.skill.name,
+            description: hit.skill.description,
+            body: hit.skill.body,
+            context: hit.skill.meta.context,
+            files: (hit.skill.meta.files || []).map((item) => item.path),
+            confidence: { ...hit.skill.meta.confidence, reason: confidenceReason(hit.skill.meta) },
+            score: Math.round(hit.score * 1000) / 1000,
           },
           candidates: [],
           pendingSkills,
-          note: `高确定技能：直接用。成功用 exp_feedback("skill:${skillHit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
+          note: picked.trial
+            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：可以按它做，但先自行核对；用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后自动升级为高确定技能。`
+            : `高确定技能：直接用。成功用 exp_feedback("skill:${hit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
         }
       }
       const routing = args.all === true

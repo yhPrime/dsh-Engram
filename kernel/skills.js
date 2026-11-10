@@ -141,7 +141,26 @@ function parseFrontmatter(text) {
     const line = lines[idx]
     if (line === '---') break
     const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line)
-    if (match) fields[match[1]] = match[2].trim()
+    if (!match) continue
+    let value = match[2].trim()
+    // YAML 块标量：`description: |` / `>` 的值在缩进块里。
+    // 不认它会把描述读成「|」或「>」，技能的 name/description 就废了。
+    if (/^[|>][+-]?$/.test(value)) {
+      const block = []
+      let cursor = idx + 1
+      for (; cursor < lines.length; cursor += 1) {
+        const inner = lines[cursor]
+        if (inner === '---') break
+        if (inner.trim() !== '' && !/^\s/.test(inner)) break
+        block.push(inner)
+      }
+      const nonEmpty = block.filter((inner) => inner.trim() !== '')
+      const indent = nonEmpty.length === 0 ? 0 : Math.min(...nonEmpty.map((inner) => (inner.match(/^\s*/) || [''])[0].length))
+      const dedented = block.map((inner) => inner.slice(indent)).join('\n').trim()
+      value = value.startsWith('>') ? dedented.replace(/\n(?=\S)/gu, ' ') : dedented
+      idx = cursor - 1
+    }
+    fields[match[1]] = value
   }
   return { fields, body: lines.slice(idx + 1).join('\n').replace(/^\n+/, '') }
 }
@@ -823,14 +842,67 @@ export function validateAllSkills(dataDir) {
     .filter((item) => item.problems.length > 0)
 }
 
+/** 查询拆成可比较的单元（英文 token + 中文字二元组），小写去重。 */
+function queryUnits(query) {
+  return [...new Set([...(query.tokens || []), ...(query.cgrams || [])]
+    .map((unit) => String(unit || '').toLowerCase())
+    .filter((unit) => unit.length > 1))]
+}
+
+/**
+ * 查询单元的 IDF 权重：在越少技能里出现的词越值钱。
+ * 「左右镜像」「编程板」「页码」这种专有短语权重高，「课件」「程序」这种到处都是的权重低——
+ * 否则套件总入口那段超长描述会把所有意图都吸走。
+ */
+function unitIdf(units, corpusTexts) {
+  const total = Math.max(1, corpusTexts.length)
+  const idf = new Map()
+  for (const unit of units) {
+    let df = 0
+    for (const text of corpusTexts) {
+      if (text.includes(unit)) df += 1
+    }
+    idf.set(unit, Math.log(1 + total / (1 + df)))
+  }
+  return idf
+}
+
+/** 加权覆盖率：命中单元的权重和 / 查询总权重。 */
+function weightedCoverage(units, idf, candidateText) {
+  const text = String(candidateText || '')
+  let total = 0
+  let hit = 0
+  for (const unit of units) {
+    const weight = idf.get(unit) || 0
+    total += weight
+    if (text.includes(unit)) hit += weight
+  }
+  return total === 0 ? 0 : hit / total
+}
+
 export function matchSkill(skills, intent, options = {}) {
+  const list = Array.isArray(skills) ? skills : []
   const query = abstractState(String(intent || ''))
   const queryContext = Array.isArray(options.context) ? options.context.map((tag) => String(tag).toLowerCase()) : []
+  const units = queryUnits(query)
+  const corpusTexts = list.map((skill) => [skill.name, skill.description, ...(skill.meta.triggers || []), ...(skill.meta.context || [])].join(' ').toLowerCase())
+  const idf = unitIdf(units, corpusTexts)
   const candidates = []
-  for (const skill of Array.isArray(skills) ? skills : []) {
+  for (let index = 0; index < list.length; index += 1) {
+    const skill = list[index]
     if (options.requireConfident !== false && !highConfidence(skill.meta)) continue
-    const text = [skill.name, skill.description, ...(skill.meta.triggers || []), ...(skill.meta.context || [])].join(' ')
-    const similarity = stateSimilarity(query, abstractState(text))
+    const text = corpusTexts[index]
+    const headText = [skill.name, String(skill.description || '').slice(0, 160)].join(' ').toLowerCase()
+    const jaccardScore = stateSimilarity(query, abstractState(text))
+    const coverage = weightedCoverage(units, idf, text)
+    const headCoverage = weightedCoverage(units, idf, headText)
+    // 三块拼起来：
+    // ① jaccard 兜通用词面；② 加权覆盖率补「关键短语命中」；
+    // ③ 名称/描述前 160 字的覆盖率再给一次加成——技能真正讲的主题通常在开头，
+    //    这样「编程板」「研学」这类开头就点题的技能不会被长描述或套件入口挤掉。
+    // 另按描述长度做 specificity：超长描述（套件总入口 600+ 字）命中一切，需要压一档。
+    const specificity = Math.min(1, 500 / Math.max(200, text.length))
+    const similarity = jaccardScore + coverage * (0.2 + jaccardScore) * specificity + 0.25 * headCoverage
     if (similarity < (Number(options.minSimilarity) || MATCH_MIN_SIMILARITY)) continue
     let contextScore = 0
     if (queryContext.length > 0) {
@@ -843,13 +915,26 @@ export function matchSkill(skills, intent, options = {}) {
       }
     }
     const score = similarity + contextScore * 0.1
-    candidates.push({ skill, score })
+    candidates.push({ skill, score, size: text.length })
   }
   if (candidates.length === 0) return null
   candidates.sort((left, right) => right.score - left.score)
   const top = candidates[0]
-  // 两个技能分数接近时不猜：交回经验列表，避免「随机选一个」。
-  if (candidates.length > 1 && candidates[1].score >= top.score * (1 - MATCH_AMBIGUITY_MARGIN)) return null
+  if (candidates.length === 1) return top
+  const second = candidates[1]
+  // 分数接近时不再直接放弃（交回经验列表），而是选「更具体」的那个：
+  // 套件总入口 / 合集类技能描述长、什么都沾一点，同一个主题下应该让给专门的子技能。
+  // 只有两者长度也接近才放弃，避免「随机选一个」。
+  if (second.score >= top.score * (1 - MATCH_AMBIGUITY_MARGIN)) {
+    const tight = Math.min(top.score, second.score) / Math.max(top.score, second.score)
+    if (tight >= 0.92) {
+      const specific = top.size <= second.size ? top : second
+      const other = specific === top ? second : top
+      if (specific.size >= other.size * 0.9) return null
+      return specific
+    }
+    return null
+  }
   return top
 }
 
