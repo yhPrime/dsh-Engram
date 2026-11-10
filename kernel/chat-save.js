@@ -122,7 +122,7 @@ export function saveTurnAsExperience(dataDir, input = {}, options = {}) {
   const sessionId = String(input.sessionId || '').trim()
   const messageId = String(input.messageId || '').trim()
   let turn = readTurnByMessage(sessionId, messageId, options)
-  if (turn === null && sessionId === '') turn = readTurnByMessageId(messageId, options)
+  if (turn === null) turn = readTurnByMessageId(messageId, options)
   if (turn === null) throw new Error('找不到这条消息（会话文件不存在或消息 id 不匹配）')
   const outcome = String(input.outcome || 'unknown')
   const intent = clip(turn.userText || input.intent || '（未识别到用户输入）', 200)

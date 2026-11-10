@@ -27,12 +27,13 @@ import {
   usageSummary,
 } from './data-source.js'
 import fs from 'node:fs'
+import path from 'node:path'
 
 import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { exportSkillToDsh } from '../kernel/skills.js'
-import { saveTurnAsExperience } from '../kernel/chat-save.js'
+import { findSessionFile, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -590,7 +591,10 @@ export async function handleRequest(req, res, source) {
           note: body && body.note,
         })
       } catch (error) {
-        return fail(res, 400, 'turn-not-found', error && error.message ? error.message : '读不到这条消息')
+        const debug = body && body.debug === true
+          ? { dshHome: process.env.DSH_HOME || '(unset)', file: findSessionFile(sessionId), dataDir, sessionsRoot: path.join(String(process.env.DSH_HOME || '').trim() === '' ? path.join(process.env.USERPROFILE || '', '.dsh') : String(process.env.DSH_HOME), 'sessions') }
+          : undefined
+        return fail(res, 400, 'turn-not-found', error && error.message ? error.message : '读不到这条消息', debug)
       }
       return json(res, 200, { ok: true, data: saved })
     }
