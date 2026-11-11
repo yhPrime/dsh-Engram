@@ -475,5 +475,5 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 > Git 备份配置在 `~/.dsh/engram/settings.json` 的 `git` 键：`repoUrl` / `branch` / `token` / `authorName` / `authorEmail` / `autoBackupMinutes`。
 > `token` 只用于 https 的 `http.extraHeader`，不会写进仓库、也不会出现在错误信息里（已打码）。
 
-### GET /graph&#10;→ { nodes, edges, summary, notice, updatedAt }。节点 kind：root/type/experience/skill；边 kind：root/type/derived。供「关系图」页渲染。
+### GET /graph&#10;→ { nodes, edges, summary, notice, updatedAt }。节点 kind：root/type/experience/skill/suite；边 kind：root/type/derived/suite。套件：总技能是 `skill:*` 节点（带 childCount），无根技能的套件是 `suite:*` 组节点（带 count）；`suite` 边表示「父技能/组 → 子技能」，关系图按这条边把子技能摆在父节点周围。`summary.suites` 是套件树根数。供「关系图」页渲染。
 
