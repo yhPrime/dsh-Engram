@@ -283,18 +283,97 @@ export function readStore(dataDir) {
   return store
 }
 
-export function writeStore(dataDir, store) {
+/**
+ * 写盘锁（0.13.0）：多进程并发写会「读-改-写」丢更新（对抗测试实测 27 条只剩 9 条）。
+ * 用目录锁（mkdir 原子）做互斥；同进程重入直接放行（writeStore 在锁内被调用不算再次加锁）。
+ * 超过 STALE_LOCK_MS 的锁视为残留，强制清掉，避免崩溃后永久锁死。
+ */
+const heldLocks = new Set()
+const STALE_LOCK_MS = 10000
+
+export function withStoreLock(dataDir, fn) {
+  const key = path.resolve(String(dataDir || ''))
+  if (heldLocks.has(key)) return fn()
+  const lockDir = `${storeFile(key)}.lock`
+  // 数据目录可能还不存在（首次记录）：先建父目录，否则 mkdir 锁目录会 ENOENT。
+  fs.mkdirSync(path.dirname(lockDir), { recursive: true })
+  const deadline = Date.now() + 2000
+  let acquired = false
+  while (!acquired) {
+    try {
+      fs.mkdirSync(lockDir)
+      acquired = true
+    } catch (error) {
+      if (error && error.code !== 'EEXIST') throw error
+      try {
+        const age = Date.now() - fs.statSync(lockDir).mtimeMs
+        if (age > STALE_LOCK_MS) {
+          fs.rmdirSync(lockDir)
+          continue
+        }
+      } catch {
+        continue
+      }
+      if (Date.now() > deadline) throw new Error(`经验库正被另一个进程写入（锁 ${lockDir}），稍后重试`)
+      const until = Date.now() + 20
+      while (Date.now() < until) { /* 短暂自旋，避免引入异步 */ }
+    }
+  }
+  heldLocks.add(key)
+  try {
+    return fn()
+  } finally {
+    heldLocks.delete(key)
+    try {
+      fs.rmdirSync(lockDir)
+    } catch {
+      // 锁目录已不在：不影响结果
+    }
+  }
+}
+
+export function writeStore(dataDir, store, options = {}) {
+  if (options.locked !== true && !heldLocks.has(path.resolve(String(dataDir || '')))) {
+    return withStoreLock(dataDir, () => writeStore(dataDir, store, { ...options, locked: true }))
+  }
   const file = storeFile(dataDir)
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temp = `${file}.${process.pid}.tmp`
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`
   const payload = {
     version: 1,
     updated_at: new Date().toISOString(),
     types: Array.isArray(store.types) && store.types.length > 0 ? store.types : [{ ...SYSTEM_TYPE }],
     experiences: Array.isArray(store.experiences) ? store.experiences : [],
   }
-  fs.writeFileSync(temp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
-  fs.renameSync(temp, file)
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+    // Windows 上 rename 覆盖会被并发读者打断（EPERM）：重试几次，仍失败就退化为覆盖写。
+    let renamed = false
+    for (let attempt = 0; attempt < 5 && !renamed; attempt += 1) {
+      try {
+        fs.renameSync(temp, file)
+        renamed = true
+      } catch (error) {
+        if (error && error.code === 'EPERM' && attempt < 4) {
+          const until = Date.now() + 30
+          while (Date.now() < until) { /* 等读者松手 */ }
+          continue
+        }
+        if (error && error.code === 'EPERM') {
+          fs.copyFileSync(temp, file)
+          renamed = true
+        } else {
+          throw error
+        }
+      }
+    }
+  } finally {
+    try {
+      fs.unlinkSync(temp)
+    } catch {
+      // 临时文件已 rename 掉 / 不存在
+    }
+  }
   return payload
 }
 
@@ -695,6 +774,14 @@ export function upsertExperience(store, input, options = {}) {
   const rawOutcome = input.outcome === undefined || input.outcome === null ? '' : String(input.outcome).trim()
   const hasOutcome = rawOutcome !== ''
   const outcome = hasOutcome ? rawOutcome : 'unknown'
+  // 入口校验：outcome 必须来自固定枚举（以前 '完美'/'SUCCESS' 会被静默落库成 G=0）。
+  if (hasOutcome && !Object.prototype.hasOwnProperty.call(OUTCOME_SCORES, rawOutcome)) {
+    throw new Error(`outcome 只能是 ${Object.keys(OUTCOME_SCORES).join(' / ')}，收到：${rawOutcome}`)
+  }
+  if (input.expectedOutcome !== undefined && input.expectedOutcome !== null && String(input.expectedOutcome).trim() !== ''
+    && !Object.prototype.hasOwnProperty.call(OUTCOME_SCORES, String(input.expectedOutcome).trim())) {
+    throw new Error(`expectedOutcome 只能是 ${Object.keys(OUTCOME_SCORES).join(' / ')}，收到：${input.expectedOutcome}`)
+  }
   const wantPending = input.verdict === 'pending' || (!hasOutcome && input.verdict !== 'decided')
   // 类型丢了但残渣里有（`<parameter name="type">PPT / 课件`）→ 捞回来，别让它掉进「未分类」。
   const explicitType = String(input.type || '').trim()
@@ -956,6 +1043,17 @@ export function upsertExperience(store, input, options = {}) {
     pushHistory(experience, { type: 'created', supersedes: replaceTarget.id })
   }
   store.experiences.push(experience)
+  // pending 上限：库里最多同时挂 2 条，超了把最旧的转 skipped（回执层之前只是显示上限）。
+  if (wantPending) {
+    const waiting = store.experiences
+      .filter((item) => item && !item.deleted_at && !item.superseded_by && !item.retired_at && item.verdict === 'pending')
+      .sort((left, right) => String(left.registeredAt || left.ts || '').localeCompare(String(right.registeredAt || right.ts || '')))
+    for (const extra of waiting.slice(0, Math.max(0, waiting.length - 2))) {
+      extra.verdict = 'skipped'
+      extra.verdictAt = now
+      extra.decidedBy = 'auto-cap'
+    }
+  }
   const retiredIds = retireNegatives(experience.id)
   refreshClusters(store)
   return { experience, action: replaceTarget === undefined ? 'added' : 'superseded', supersededId: replaceTarget === undefined ? undefined : replaceTarget.id, retired: retiredIds, signMismatch, type: resolved, sanitized, typeRecoveredFromNote: recoveredType !== '' }

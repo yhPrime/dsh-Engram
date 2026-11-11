@@ -23,6 +23,7 @@ import {
   visibleExperiences,
   renameType,
   scoreOf,
+  withStoreLock,
   upsertExperience,
   writeStore,
 } from './store.js'
@@ -97,6 +98,7 @@ export function buildTools(defineTool, config = {}) {
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
       const dataDir = dataDirOf()
+      return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
       // 没给类型时按簇路由自动归族（config.routing='off' 或 autoAssign=false 可关）；落不进任何簇就保持「未分类」。
       const autoAssign = config.autoAssign !== false && config.routing !== 'off'
@@ -235,6 +237,7 @@ export function buildTools(defineTool, config = {}) {
         }),
       }, usageOptions)
       return receipt
+      })
     },
   })
 
@@ -254,6 +257,7 @@ export function buildTools(defineTool, config = {}) {
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
       const dataDir = dataDirOf()
+      return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
       // 回填（0.13.0）：召回时顺手把上一条 pending 结掉，模型不必为判定新开一次调用。
       const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
@@ -294,9 +298,15 @@ export function buildTools(defineTool, config = {}) {
       if (picked !== null) {
         const hit = picked.hit
         const mode = picked.trial ? 'skill-trial' : 'skill'
-        const candidates = config.slimRecall === false
+        const candidates = args.detail === true || config.slimRecall === false
           ? (result.candidates || []).slice(0, 3)
-          : (slimRecall(result, { limit: 2, detail: args.detail === true }).candidates || [])
+          : (slimRecall(result, { limit: 2, detail: false }).candidates || [])
+        // 技能命中不代表经验候选相关：候选最高相似度 <0.4 时同样标 weak，别让 note 反称「可参考」。
+        const maxSimilarity = candidates.reduce((max, candidate) => Math.max(
+          max,
+          ...(candidate.evidence || []).map((evidence) => Number(evidence.similarity) || 0),
+        ), 0)
+        const weakCandidates = candidates.length > 0 && maxSimilarity < 0.4
         const skillPayload = {
           mode,
           intent: String(args.intent || ''),
@@ -321,9 +331,11 @@ export function buildTools(defineTool, config = {}) {
           pendingSkills: pendingSkills,
           pending: pending.length > 0 ? pending : undefined,
           verdicts: verdictSummary(verdictResults),
-          note: picked.trial
-            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：先看 skill.match.matchedTerms 与任务是否真的相关，明显无关就换 intent 重试；相关再按它做，用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后升级为高确定技能。下面的 candidates 是同类经验，可当参考。`
-            : `高确定技能：直接用；但先扫一眼 skill.match.matchedTerms，跟当前任务明显无关就是错配，换更具体的 intent 重试。下面的 candidates 是同类经验（可参考、不必再排一遍）。成功用 exp_feedback("skill:${hit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
+          ...(weakCandidates ? { weak: true, topSimilarity: Math.round(maxSimilarity * 10000) / 10000 } : {}),
+          note: (picked.trial
+            ? '试用技能（未养熟）：先看 matchedTerms 是否相关，无关就换 intent 重试；相关则照做，用完 exp_feedback 回填。'
+            : '高确定技能：先看 matchedTerms，无关就是错配，换 intent 重试；成功用 exp_feedback 回填，遇阻记 skillId+blockedBy。')
+            + (weakCandidates ? ' 经验候选都不够相关（最高相似度低），别当参考。' : (candidates.length > 0 ? ' 下方候选可参考。' : '')),
         }
         logUsage(dataDir, {
           tool: 'exp_recall',
@@ -382,6 +394,7 @@ export function buildTools(defineTool, config = {}) {
         chars: measure(payload),
       }, usageOptions)
       return payload
+      })
     },
   })
 
@@ -417,6 +430,7 @@ export function buildTools(defineTool, config = {}) {
             : 'helped 累积到 ≥3 次且比例 ≥0.8 后，该技能才会被高确定召回。',
         }
       }
+      return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
       const result = applyFeedback(store, args.id, { result: args.result, intent: args.intent, note: args.note }, { eta: config.feedbackEta, decayDays: config.feedbackDecayDays })
       writeStore(dataDir, store)
@@ -441,6 +455,7 @@ export function buildTools(defineTool, config = {}) {
         feedbackCovered: covered,
         count: active.length,
       }
+      })
     },
   })
 
@@ -551,6 +566,7 @@ export function buildTools(defineTool, config = {}) {
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
       const dataDir = dataDirOf()
+      return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
       const action = String(args.action || '').trim()
       let result
@@ -580,6 +596,7 @@ export function buildTools(defineTool, config = {}) {
       result.typeCount = store.types.filter((type) => type.system !== true && type.id !== 'ty_other').length
       result.typeLimit = Math.max(1, Math.trunc(Number(config.maxTypes) || 24))
       return result
+      })
     },
   })
 
