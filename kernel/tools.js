@@ -16,15 +16,19 @@ import {
   listTypes,
   logUsage,
   mergeTypes,
+  pendingTasks,
   rankExperiences,
   readStore,
+  resolveVerdicts,
   visibleExperiences,
   renameType,
-  resolveToolDataDir,
   scoreOf,
   upsertExperience,
   writeStore,
 } from './store.js'
+import { findRecordBinding, userMessageForRecord } from './session.js'
+import { measure, slimRecall, slimReceipt } from './token-budget.js'
+import { pendingBrief } from './brief.js'
 import { routeCluster } from './cluster.js'
 import { resolveEngramDataDir } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug } from './skills.js'
@@ -43,10 +47,25 @@ function renderJson(_args, value) {
  */
 export function buildTools(defineTool, config = {}) {
   // 0.11.0：工具面统一走 settings 的 resolveEngramDataDir（dataDir → currentRoot → 默认）。
-  // @legacy-provider 上面 import 的 resolveToolDataDir 是 Provider 时代的旧解析，已不在工具里用。
   const dataDirOf = () => resolveEngramDataDir(config)
   // 用法日志（零 token）：只回答「召回到底有没有被用起来」；config.usageLog=false 可关。
   const usageOptions = { enabled: config.usageLog !== false, maxBytes: config.usageLogMaxBytes }
+  // 回填结果的回执：只报「成功几条 + 失败明细」，不把入参原样回显（省 token，模型知道自己传了什么）。
+  const verdictSummary = (results) => {
+    if (!Array.isArray(results) || results.length === 0) return undefined
+    const failed = results.filter((item) => item.ok !== true).map((item) => ({ id: item.id, error: String(item.error || '').slice(0, 60) }))
+    return { ok: results.length - failed.length, ...(failed.length > 0 ? { failed } : {}) }
+  }
+  const pendingQuote = (item) => {
+    const stored = item && item.evidence && typeof item.evidence.quote === 'string' ? item.evidence.quote : ''
+    if (stored !== '') return stored
+    if (item === undefined || item === null || !item.sessionId || item.turn === undefined || item.turn === null) return ''
+    try {
+      return userMessageForRecord({ sessionId: item.sessionId, turn: item.turn }, { sessionsRoot: config.sessionsRoot })
+    } catch {
+      return ''
+    }
+  }
 
   const record = defineTool({
     name: 'exp_record',
@@ -68,6 +87,9 @@ export function buildTools(defineTool, config = {}) {
       expectedOutcome: { type: 'string', enum: ['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'], description: '可选：做之前预期会怎样（结果词）。用于算预测误差。' },
       expectedG: { type: 'number', description: '可选：预期回报（-1..1），优先于 expectedOutcome。' },
       context: { type: 'array', description: '可选：情境线索（如产物/课程类型/工作区标签），≤5 个；召回时用于编码特异性匹配。' },
+      artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
+      dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
+      verdicts: { type: 'array', description: '可选：回填回执里的 pending，[{id,outcome,dimensions?}]；一次可回填多条。' },
       skillId: { type: 'string', description: '可选：本次使用的技能（技能 id 或 skill:<slug>）；记录后更新技能 confidence/障碍并提交。' },
       blockedBy: { type: 'string', description: '可选：本次撞到的障碍原文；给了就按签名计数，连续 3 次覆盖技能。' },
       blockedByList: { type: 'array', description: '可选：一次撞到多个障碍时传数组，各签名分别计数（与 blockedBy 二选一）。' },
@@ -87,10 +109,31 @@ export function buildTools(defineTool, config = {}) {
           routedCluster = { clusterId: route.clusterId, name: route.name, score: route.score }
         }
       }
+      // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。
+      const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
+        ? resolveVerdicts(store, args.verdicts)
+        : []
+      // 绑定会话 turn：读最近会话里的 tool/call，把本条记录挂到它所在的回合（只读，失败就跳过）。
+      let binding = null
+      if (config.autoBind !== false) {
+        try {
+          binding = findRecordBinding({ intent: args.intent, action: args.action }, { sessionsRoot: config.sessionsRoot })
+        } catch {
+          binding = null
+        }
+      }
+      // 待判定队列在写入本条之前取：刚记的这条不算「提醒过一次」，下一轮才出现。
+      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl })
       const result = upsertExperience(store, {
         intent: args.intent,
         action: args.action,
         outcome: args.outcome,
+        verdict: (args.outcome === undefined || args.outcome === null || String(args.outcome).trim() === '') ? 'pending' : 'decided',
+        sessionId: binding === null ? undefined : binding.sessionId,
+        turn: binding === null ? undefined : binding.turn,
+        cwd: binding === null ? undefined : binding.cwd,
+        artifacts: args.artifacts,
+        dimensions: args.dimensions,
         type: typeName,
         typeDescription: args.typeDescription,
         note: args.note,
@@ -137,6 +180,39 @@ export function buildTools(defineTool, config = {}) {
           : skillResult.warning
         if (typeof warning === 'string') skillWarning = warning
       }
+      const typeInfo = result.type || {}
+      const sanitized = result.sanitized || {}
+      const active = visibleExperiences(store)
+      const pending = config.pendingReceipt === false
+        ? []
+        : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item) }) }))
+      const receipt = slimReceipt({
+        action: result.action,
+        id: result.experience.id,
+        verdict: result.experience.verdict,
+        hits: result.experience.hits,
+        outcome: result.experience.outcome,
+        G: result.experience.G,
+        typeName: result.experience.typeName,
+        dimensions: Array.isArray(result.experience.dimensions) && result.experience.dimensions.length > 0 ? result.experience.dimensions : undefined,
+        typeCreated: typeInfo.created === true ? true : undefined,
+        typeMergedInto: typeInfo.mergedInto || undefined,
+        typeWarning: typeInfo.rejected ? `${typeInfo.reason}（已归「未分类」）` : undefined,
+        typeRecoveredFromNote: result.typeRecoveredFromNote === true ? true : undefined,
+        noteSanitized: sanitized.note === true || sanitized.intent === true || sanitized.action === true ? true : undefined,
+        routedCluster,
+        supersededId: result.supersededId || undefined,
+        retired: Array.isArray(result.retired) && result.retired.length > 0 ? result.retired : undefined,
+        count: active.length,
+        // outcome 与分步回报反号时明确提示：G 取最弱一步，统计会按 G 记失败（2026-11-07）。
+        signWarning: result.signMismatch === true
+          ? `outcome（${result.experience.outcome}）与分步回报反号：G=${result.experience.G} 取最弱一步，统计会按 G 记失败。`
+          : undefined,
+        verdicts: verdictSummary(verdictResults),
+        pending: pending.length > 0 ? pending : undefined,
+        ...(skillResult === null ? {} : { skill: skillResult }),
+        ...(skillWarning === null ? {} : { skillWarning }),
+      })
       logUsage(dataDir, {
         tool: 'exp_record',
         op: result.action,
@@ -144,8 +220,10 @@ export function buildTools(defineTool, config = {}) {
         intent: result.experience.intent,
         action: result.experience.action,
         outcome: result.experience.outcome,
+        verdict: result.experience.verdict,
         typeName: result.experience.typeName,
         hits: result.experience.hits,
+        chars: measure(receipt),
         ...(skillResult === null ? {} : {
           skill: {
             action: skillResult.action,
@@ -156,40 +234,7 @@ export function buildTools(defineTool, config = {}) {
           },
         }),
       }, usageOptions)
-      const typeInfo = result.type || {}
-      const sanitized = result.sanitized || {}
-      const active = visibleExperiences(store)
-      const negativeSamples = active.filter((item) => Number(item.G) < 0).length
-      return {
-        action: result.action,
-        id: result.experience.id,
-        hits: result.experience.hits,
-        outcome: result.experience.outcome,
-        G: result.experience.G,
-        typeName: result.experience.typeName,
-        typeCreated: typeInfo.created === true,
-        typeMergedInto: typeInfo.mergedInto || null,
-        typeWarning: typeInfo.rejected ? `${typeInfo.reason}（已归「未分类」）` : null,
-        typeRecoveredFromNote: result.typeRecoveredFromNote === true,
-        noteSanitized: sanitized.note === true || sanitized.intent === true || sanitized.action === true,
-        clusterName: result.experience.typeName,
-        routedCluster,
-        typeCount: store.types.filter((type) => type.system !== true && type.id !== 'ty_other').length,
-        typeLimit: Math.max(1, Math.trunc(Number(config.maxTypes) || 24)),
-        supersededId: result.supersededId || null,
-        retired: Array.isArray(result.retired) ? result.retired : [],
-        count: active.length,
-        negativeSamples,
-        // outcome 与分步回报反号时明确提示：G 取最弱一步，统计会按 G 记失败（2026-11-07）。
-        signWarning: result.signMismatch === true
-          ? `outcome（${result.experience.outcome}）与分步回报反号：G=${result.experience.G} 取最弱一步，统计会按 G 记失败。`
-          : null,
-        qualityHint: negativeSamples === 0 && active.length >= 4
-          ? '库里目前没有失败/纠正样本：召回会标 mode=evidence（Â 不具区分度）。遇到返工、被纠正或失败，请用 corrected/failed 记一条，负样本才让排序有信息量。'
-          : null,
-        ...(skillResult === null ? {} : { skill: skillResult }),
-        ...(skillWarning === null ? {} : { skillWarning }),
-      }
+      return receipt
     },
   })
 
@@ -197,17 +242,23 @@ export function buildTools(defineTool, config = {}) {
     name: 'exp_recall',
     description: '按任务意图召回历史经验。默认先做簇路由（确定性的簇内检索，无同族回退全库）；返回 brief（记忆简报）、route（路由结果）与 candidates。mode=advantage：按 JitRL 优势排序；mode=evidence：无成败对照，Â 不具区分度，改按相似度×证据强度排序。',
     parameters: {
-      intent: { type: 'string', required: true, description: '当前任务意图。' },
-      limit: { type: 'number', description: '返回几条候选做法，默认 8。' },
+      intent: { type: 'string', required: true, description: '当前任务意图。写「对象+任务+关键约束」（如「给研学课 PPT 插一页（深蓝色调）」）；只写「再来一页」这种省略句会因相似度不足召回不到。' },
+      limit: { type: 'number', description: '返回几条候选做法，默认 4；显式给就按给的值（≤8，簇内也不截到 4）。改稿/纠错要看「上次那条」时给 5~6。' },
       cluster: { type: 'string', description: '可选：直接指定簇（类型名或 id），跳过路由。' },
       context: { type: 'array', description: '可选：当前任务的情境线索；给了就优先召回情境匹配的经验。' },
       mark: { type: 'boolean', description: '可选：把这次召回记为一次「主动提取」（累加 retrievals，用于证据展示，不改排序）。' },
       all: { type: 'boolean', description: '可选：强制全库检索，忽略路由。' },
+      detail: { type: 'boolean', description: '可选：返回完整回执（含全部字段与长 note）；默认瘦身档省 token。' },
+      verdicts: { type: 'array', description: '可选：顺手回填回执里的 pending，[{id,outcome,dimensions?}]。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
       const dataDir = dataDirOf()
       const store = readStore(dataDir)
+      // 回填（0.13.0）：召回时顺手把上一条 pending 结掉，模型不必为判定新开一次调用。
+      const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
+        ? resolveVerdicts(store, args.verdicts)
+        : []
       // 技能优先：高确定技能命中时只返回技能本身，不再列具体经验。
       // 只拿还没全局注册的技能：注册过的交给 DSH 当普通技能用，经验库不再排序它
       const skills = listSkills(dataDir, { onlyLocal: true })
@@ -229,24 +280,24 @@ export function buildTools(defineTool, config = {}) {
         if (type === null) throw new Error(`没有这个簇：${String(args.cluster)}（用 exp_type list 看现有类型）`)
         clusterId = type.id
       }
-      const result = rankExperiences(store, String(args.intent || ''), args.limit || 8, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context })
+      const recallLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || Number(config.recallLimitDefault) || 2)))
+      const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false })
       result.pendingSkills = pendingSkills
+      // 待判定：随回执带出（≤2 条）。
+      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl })
+      if (verdictResults.some((item) => item.ok) || pendingOut.rows.length > 0 || pendingOut.skipped.length > 0) writeStore(dataDir, store)
+      const pending = config.pendingReceipt === false
+        ? []
+        : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item) }) }))
       // 技能命中时不再吞掉经验候选：技能给正文，经验给参考（并列返回），
       // 否则同一意图下刚写的经验会被技能模式完全遮住（验收时发现的读路径问题）。
       if (picked !== null) {
         const hit = picked.hit
         const mode = picked.trial ? 'skill-trial' : 'skill'
-        const candidates = (result.candidates || []).slice(0, 3)
-        logUsage(dataDir, {
-          tool: 'exp_recall',
-          intent: String(args.intent || ''),
-          mode,
-          skill: hit.skill.slug,
-          candidates: candidates.length,
-          hit: true,
-          marked: args.mark === true,
-        }, usageOptions)
-        return {
+        const candidates = config.slimRecall === false
+          ? (result.candidates || []).slice(0, 3)
+          : (slimRecall(result, { limit: 2, detail: args.detail === true }).candidates || [])
+        const skillPayload = {
           mode,
           intent: String(args.intent || ''),
           skill: {
@@ -266,14 +317,28 @@ export function buildTools(defineTool, config = {}) {
           },
           candidates,
           brief: result.brief,
-          route: result.route,
-          pendingSkills,
+          cluster: result.route && result.route.fallback === false ? result.route.name : undefined,
+          pendingSkills: pendingSkills,
+          pending: pending.length > 0 ? pending : undefined,
+          verdicts: verdictSummary(verdictResults),
           note: picked.trial
-            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：先看 skill.match.matchedTerms 是否与任务真的相关，明显无关就换 intent 重试；相关再按它做，用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后自动升级为高确定技能。下面的 candidates 是同类经验，可当参考。`
+            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：先看 skill.match.matchedTerms 与任务是否真的相关，明显无关就换 intent 重试；相关再按它做，用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后升级为高确定技能。下面的 candidates 是同类经验，可当参考。`
             : `高确定技能：直接用；但先扫一眼 skill.match.matchedTerms，跟当前任务明显无关就是错配，换更具体的 intent 重试。下面的 candidates 是同类经验（可参考、不必再排一遍）。成功用 exp_feedback("skill:${hit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
         }
+        logUsage(dataDir, {
+          tool: 'exp_recall',
+          intent: String(args.intent || ''),
+          mode,
+          skill: hit.skill.slug,
+          candidates: candidates.length,
+          hit: true,
+          marked: args.mark === true,
+          chars: measure(skillPayload),
+        }, usageOptions)
+        return skillPayload
       }      // 归纳提示（实验，2026-11-07）：同族样本够多时给一段原料让模型自己归纳；config.induction=false 可关。
       if (config.induction !== false) {
+        // 归纳只用「本次可见」的候选：提示里写的是「本次可见 N 条」，N 必须与返回条数一致。
         const induction = buildInduction(result.candidates, { minSamples: config.inductionMinSamples })
         if (induction !== null) result.induction = induction
       }
@@ -289,6 +354,17 @@ export function buildTools(defineTool, config = {}) {
         if (marked > 0) writeStore(dataDir, store)
         result.marked = marked
       }
+      // 瘦身（0.13.0）：默认只回 2 条、去掉重复字段与空值；detail:true 返回原始 payload。
+      const payload = args.detail === true || config.slimRecall === false
+        ? result
+        : slimRecall(result, { limit: recallLimit })
+      if (payload !== null && typeof payload === 'object') {
+        if (pending.length > 0) payload.pending = pending
+        if (verdictResults.length > 0) payload.verdicts = verdictSummary(verdictResults)
+        if (typeof result.induction === 'string') payload.induction = result.induction
+        if (Number(result.marked) > 0) payload.marked = Number(result.marked)
+        payload.pendingSkills = pendingSkills
+      }
       logUsage(dataDir, {
         tool: 'exp_recall',
         intent: String(args.intent || ''),
@@ -298,13 +374,14 @@ export function buildTools(defineTool, config = {}) {
         mode: result.mode,
         route: result.route && result.route.fallback === false ? result.route.name : '(fallback)',
         route_score: result.route ? result.route.score : null,
-        limit: Math.max(1, Math.trunc(Number(args.limit) || 8)),
+        limit: recallLimit,
         ids: result.candidates.slice(0, 3).map((candidate) => ((candidate.evidence || [])[0] || {}).id).filter(Boolean),
         induction: typeof result.induction === 'string',
         marked: args.mark === true,
         markedCount: Number(result.marked) || 0,
+        chars: measure(payload),
       }, usageOptions)
-      return result
+      return payload
     },
   })
 
@@ -312,7 +389,7 @@ export function buildTools(defineTool, config = {}) {
     name: 'exp_feedback',
     description: '用过一条召回的经验之后回报结果：helped（靠它做成了）/ hurt（用了反而返工、被纠正或没帮上）/ neutral（用了但没影响）。反馈按 EMA 修正该条的回报 G（排序依据），不动 hits、不新建条目、不改 outcome；下次召回按新回报排序。',
     parameters: {
-      id: { type: 'string', required: true, description: '经验 id（exp_recall 结果里 evidence[].id）。' },
+      id: { type: 'string', required: true, description: '经验 id（取本轮 exp_recall 返回的 evidence[].id，别拍脑袋给旧条）' },
       result: { type: 'string', enum: ['helped', 'hurt', 'neutral'], required: true, description: '用后结果：helped / hurt / neutral。' },
       intent: { type: 'string', description: '可选：当时任务的意图（只进审计日志，不动经验内容）。' },
       note: { type: 'string', description: '可选：怎么用的、结果如何（≤200 字，只进审计日志）。' },

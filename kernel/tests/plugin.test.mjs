@@ -57,12 +57,17 @@ await check('apply：没有 ctx.tools 时经 inject 回退注册', async () => {
 })
 
 await check('每轮提示：renderHint 含类型目录/上限且有长度上限', async () => {
-  const { renderHint } = await import('../store.js')
+  const { renderHint, renderHintFull } = await import('../store.js')
   const hint = renderHint({ dataDir: dir, providerStateFile: path.join(dir, 'none.json'), mnemonDataDir: path.join(dir, 'none') })
-  assert.ok(hint.includes('未分类'))
+  // 0.13.0：默认瘦身档只留用法与条数，不再列类型目录。
   assert.ok(hint.includes('exp_recall'))
-  assert.ok(hint.includes('类型'))
+  assert.ok(hint.includes('verdicts'))
   assert.ok(hint.length <= 900)
+  // full 档保留类型目录（回滚用）。
+  const full = renderHintFull({ dataDir: dir, providerStateFile: path.join(dir, 'none.json'), mnemonDataDir: path.join(dir, 'none') })
+  assert.ok(full.includes('未分类'))
+  assert.ok(full.includes('类型'))
+  assert.ok(full.length <= 900)
 })
 
 await check('apply：工具写读同一 dataDir', async () => {

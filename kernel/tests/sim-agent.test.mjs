@@ -135,7 +135,7 @@ check('同族 ≥3 条 → 归纳提示只给一句；不足 3 条 → 不给', 
   agent.record({ intent: '做研学课 PPT 封面页', action: '做法甲', outcome: 'success', type: 'PPT / 课件' })
   agent.record({ intent: '给研学课 PPT 加一张地图页', action: '做法乙', outcome: 'success', type: 'PPT / 课件' })
   agent.record({ intent: '检查研学课 PPT 的排版', action: '做法丙', outcome: 'failed', type: 'PPT / 课件' })
-  const recalled = agent.recall('研学课 PPT')
+  const recalled = agent.recall('研学课 PPT', { limit: 3 })
   assert.equal(typeof recalled.induction, 'string')
   assert.equal(recalled.induction.includes('\n'), false)
   assert.ok(recalled.induction.includes('本次可见 3 条'))

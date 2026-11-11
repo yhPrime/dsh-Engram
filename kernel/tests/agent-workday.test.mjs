@@ -180,7 +180,7 @@ check('⑫ 技能：沉淀 → 采用 → 连续障碍覆盖 → hurt 降级', (
 
 check('⑩ 换实例持久化：新 Agent 同库仍能召回与看生命周期', () => {
   const next = new WorkAgent(DAY)
-  const recalled = next.recall('给研学课 PPT 插一页过渡页')
+  const recalled = next.recall('给研学课 PPT 插一页过渡页', { limit: 8 })
   assert.ok(recalled.candidates.length >= 1)
   assert.ok(recalled.candidates.some((candidate) => candidate.action === '克隆相邻页再改字'))
   assert.ok(Number(recalled.candidates[0].evidence[0].G) !== 0)

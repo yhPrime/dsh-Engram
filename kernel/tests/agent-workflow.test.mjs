@@ -77,7 +77,7 @@ check('首跑无经验：用默认做法失败 → 记成负样本；下次同�
   assert.equal(first.recorded.action, 'added')
   const second = agent.recall(task.intent)
   const evidence = second.candidates.flatMap((candidate) => candidate.evidence)
-  assert.ok(evidence.some((item) => item.action === '直接套模板' && item.G < 0))
+  assert.ok(second.candidates.some((candidate) => candidate.action === task.defaultAction && (candidate.evidence || []).some((item) => item.G < 0)), '负样本应作为候选出现且带负回报')
 })
 
 check('学到好做法：成功后下次 top1 换成它', () => {
