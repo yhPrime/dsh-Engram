@@ -37,8 +37,8 @@ export const SESSION_MAX_TOKENS = 400
 export const CLASSIFY_SYSTEM = [
   '你是一个技能归档器。读用户给的技能文本，判断它属于哪个已有类型、打哪些标签、以及排序分。',
   '只输出一个 JSON 对象，不要任何解释、不要代码块。',
-  '字段：category（必须是给定类型列表里的一个；都不合适就给空字符串）、tags（3–6 个中文或英文短词）、order（0–100 的整数，越通用越常用越高）。',
-  '例：{"category":"代码 / 插件","tags":["dsh 插件","提交 PR"],"order":60}',
+  '字段：category（必须是给定类型列表里的一个；都不合适就给空字符串）、tags（3–6 个中文或英文短词）、order（0–100 的整数，越通用越常用越高）、summaryZh（用一句中文说清这个技能处理什么任务，12–40 字；技能原文是英文时也必须给）。',
+  '例：{"category":"代码 / 插件","tags":["dsh 插件","提交 PR"],"order":60,"summaryZh":"给 DSH 写插件并提交 PR 的完整流程"}',
 ].join('\n')
 
 const TAG_STOPWORDS = new Set([
@@ -199,10 +199,12 @@ export function parseClassification(rawText) {
     ? [...new Set(parsed.tags.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean))].slice(0, MAX_TAGS)
     : []
   const order = Number(parsed.order)
+  const summaryZh = typeof parsed.summaryZh === 'string' ? parsed.summaryZh.trim().slice(0, 120) : ''
   return {
     category,
     tags,
     order: Number.isFinite(order) ? Math.max(0, Math.min(100, Math.round(order))) : DEFAULT_ORDER,
+    summaryZh,
   }
 }
 
@@ -214,7 +216,7 @@ export function alignClassification(parsed, typeNames = []) {
   if (parsed === null) return null
   const names = typeNames.map((name) => String(name || '').trim()).filter(Boolean)
   const category = names.includes(parsed.category) ? parsed.category : ''
-  return { category, tags: parsed.tags, order: parsed.order }
+  return { category, tags: parsed.tags, order: parsed.order, summaryZh: parsed.summaryZh || "" }
 }
 
 /**
@@ -276,6 +278,7 @@ export async function classifyWithSession({ llm, route, text, typeNames = [] }) 
       category: parsed.category,
       tags: parsed.tags,
       order: parsed.order,
+      summaryZh: parsed.summaryZh || '',
       classifier: 'session',
       model: route.model,
       provider: route.provider,
@@ -498,7 +501,10 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
 
   const created = createSkill(dataDir, {
     name,
-    description: parsed.description,
+    // 中文摘要并进 description：英文技能靠它才能被中文任务召回（匹配走词面/短语覆盖率）。
+    description: decided.summaryZh && !String(parsed.description || '').includes(decided.summaryZh)
+      ? `${parsed.description}（中文摘要：${decided.summaryZh}）`
+      : parsed.description,
     body,
     typeName: decided.category,
     typeNames: Array.isArray(categories) ? categories : [],

@@ -924,7 +924,7 @@ export function matchSkill(skills, intent, options = {}) {
     //    这样「编程板」「研学」这类开头就点题的技能不会被长描述或套件入口挤掉。
     // 另按描述长度做 specificity：超长描述（套件总入口 600+ 字）命中一切，需要压一档。
     const specificity = Math.min(1, 500 / Math.max(200, text.length))
-    const similarity = jaccardScore + coverage * (0.2 + jaccardScore) * specificity + 0.25 * headCoverage
+    const similarity = jaccardScore + coverage * (0.2 + jaccardScore) * specificity + 0.25 * headCoverage 
     if (similarity < (Number(options.minSimilarity) || MATCH_MIN_SIMILARITY)) continue
     let contextScore = 0
     if (queryContext.length > 0) {

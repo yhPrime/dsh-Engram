@@ -15,6 +15,7 @@ import { createHash } from 'node:crypto'
 // 内核随包自带（与 dsh-exp-lib-source/kernel.js 同源），Provider 不依赖别的插件包。
 import { OUTCOME_SCORES, abstractState, estimateAdvantages, stateSimilarity, tokenize } from './kernel.js'
 import { RECALL_MIN_SIMILARITY, retrieveV2 } from './retrieval.js'
+import { listSkills } from './skills.js'
 import { ensureClusters, refreshClusters, routeCluster, buildBrief } from './cluster.js'
 
 /** 只有系统兜底类型；业务类型不再预设，由模型在记录时按需创建（带防膨胀限制）。 */
@@ -1626,6 +1627,32 @@ export function renderHint(config = {}, maxCharacters = 900) {
   for (const type of store.types) {
     const description = String(type.description || "").replace(/\s+/g, " ").trim()
     lines.push(`- ${type.name}${description === "" ? "" : `：${description.length > 40 ? `${description.slice(0, 39)}…` : description}`}`)
+  }
+  // 技能目录也放进提示层：模型看不到「库里有哪些技能」，就只会在被点名时才想起来用；
+  // 列出来之后它可以按当前任务自己判断要不要 exp_recall（技能按意图匹配，不依赖 DSH 的 available_skills）。
+  let skills = []
+  try {
+    skills = listSkills(resolveToolDataDir(config), { onlyLocal: true })
+    // 高排序（新导入 90）优先列出：刚加进来的技能先被看见。
+    skills = [...skills].sort((left, right) => (Number((right.meta || {}).order) || 0) - (Number((left.meta || {}).order) || 0))
+  } catch {
+    skills = []
+  }
+  if (skills.length > 0) {
+    const budget = Math.max(0, Number(maxCharacters) - lines.join("\n").length - 60)
+    const skillLines = ["技能（按任务匹配，exp_recall 命中会直接返回正文；不用等用户点名）："]
+    let used = skillLines[0].length
+    for (const skill of skills) {
+      if (skillLines.length > 1 && used > budget) break
+      const description = String(skill.description || "").replace(/\s+/g, " ").trim()
+      const short = description.length > 46 ? `${description.slice(0, 45)}…` : description
+      const line = `- ${skill.slug}${short === "" ? "" : `：${short}`}`
+      skillLines.push(line)
+      used += line.length
+    }
+    if (skillLines.length === 1) skillLines.push(`- 共 ${skills.length} 个，用 exp_recall 取`)
+    else if (skills.length > skillLines.length - 1) skillLines.push(`- …还有 ${skills.length - (skillLines.length - 1)} 个`)
+    lines.push(...skillLines)
   }
   let text = lines.join("\n")
   if (text.length > maxCharacters) text = `${text.slice(0, Math.max(0, maxCharacters - 1))}…`

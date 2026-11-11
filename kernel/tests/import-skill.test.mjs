@@ -135,7 +135,7 @@ console.log('== 模型回复解析 ==')
 
 check('裸 JSON 能解析', () => {
   const parsed = parseClassification('{"category":"代码 / 插件","tags":["a","b"],"order":70}')
-  assert.deepEqual(parsed, { category: '代码 / 插件', tags: ['a', 'b'], order: 70 })
+  assert.deepEqual(parsed, { category: '代码 / 插件', tags: ['a', 'b'], order: 70, summaryZh: '' })
 })
 
 check('```json 围栏能剥掉', () => {
@@ -249,6 +249,19 @@ await checkAsync('有模型会话：用模型给的分类，classifier=session',
   assert.equal(row.meta.order, 90)
 })
 
+await checkAsync('模型给了中文摘要 → 并进 description（英文技能可被中文任务召回）', async () => {
+  const dataDir = tempDataDir()
+  const llm = fakeLlm('{"category":"代码 / 插件","tags":["动画","前端"],"order":60,"summaryZh":"给网页加 CSS 动画并调节缓动"}')
+  const out = await importSkill({
+    dataDir,
+    content: '---\nname: animate-helpers\ndescription: Build smooth web animations\n---\n正文',
+    typeNames: TYPES,
+    deps: { getLlm: () => llm, getRoute: () => ({ provider: 'p', model: 'm' }) },
+  })
+  const row = readSkill(path.join(dataDir, 'skills', out.slug))
+  assert.ok(row !== null)
+  assert.ok(row.description.includes('给网页加 CSS 动画并调节缓动'), `描述没带中文摘要：${row.description}`)
+})
 await checkAsync('没有模型：退回本地，classifier=local 且不报错', async () => {
   const dataDir = tempDataDir()
   const out = await importSkill({
