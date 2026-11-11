@@ -214,7 +214,7 @@ function renderSkillMd(name, description, body) {
   return `---\nname: ${oneLine(name)}\ndescription: ${oneLine(description)}\n---\n\n${String(body || '').trim()}\n`
 }
 
-function defaultMeta(id) {
+export function defaultMeta(id) {
   return {
     id,
     typeName: '',
@@ -359,7 +359,7 @@ export function readSkillBySlug(dataDir, slug) {
 }
 
 // 技能包里的这些目录不会放技能；跳过可避免为了找子技能去遍历上万个附件文件。
-const SKIP_SCAN_DIRS = new Set([
+export const SKILL_SCAN_SKIP_DIRS = new Set([
   'node_modules', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'dist', 'build',
   'scripts', 'references', 'templates', 'assets', 'images', 'image', 'data', 'examples',
 ])
@@ -397,7 +397,7 @@ export function listSkills(dataDir, options = {}) {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
       if (entry.name.startsWith('.')) continue
-      if (SKIP_SCAN_DIRS.has(entry.name)) continue
+      if (SKILL_SCAN_SKIP_DIRS.has(entry.name)) continue
       const childRel = rel === '' ? entry.name : `${rel}/${entry.name}`
       let childDir
       try {
@@ -715,7 +715,10 @@ export function buildSkillTree(skills) {
   }
   const count = (node) => {
     let total = node.kind === 'skill' ? 1 : 0
-    let registered = node.skill && globalRegistrationOf(node.skill) !== null ? 1 : 0
+    // 内核技能对象带 meta.globalRegistered 记录；界面行只有 globalRegistered 布尔，两种都认。
+    let registered = node.skill
+      ? (node.skill.globalRegistered === true || globalRegistrationOf(node.skill) !== null ? 1 : 0)
+      : 0
     for (const child of node.children) {
       const sub = count(child)
       total += sub.total
@@ -723,6 +726,7 @@ export function buildSkillTree(skills) {
     }
     node.skillCount = total
     node.registeredCount = registered
+    node.childCount = Math.max(0, total - (node.kind === 'skill' ? 1 : 0))
     node.children.sort((left, right) => left.name.localeCompare(right.name, 'zh'))
     return { total, registered }
   }

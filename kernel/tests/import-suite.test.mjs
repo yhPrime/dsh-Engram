@@ -71,6 +71,48 @@ await check('importSkills：套件逐个入库，分类与便签写到每个技�
   }
 })
 
+await check('套件导入保持目录树：子技能嵌在套件目录下，不再摊平', async () => {
+  const ids = skills.listSkills(dataDir).map((skill) => skill.id).filter((id) => id.startsWith('my-suite/')).sort()
+  assert.deepEqual(ids, ['my-suite/alpha', 'my-suite/beta'])
+  assert.ok(fs.existsSync(path.join(dataDir, 'skills', 'my-suite', 'alpha', 'SKILL.md')), '子技能没有嵌进套件目录')
+  assert.equal(fs.existsSync(path.join(dataDir, 'skills', 'my-suite', 'skill.json')), false, '组节点不该生成假 skill.json')
+  // 正文保持来源原样（导入不重写 SKILL.md）
+  const written = fs.readFileSync(path.join(dataDir, 'skills', 'my-suite', 'alpha', 'SKILL.md'), 'utf8')
+  assert.equal(written, fs.readFileSync(path.join(suite, 'alpha', 'SKILL.md'), 'utf8'))
+  // 重导幂等：不新增顶层副本
+  const again = await importSkills({ dataDir, filePath: suite })
+  assert.equal(again.suite, true)
+  assert.equal(skills.listSkills(dataDir).filter((skill) => skill.id === 'alpha').length, 0)
+  assert.equal(skills.listSkills(dataDir).filter((skill) => skill.id.startsWith('my-suite/')).length, 2)
+})
+
+await check('根上有总入口 + 子技能：总入口与子技能同在一棵树下', async () => {
+  const rootSuite = path.join(root, 'root-suite')
+  fs.mkdirSync(path.join(rootSuite, 'child-a'), { recursive: true })
+  fs.writeFileSync(path.join(rootSuite, 'SKILL.md'), '---\nname: 根套件\ndescription: 根\n---\n\n# 根\n', 'utf8')
+  fs.writeFileSync(path.join(rootSuite, 'child-a', 'SKILL.md'), '---\nname: 根子技能\ndescription: 子\n---\n\n# 子\n', 'utf8')
+  const out = await importSkills({ dataDir, filePath: rootSuite })
+  assert.equal(out.suite, true)
+  assert.equal(out.rootName, 'root-suite')
+  const ids = skills.listSkills(dataDir).map((skill) => skill.id).filter((id) => id === 'root-suite' || id.startsWith('root-suite/')).sort()
+  assert.deepEqual(ids, ['root-suite', 'root-suite/child-a'])
+})
+
+await check('浏览器 contents 带 suiteRoot/relPath：按层级落盘', async () => {
+  const out = await importSkills({
+    dataDir,
+    contents: [
+      { text: '---\nname: 浏览器套件\ndescription: 套件\n---\n\n# 套件\n', suiteRoot: 'browser-suite', relPath: '' },
+      { text: '---\nname: 浏览器子技能\ndescription: 子\n---\n\n# 子\n', suiteRoot: 'browser-suite', relPath: 'child-x' },
+    ],
+  })
+  assert.equal(out.suite, true)
+  assert.equal(out.rootName, 'browser-suite')
+  assert.ok(fs.existsSync(path.join(dataDir, 'skills', 'browser-suite', 'child-x', 'SKILL.md')))
+  assert.equal(skills.listSkills(dataDir).filter((skill) => skill.id === 'browser-suite').length, 1)
+  assert.equal(skills.listSkills(dataDir).filter((skill) => skill.id === 'browser-suite/child-x').length, 1)
+})
+
 await check('单个技能文件夹仍按一条导入（不是套件）', async () => {
   const single = path.join(root, 'single-skill')
   fs.mkdirSync(single, { recursive: true })
