@@ -505,7 +505,9 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
     notes: Array.isArray(notes) ? notes : [],
     context: decided.tags,
     triggers: decided.tags,
-    order: decided.order,
+    // 新建技能一律先从高位起步（模型给的 order 只在更高时才采用），
+    // 刚加进来的技能先让人看见、能被触发，之后靠实际使用回归正常。
+    order: createdOrderOf(decided.order),
   })
 
   // 来源是文件夹（或 SKILL.md 本身）时，把 scripts/references/templates 一起搬进来
@@ -519,7 +521,7 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
     source,
     category: decided.category,
     tags: decided.tags,
-    order: decided.order,
+    order: createdOrderOf(decided.order),
     classifier: decided.classifier,
     model: decided.model || '',
     note: decided.note,
