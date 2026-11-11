@@ -1663,7 +1663,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
   const shownSimilarity = truncated.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
   const topSimilarity = shownSimilarity
-  weak = truncated.length > 0 && shownSimilarity < 0.46
+  weak = truncated.length > 0 && shownSimilarity < 0.4
   let note
   if (neighbors.length === 0) {
     note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
@@ -1673,6 +1673,10 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     note = `无成败对照（advantage 极差 ${spread}），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。`
   } else {
     note = `按「相似度×0.6 + Â×0.4」排序（Â=Q̂−V̂，乘置信度；advantage 极差 ${spread}）。`
+  }
+  // 0.40–0.50 是「沾边但换主题」的地带：不判 weak（候选仍可用），但必须明说相关度一般，别照抄。
+  if (!weak && shownSimilarity >= 0.4 && shownSimilarity < 0.5) {
+    note += '（相关度一般，参考而非照抄。）'
   }
   // 全族都是负回报时，排序仍会给出一个「最不坏」的——必须明说别照做，否则模型会把失败做法当推荐。
   const allNegative = candidates.length > 0 && candidates.every((item) => item.evidence.every((evidence) => (Number(evidence.G) || 0) < 0))
