@@ -58,6 +58,16 @@ function normalizeNewlines(text) {
  * 解析 SKILL.md：拆出 frontmatter 的 name / description 与正文。
  * 没有 frontmatter 时整篇当正文，名字留给调用方兜底。
  */
+/** 标签 = 分类器给的 tags + 中文摘要：两者都当检索关键词用，去重并限制条数。 */
+function skillTagsOf(decided) {
+  const tags = Array.isArray(decided && decided.tags) ? decided.tags : []
+  const summary = String((decided && decided.summaryZh) || '').trim()
+  const merged = [...tags.map(String), ...(summary === '' ? [] : [summary])]
+    .map((item) => item.trim())
+    .filter((item) => item !== '')
+  return [...new Set(merged)].slice(0, 12)
+}
+
 function createdOrderOf(decidedOrder) {
   const value = Number(decidedOrder)
   if (!Number.isFinite(value)) return DEFAULT_ORDER
@@ -501,16 +511,14 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
 
   const created = createSkill(dataDir, {
     name,
-    // 中文摘要并进 description：英文技能靠它才能被中文任务召回（匹配走词面/短语覆盖率）。
-    description: decided.summaryZh && !String(parsed.description || '').includes(decided.summaryZh)
-      ? `${parsed.description}（中文摘要：${decided.summaryZh}）`
-      : parsed.description,
+    description: parsed.description,
     body,
     typeName: decided.category,
     typeNames: Array.isArray(categories) ? categories : [],
     notes: Array.isArray(notes) ? notes : [],
-    context: decided.tags,
-    triggers: decided.tags,
+    // 中文摘要直接进标签：英文技能靠中文标签才能被中文任务匹配到（匹配读 name/description/tags）。
+    context: skillTagsOf(decided),
+    triggers: skillTagsOf(decided),
     // 新建技能一律先从高位起步（模型给的 order 只在更高时才采用），
     // 刚加进来的技能先让人看见、能被触发，之后靠实际使用回归正常。
     order: createdOrderOf(decided.order),

@@ -249,7 +249,7 @@ await checkAsync('有模型会话：用模型给的分类，classifier=session',
   assert.equal(row.meta.order, 90)
 })
 
-await checkAsync('模型给了中文摘要 → 并进 description（英文技能可被中文任务召回）', async () => {
+await checkAsync('模型给了中文摘要 → 写进标签（英文技能可被中文任务召回）', async () => {
   const dataDir = tempDataDir()
   const llm = fakeLlm('{"category":"代码 / 插件","tags":["动画","前端"],"order":60,"summaryZh":"给网页加 CSS 动画并调节缓动"}')
   const out = await importSkill({
@@ -260,7 +260,9 @@ await checkAsync('模型给了中文摘要 → 并进 description（英文技能
   })
   const row = readSkill(path.join(dataDir, 'skills', out.slug))
   assert.ok(row !== null)
-  assert.ok(row.description.includes('给网页加 CSS 动画并调节缓动'), `描述没带中文摘要：${row.description}`)
+  assert.ok(row.meta.context.includes('给网页加 CSS 动画并调节缓动'), `标签没带中文摘要：${JSON.stringify(row.meta.context)}`)
+  assert.ok(row.meta.triggers.includes('给网页加 CSS 动画并调节缓动'), 'triggers 没带中文摘要')
+  assert.equal(row.description.includes('中文摘要'), false, '摘要不应再写进 description')
 })
 await checkAsync('没有模型：退回本地，classifier=local 且不报错', async () => {
   const dataDir = tempDataDir()
