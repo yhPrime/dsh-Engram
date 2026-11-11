@@ -355,13 +355,22 @@ check('并发锁：陈旧锁自动清理（mtime 超过 staleMs）', () => {
   assert.equal(fs.existsSync(lockFile), false)
 })
 
-check('slug 校验：穿越/绝对路径/保留名/超长/尾点被拒，不写出 skills 外', () => {
+check('路径校验：穿越/绝对路径/保留名/超长/尾点被拒，套件子路径可用', () => {
   const dataDir = newDataDir()
-  for (const bad of ['../evil', '..\\evil', 'C:evil', 'a/b', 'CON', 'con', 'x'.repeat(65), 'name.', 'name ']) {
+  for (const bad of ['../evil', '..\\evil', 'C:evil', 'CON', 'con', 'x'.repeat(101), 'name.', 'name ']) {
     assert.throws(() => createSkill(dataDir, draft({ slug: bad })), /./, `应拒绝：${bad}`)
   }
   assert.equal(listSkills(dataDir).length, 0)
   assert.ok(!fs.existsSync(path.join(path.dirname(dataDir), 'evil')))
+  // 套件子技能：`套件/子技能` 是合法 id，目录嵌一层。
+  const nested = createSkill(dataDir, draft({ slug: 'demo-suite/child-skill' }))
+  assert.equal(nested.slug, 'demo-suite/child-skill')
+  assert.ok(fs.existsSync(path.join(skillsRootOf(dataDir), 'demo-suite', 'child-skill', 'SKILL.md')))
+  const rows = listSkills(dataDir)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].id, 'demo-suite/child-skill')
+  assert.equal(rows[0].parentPath, 'demo-suite')
+  assert.equal(rows[0].depth, 1)
 })
 
 check('符号链接技能目录：读取跳过、写入拒绝', () => {
