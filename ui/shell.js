@@ -296,6 +296,24 @@ export function buildFeedback(source, id, result) {
   return source.feedback(id, result)
 }
 
+/** `/pending` 的 data：待判定队列（最多 5 条）。 */
+export function buildPending(source) {
+  return typeof source.pending === 'function' ? source.pending(5) : []
+}
+
+/** `/verdicts` 的 data：把回填交给 source（逐条返回 ok/失败原因）。 */
+export function buildVerdicts(source, list) {
+  if (typeof source.verdicts !== 'function') throw new Error('当前数据源不支持判定回填')
+  return source.verdicts(Array.isArray(list) ? list : [])
+}
+
+/** `/usage-summary` 的 data：调用次数与回执字符数汇总（token 账）。 */
+export function buildUsageSummary(source) {
+  return typeof source.usageSummary === 'function'
+    ? source.usageSummary()
+    : { calls: 0, chars: 0, avgChars: 0, byTool: {} }
+}
+
 function treeOrderOf(node) {
   if (node.skill) return Number(node.skill.order) || 0
   return node.children.reduce((max, child) => Math.max(max, treeOrderOf(child)), 0)
@@ -658,6 +676,23 @@ export async function handleRequest(req, res, source, deps = {}) {
         ids: Array.isArray(row.ids) ? row.ids.map(String) : [],
       }))
       return json(res, 200, { ok: true, data: { rows } })
+    }
+    if (route === '/pending') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      return json(res, 200, { ok: true, data: buildPending(active) })
+    }
+    if (route === '/verdicts') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      try {
+        return json(res, 200, { ok: true, data: buildVerdicts(active, body && body.verdicts) })
+      } catch (error) {
+        return fail(res, 400, 'verdict-failed', String((error && error.message) || error))
+      }
+    }
+    if (route === '/usage-summary') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      return json(res, 200, { ok: true, data: buildUsageSummary(active) })
     }
     if (route === '/recall') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')

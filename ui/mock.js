@@ -549,6 +549,34 @@ export function createMockSource() {
     skills() {
       return skills
     },
+    pending(limit = 5) {
+      return [
+        { id: 'ex_mock_p1', intent: '给研学课 PPT 插一页过渡页', action: '新建一页：居中大标题 + 副标题', verdict: 'pending', registeredAt: new Date().toISOString(), brief: '上一轮：给研学课 PPT 插一页过渡页' },
+        { id: 'ex_mock_p2', intent: '把课件导出成 PDF', action: 'LibreOffice 无头转换', verdict: 'pending', registeredAt: new Date().toISOString(), brief: '上一轮：导出 PDF' },
+      ].slice(0, limit)
+    },
+
+    verdicts(list) {
+      return (Array.isArray(list) ? list : []).map((item) => ({ id: String((item && item.id) || ''), ok: true, outcome: String((item && item.outcome) || 'success') }))
+    },
+
+    usageSummary() {
+      const rows = this.usageRows(200)
+      const byTool = {}
+      let chars = 0
+      let withChars = 0
+      for (const row of rows) {
+        const tool = String(row.tool || 'unknown')
+        byTool[tool] = (byTool[tool] || 0) + 1
+        const size = Number(row.chars)
+        if (Number.isFinite(size) && size > 0) {
+          chars += size
+          withChars += 1
+        }
+      }
+      return { calls: rows.length, chars, avgChars: withChars > 0 ? Math.round(chars / withChars) : 0, byTool }
+    },
+
     feedback(id, result) {
       return applyFeedbackTo(store, id, result)
     },
