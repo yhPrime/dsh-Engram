@@ -70,10 +70,10 @@ export const SETTINGS_SPEC = {
   ui: [
     { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示', tip: 'live：读真实经验库；mock：读内置示例数据（只用于看界面效果，不写真实库）。' },
     { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根', tip: '只影响「控制台读哪份库」，不影响工具写入。工具始终写到「存储位置」里的当前根；两边可以指向不同目录——看起来「数据不一致」时先来这里检查。' },
-    { key: 'graphTheme', label: '关系图主题', type: 'enum', values: ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration'], labels: { personal: '个人记忆碎片', dream: '梦境记忆轨迹', knowledge: '知识概念关联', emotion: '情绪记忆链路', spacetime: '时空记忆时间线', collective: '集体共享记忆', inspiration: '灵感思绪蛛网' }, tip: '只改关系图的节点形状（圆形 / 六边形 / 星芒等），不改颜色；布局统一是旋转的星系盘。' },
+    { key: 'graphTheme', label: '关系图主题', type: 'enum', values: ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration'], labels: { personal: '个人记忆碎片', dream: '梦境记忆轨迹', knowledge: '知识概念关联', emotion: '情绪记忆链路', spacetime: '时空记忆时间线', collective: '集体共享记忆', inspiration: '灵感思绪蛛网' }, tip: '只改关系图的外形（布局密度、节点形状、漂移方式），不改颜色。' },
     { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['dsh', 'codex', 'cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { dsh: '跟随当前主题', codex: '蓝紫星辰（推理滑条渐变）', cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' }, tip: '「跟随当前主题」实时读当前主题的背景渐变（换主题自动变）；主题没有渐变时退回「蓝紫星辰」。关系图右上角的胶囊按钮也能直接切这两项。' },
     { key: 'graphSurface', label: '关系图背景', type: 'enum', values: ['theme', 'light', 'dark'], labels: { theme: '跟随主题', light: '浅色', dark: '深色' }, tip: '关系图画布的背景深浅。跟随主题＝透明，用页面本来的底色；浅色/深色会铺一层固定底色，同时把节点的明暗补偿一起切过去。图左下角的胶囊也能直接切。' },
-    { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭', tip: '星系盘的公转速度（弧度/秒）；节点重力越强转得越快，0 = 完全静止。拖动视角时暂停，松手继续。' },
+    { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭', tip: '关系图自动旋转的速度（弧度/秒）；0 = 不转。拖动时暂停，松手继续。' },
     { key: 'graphBloom', label: '泛光 bloom', type: 'boolean', tip: '给亮节点叠一层柔光，暗色主题下更明显；关掉更省绘制。' },
     { key: 'graphGlitch', label: '色散/毛刺', type: 'boolean', tip: '给高亮节点/连线加一点 RGB 分离的故障感；关掉更干净。' },
     { key: 'graphDust', label: '浮尘数量', type: 'number', hint: '0~240', tip: '背景里漂浮的尘埃粒子数量（0~240）；太吃性能就调低。' },
