@@ -346,10 +346,14 @@ export async function buildImportSkill(source, body = {}, deps = {}) {
   const typeNames = typesOf(store).map((type) => String(type.name || '')).filter((name) => name !== '')
   const filePath = String(body.path || '').trim()
   const content = typeof body.content === 'string' ? body.content : ''
-  if (filePath === '' && content.trim() === '') throw codedError('source-required', '要么拖入/选择 SKILL.md，要么粘贴正文')
   const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
   const notes = Array.isArray(body.notes) ? body.notes.map(String) : []
-  const contents = Array.isArray(body.contents) ? body.contents.map(String) : []
+  // 套件导入走 contents 数组（浏览器选文件夹/多选 SKILL.md），此前的守门只认 path/content，
+  // 界面明明显示「已选择 18 个技能（套件）」却报「要么拖入/选择 SKILL.md」，就是漏了这一支。
+  const contents = Array.isArray(body.contents) ? body.contents.map(String).filter((item) => item.trim() !== '') : []
+  if (filePath === '' && content.trim() === '' && contents.length === 0) {
+    throw codedError('source-required', '要么拖入/选择 SKILL.md，要么粘贴正文')
+  }
   return importSkills({ dataDir, filePath, content, contents, typeNames, categories, notes, deps })
 }
 

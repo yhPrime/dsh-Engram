@@ -632,6 +632,23 @@ await check('POST /skills/import：技能套件文件夹 → 逐个导入并返�
   assert.deepEqual([...listed.payload.data.skills[0].typeNames], ['套件类'])
 })
 
+await check('POST /skills/import：浏览器多选 SKILL.md（contents 数组）也能导入', async () => {
+  const dir = tempDir()
+  const source = createLiveSource({ dataDir: dir })
+  const out = await call(source, '/skills/import', {
+    method: 'POST',
+    body: {
+      contents: [
+        '---\nname: 内容甲\ndescription: 甲\n---\n\n# 甲\n',
+        '---\nname: 内容乙\ndescription: 乙\n---\n\n# 乙\n',
+      ],
+    },
+  })
+  assert.equal(out.status, 200, JSON.stringify(out.payload))
+  assert.equal(out.payload.data.count, 2)
+  const listed = await call(source, '/skills')
+  assert.equal(listed.payload.data.skills.length, 2)
+})
 await check('POST /skill-meta：改分类与便签；缺 slug 400', async () => {
   const dir = tempDir()
   createSkill(dir, { slug: 'meta-demo', name: '元数据', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })
