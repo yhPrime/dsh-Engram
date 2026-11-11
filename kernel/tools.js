@@ -103,6 +103,7 @@ export function buildTools(defineTool, config = {}) {
       artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
       dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
       verdicts: { type: 'array', description: '可选：回填回执里的 pending，[{id,outcome,dimensions?}]；一次可回填多条。' },
+      cwd: { type: 'string', description: '可选：工作区路径（headless/脚本调用时给；给了才能对手改产物做 diff）。' },
       skillId: { type: 'string', description: '可选：本次使用的技能（技能 id 或 skill:<slug>）；记录后更新技能 confidence/障碍并提交。' },
       blockedBy: { type: 'string', description: '可选：本次撞到的障碍原文；给了就按签名计数，连续 3 次覆盖技能。' },
       blockedByList: { type: 'array', description: '可选：一次撞到多个障碍时传数组，各签名分别计数（与 blockedBy 二选一）。' },
@@ -145,7 +146,7 @@ export function buildTools(defineTool, config = {}) {
         verdict: (args.outcome === undefined || args.outcome === null || String(args.outcome).trim() === '') ? 'pending' : 'decided',
         sessionId: binding === null ? undefined : binding.sessionId,
         turn: binding === null ? undefined : binding.turn,
-        cwd: binding === null ? undefined : binding.cwd,
+        cwd: (typeof args.cwd === 'string' && args.cwd.trim() !== '') ? args.cwd.trim() : (binding === null ? undefined : binding.cwd),
         artifacts: args.artifacts,
         dimensions: args.dimensions,
         type: typeName,
@@ -319,7 +320,7 @@ export function buildTools(defineTool, config = {}) {
           ? Number(candidate.mean_similarity)
           : Math.max(0, ...(candidate.evidence || []).map((evidence) => Number(evidence.similarity) || 0)))
         const maxSimilarity = candidates.reduce((max, candidate) => Math.max(max, similarityOf(candidate)), 0)
-        const weakCandidates = candidates.length > 0 && maxSimilarity < 0.4
+        const weakCandidates = candidates.length === 0 || maxSimilarity < 0.4
         const relevanceGeneral = !weakCandidates && candidates.length > 0 && maxSimilarity < 0.5
         const similarityText = String(Math.round(maxSimilarity * 10000) / 10000)
         const skillPayload = {
@@ -356,9 +357,11 @@ export function buildTools(defineTool, config = {}) {
           note: (picked.trial
             ? '试用技能（未养熟）：先看 matchedTerms 是否相关，无关就换 intent 重试；相关则照做，用完 exp_feedback 回填。'
             : '高确定技能：先看 matchedTerms，无关就是错配，换 intent 重试；成功用 exp_feedback 回填，遇阻记 skillId+blockedBy。')
-            + (weakCandidates
-              ? ' 经验候选都不够相关（最高相似度低），别当参考。'
-              : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : ''))),
+            + (weakCandidates && candidates.length === 0
+              ? ' 经验候选为空，别当参考。'
+              : (weakCandidates
+                ? ' 经验候选都不够相关（最高相似度低），别当参考。'
+                : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : '')))),
         }
         logUsage(dataDir, {
           tool: 'exp_recall',

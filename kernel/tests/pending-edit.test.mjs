@@ -38,11 +38,11 @@ git(repo, ['add', '.'])
 git(repo, ['commit', '-m', 'baseline'])
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-pending-data-'))
-const tools = buildTools((definition) => definition, { dataDir, cwd: repo, autoBind: false })
+const tools = buildTools((definition) => definition, { dataDir, autoBind: false })
 const call = (name, args) => tools.find((item) => item.name === name).execute(args)
 
 check('pending brief 带「手改」摘要', () => {
-  call('exp_record', { intent: '写一页过渡页文案', action: '先写两行草稿', typeName: '文档 / 教案', artifacts: ['note.md'] })
+  call('exp_record', { intent: '写一页过渡页文案', action: '先写两行草稿', typeName: '文档 / 教案', artifacts: ['note.md'], cwd: repo })
   fs.writeFileSync(path.join(repo, 'note.md'), '第一行\n第二行改过了\n', 'utf8')
   const recalled = call('exp_recall', { intent: '写一页过渡页文案' })
   const brief = recalled.pending && recalled.pending[0] ? recalled.pending[0].brief : ''
