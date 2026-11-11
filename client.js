@@ -1748,6 +1748,93 @@ window.__ModuleLoader__.load({
       lava: { bg: '#080302', bgInner: '#1c0805', node: '#ff7a18', node2: '#ff2d2d', edge: '#8a2b12', highlight: '#ffc27a', warn: '#ffb347', glow: '#ff9a3c', dust: '#ffc27a', bloom: 24, ringFill: 'rgba(8,3,2,.55)' },
     }
 
+    // ── 星系盘轨道（纯计算，Graph 与测试共用） ──────────────────────
+    // 关系图从「散在球面上的点」改成旋转的星系盘：类型/套件绕核公转，
+    // 经验绕自己的类型、子技能绕套件公转。半径和角速度由节点权重（重力大小）
+    // 决定——越重越靠内、转得越快，于是中心密、外围疏，形成差速旋转的旋臂。
+    const GALAXY = { arms: 3, wind: 1.25, radiusMax: 640, spin: 0.3 }
+    function galaxyHash(text) {
+      let value = 2166136261
+      for (let index = 0; index < String(text).length; index += 1) {
+        value ^= String(text).charCodeAt(index)
+        value = Math.imul(value, 16777619) >>> 0
+      }
+      return value >>> 0
+    }
+    function galaxyRand(text) {
+      return (galaxyHash(text) % 100000) / 100000
+    }
+    function galaxyOrbits(data) {
+      const parentOf = new Map()
+      const childCount = new Map()
+      for (const edge of data.edges) {
+        if (edge.kind !== 'suite') continue
+        if (parentOf.has(edge.target)) continue
+        parentOf.set(edge.target, edge.source)
+        childCount.set(edge.source, (childCount.get(edge.source) || 0) + 1)
+      }
+      const derived = new Map()
+      const typeIds = new Set(data.nodes.filter((node) => node.kind === 'type').map((node) => node.id))
+      for (const edge of data.edges) if (edge.kind === 'derived' && !derived.has(edge.target)) derived.set(edge.target, edge.source)
+      const orbits = new Map()
+      for (const node of data.nodes) {
+        if (node.kind === 'root') continue
+        const weight = Math.max(0, Math.min(1, Number(node.weight) || 0.3))
+        let parentId = null
+        let radius
+        let flatten
+        let local = false
+        if (node.kind === 'type') {
+          radius = 215 + (1 - weight) * 175
+          flatten = 0.05
+        } else if (node.kind === 'suite') {
+          radius = 420 + (1 - weight) * 170
+          flatten = 0.045
+        } else if (node.kind === 'experience') {
+          const typeKey = `type:${node.typeId}`
+          parentId = typeIds.has(typeKey) ? typeKey : null
+          radius = parentId === null ? 240 + (1 - weight) * 190 : 38 + (1 - weight) * 110
+          flatten = 0.11
+          local = parentId !== null
+        } else if (parentOf.has(node.id)) {
+          parentId = parentOf.get(node.id)
+          radius = 44 + Math.sqrt(childCount.get(parentId) || 1) * 13
+          flatten = 0.11
+          local = true
+        } else if (derived.has(node.id)) {
+          parentId = derived.get(node.id)
+          radius = 118 + (1 - weight) * 70
+          flatten = 0.09
+          local = true
+        } else {
+          radius = 380 + (1 - weight) * 200
+          flatten = 0.05
+        }
+        const arm = galaxyHash(node.id) % GALAXY.arms
+        const theta0 = local
+          ? galaxyRand(`${node.id}t`) * Math.PI * 2
+          : (arm / GALAXY.arms) * Math.PI * 2 + (radius / GALAXY.radiusMax) * GALAXY.wind * Math.PI + (galaxyRand(`${node.id}t`) - 0.5) * 0.55
+        // 质量 ∝ 权重：重的节点引力强、公转快，落在内圈。
+        const mass = 0.55 + weight * 1.6
+        const omega = local
+          ? GALAXY.spin * 1.8 * Math.pow(mass, 0.5) * Math.pow(50 / Math.max(30, radius), 0.55)
+          : GALAXY.spin * Math.pow(mass, 0.6) * Math.pow(230 / Math.max(70, radius), 0.9)
+        orbits.set(node.id, { parentId, radius, theta0, tilt: (galaxyRand(`${node.id}u`) - 0.5) * 0.5, flatten, omega })
+      }
+      return orbits
+    }
+    function galaxyOrbitPoint(orbit, weight, phase, time, spinScale, parentPos) {
+      const radius = orbit.radius * (1.1 - 0.2 * (Number(weight) || 0.3))
+      const theta = orbit.theta0 + time * orbit.omega * spinScale
+      const lift = Math.sin(theta * 0.7 + phase) * radius * orbit.flatten
+      const x = Math.cos(theta) * radius
+      const z = Math.sin(theta) * radius
+      const y = lift * Math.cos(orbit.tilt) - z * Math.sin(orbit.tilt)
+      const zz = lift * Math.sin(orbit.tilt) + z * Math.cos(orbit.tilt)
+      const base = parentPos || { x: 0, y: 0, z: 0 }
+      return { x: base.x + x, y: base.y + y, z: base.z + zz }
+    }
+
     /**
      * 十字星芒：给大一点的节点加两长两短的细光线，读起来才像「恒星」而不是一团晕。
      * 线宽和透明度都随半径走，缩远了自动看不见，不会糊成一片。
@@ -2090,6 +2177,9 @@ window.__ModuleLoader__.load({
           }
         }
         const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
+        // 设置里的「自动旋转速度」现在同时管两件事：星系盘公转 + 相机的极慢自转。
+        // 0 = 完全静止；0.04（默认）就是基准速度。
+        const spinScale = rotation === 0 ? 0 : Math.min(3, Math.max(0.2, rotation / 0.04))
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
         const dustCount = Math.max(0, Math.min(240, Number(ui.graphDust) || 70))
@@ -2128,10 +2218,7 @@ window.__ModuleLoader__.load({
           if (node.kind === 'skill') return 4.5 + Math.pow(w, 0.9) * 5.5
           return 1.1 + Math.pow(w, 0.9) * 3.2
         }
-        const project = (entry, time) => {
-          const wx = entry.x + Math.sin(time / 3200 + entry.phase) * 7
-          const wy = entry.y + Math.cos(time / 4100 + entry.phase) * 5
-          const wz = entry.z + Math.sin(time / 2700 + entry.phase * 1.3) * 7
+        const projectPoint = (wx, wy, wz) => {
           const cy = Math.cos(cam.yaw)
           const sy = Math.sin(cam.yaw)
           const cp = Math.cos(cam.pitch)
@@ -2144,112 +2231,67 @@ window.__ModuleLoader__.load({
           const f = FOCAL / Math.max(180, depth)
           return { x: width / 2 + x1 * f, y: height / 2 + y1 * f, f, depth }
         }
+        const project = (entry, time) => {
+          const wx = entry.x + Math.sin(time / 3200 + entry.phase) * 8
+          const wy = entry.y + Math.cos(time / 4100 + entry.phase) * 5
+          const wz = entry.z + Math.sin(time / 2700 + entry.phase * 1.3) * 8
+          return projectPoint(wx, wy, wz)
+        }
         const layout = (data) => {
-          const types = data.nodes.filter((node) => node.kind === 'type')
-          const experiences = data.nodes.filter((node) => node.kind === 'experience')
-          const skills = data.nodes.filter((node) => node.kind === 'skill')
-          const centers = new Map()
-          const total = Math.max(1, types.length)
-          types.forEach((node, index) => {
-            const y = total === 1 ? 0 : 1 - (index / (total - 1)) * 2
-            const ring = Math.sqrt(Math.max(0, 1 - y * y))
-            const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(node.id) * 0.5
-            const radius = 240 + rand(`${node.id}r`) * 150
-            centers.set(node.id, { x: Math.cos(phi) * ring * radius, y: y * radius * 0.78, z: Math.sin(phi) * ring * radius })
-          })
+          const orbits = galaxyOrbits(data)
           const positions = new Map()
-          for (const node of types) positions.set(node.id, centers.get(node.id))
-          const expByType = new Map()
-          for (const node of experiences) {
-            const key = `type:${node.typeId}`
-            if (!expByType.has(key)) expByType.set(key, [])
-            expByType.get(key).push(node)
+          for (const [id, orbit] of orbits) {
+            if (orbit.parentId !== null && orbits.has(orbit.parentId)) continue
+            positions.set(id, galaxyOrbitPoint(orbit, 0.3, 0, 0, 0, null))
           }
-          for (const [key, list] of expByType) {
-            const center = centers.get(key) || { x: 0, y: 0, z: 0 }
-            for (const node of list) {
-              const a = rand(`${node.id}a`) * Math.PI * 2
-              const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-              const rr = 26 + Math.pow(rand(`${node.id}r`), 0.65) * 145
-              positions.set(node.id, {
-                x: center.x + Math.sin(b) * Math.cos(a) * rr,
-                y: center.y + Math.cos(b) * rr * 0.72,
-                z: center.z + Math.sin(b) * Math.sin(a) * rr,
-              })
-            }
+          for (const [id, orbit] of orbits) {
+            if (positions.has(id)) continue
+            const base = positions.get(orbit.parentId) || { x: 0, y: 0, z: 0 }
+            positions.set(id, galaxyOrbitPoint(orbit, 0.3, 0, 0, 0, base))
           }
-          // 套件层级：先放顶层节点，再按「父 → 子」把子技能摆到父节点周围。
-          const hierarchy = data.nodes.filter((node) => node.kind === 'skill' || node.kind === 'suite')
-          const parentOf = new Map()
-          for (const edge of data.edges) if (edge.kind === 'suite') parentOf.set(edge.target, edge.source)
-          const queue = []
-          for (const node of hierarchy) {
-            if (parentOf.has(node.id)) continue
-            let base
-            if (node.kind === 'suite') {
-              const a = rand(`${node.id}a`) * Math.PI * 2
-              const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-              const rr = 330 + rand(`${node.id}r`) * 70
-              base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
-            } else {
-              const derived = data.edges.filter((edge) => edge.target === node.id && edge.kind === 'derived').map((edge) => positions.get(edge.source)).filter(Boolean)
-              if (derived.length > 0) {
-                base = derived.reduce((sum, item) => ({ x: sum.x + item.x / derived.length, y: sum.y + item.y / derived.length, z: sum.z + item.z / derived.length }), { x: 0, y: 0, z: 0 })
+          return { positions, orbits }
+        }
+        // 每帧把「轨道参数 + 当前权重」解成绝对坐标：父节点先解，子节点再叠加。
+        const galaxyPositions = () => {
+          const solved = new Map()
+          const entries = [...store.nodes.values()].filter((entry) => entry.orbit !== null && entry.alpha > 0.01)
+          let remaining = entries
+          for (let pass = 0; pass < 4 && remaining.length > 0; pass += 1) {
+            const next = []
+            for (const entry of remaining) {
+              const parentId = entry.orbit.parentId
+              if (parentId === null) {
+                solved.set(entry.node.id, galaxyOrbitPoint(entry.orbit, entry.currentWeight, entry.phase, store.t, spinScale, null))
+              } else if (solved.has(parentId)) {
+                solved.set(entry.node.id, galaxyOrbitPoint(entry.orbit, entry.currentWeight, entry.phase, store.t, spinScale, solved.get(parentId)))
               } else {
-                const a = rand(`${node.id}a`) * Math.PI * 2
-                const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-                const rr = 300 + rand(`${node.id}r`) * 90
-                base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
+                next.push(entry)
               }
-              const a = rand(`${node.id}a`) * Math.PI * 2
-              base = { x: base.x + Math.cos(a) * 46, y: base.y + (rand(`${node.id}y`) - 0.5) * 60, z: base.z + Math.sin(a) * 46 }
             }
-            positions.set(node.id, base)
-            queue.push(node)
+            if (next.length === remaining.length) break
+            remaining = next
           }
-          while (queue.length > 0) {
-            const parent = queue.shift()
-            const base = positions.get(parent.id) || { x: 0, y: 0, z: 0 }
-            const children = hierarchy.filter((node) => parentOf.get(node.id) === parent.id)
-            if (children.length === 0) continue
-            const rr = 42 + Math.sqrt(children.length) * 13
-            children.forEach((child, index) => {
-              const y = children.length === 1 ? 0 : 1 - (index / (children.length - 1)) * 2
-              const ring = Math.sqrt(Math.max(0, 1 - y * y))
-              const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(child.id) * 0.4
-              positions.set(child.id, {
-                x: base.x + Math.cos(phi) * ring * rr,
-                y: base.y + y * rr * 0.72,
-                z: base.z + Math.sin(phi) * ring * rr,
-              })
-              queue.push(child)
-            })
-          }
-          // 理论上不会有漏网节点；真漏了也给个位置，别让它停在原点。
-          for (const node of hierarchy) {
-            if (positions.has(node.id)) continue
-            const a = rand(`${node.id}a`) * Math.PI * 2
-            const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-            const rr = 300 + rand(`${node.id}r`) * 90
-            positions.set(node.id, { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr })
-          }
-          return positions
+          // 父节点已不在图上的（类型被删等）退回绕核，别让它停在原点。
+          for (const entry of remaining) solved.set(entry.node.id, galaxyOrbitPoint(entry.orbit, entry.currentWeight, entry.phase, store.t, spinScale, null))
+          return solved
         }
         const sync = (data) => {
-          const positions = layout(data)
+          const { positions, orbits } = layout(data)
           const seen = new Set()
           for (const node of data.nodes) {
             if (node.kind === 'root') continue
             seen.add(node.id)
             const shape = positions.get(node.id) || { x: 0, y: 0, z: 0 }
+            const orbit = orbits.get(node.id) || null
             const existing = store.nodes.get(node.id)
             if (existing) {
               existing.node = node
+              existing.orbit = orbit
               existing.targetWeight = Number(node.weight) || 0.3
               existing.targetAlpha = 1
             } else {
               store.nodes.set(node.id, {
-                node, x: shape.x, y: shape.y, z: shape.z,
+                node, orbit, x: shape.x, y: shape.y, z: shape.z,
                 r: 0, alpha: 0, targetAlpha: 1,
                 currentWeight: 0.08, targetWeight: Number(node.weight) || 0.3,
                 phase: rand(`${node.id}p`) * Math.PI * 2, drift: 0.7 + rand(`${node.id}d`) * 0.8,
@@ -2367,6 +2409,35 @@ window.__ModuleLoader__.load({
         canvas.addEventListener('wheel', onWheel, { passive: false })
         canvas.style.cursor = 'grab'
         let frameCount = 0
+        // 星系氛围：中心核辉光 + 几条极淡的旋臂，让画面先有「盘」的形状。
+        // 旋臂与节点共用同一套螺旋角，转起来不会各转各的。
+        const drawGalaxyBloom = (centerX, centerY, time) => {
+          const coreRadius = Math.max(220, Math.min(width, height) * 0.55)
+          ctx.save()
+          ctx.globalCompositeOperation = 'lighter'
+          const core = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreRadius)
+          core.addColorStop(0, withAlpha(palette.glow || palette.node, palette.dark ? 0.16 : 0.07))
+          core.addColorStop(0.42, withAlpha(palette.glow || palette.node, 0.045))
+          core.addColorStop(1, withAlpha(palette.glow || palette.node, 0))
+          ctx.fillStyle = core
+          ctx.fillRect(0, 0, width, height)
+          for (let arm = 0; arm < GALAXY.arms; arm += 1) {
+            ctx.beginPath()
+            for (let step = 0; step <= 36; step += 1) {
+              const radius = 60 + (step / 36) * (GALAXY.radiusMax - 60)
+              const theta = (arm / GALAXY.arms) * Math.PI * 2 + (radius / GALAXY.radiusMax) * GALAXY.wind * Math.PI + time * GALAXY.spin * 0.9 * spinScale
+              const point = projectPoint(Math.cos(theta) * radius, Math.sin(theta * 0.6) * 4, Math.sin(theta) * radius)
+              // 相机压到盘里时，深度太近的点会投影到无穷远，直接把这条臂截断。
+              if (point.depth < 140) break
+              if (step === 0) ctx.moveTo(point.x, point.y)
+              else ctx.lineTo(point.x, point.y)
+            }
+            ctx.strokeStyle = withAlpha(palette.dust, palette.dark ? 0.14 : 0.1)
+            ctx.lineWidth = 1.6
+            ctx.stroke()
+          }
+          ctx.restore()
+        }
         const draw = (now) => {
           frameCount += 1
           if (frameCount % 30 === 0 && paletteKey === 'dsh') palette = readDshGraphPalette(canvas)
@@ -2374,10 +2445,12 @@ window.__ModuleLoader__.load({
           last = now
           store.t += dt
           store.pulse += dt * 1.4
-          if (rotation !== 0 && store.dragging === null) cam.yaw += rotation * dt
+          // 相机只留很慢的自转（节点自己在公转），免得视觉上转两遍。
+          if (rotation !== 0 && store.dragging === null) cam.yaw += rotation * dt * 0.25
           const cx = width / 2
           const cy = height / 2
           ctx.clearRect(0, 0, width, height)
+          const galaxy = galaxyPositions()
           for (const particle of store.dust) {
             particle.x += particle.vx * dt
             particle.y += particle.vy * dt
@@ -2391,10 +2464,17 @@ window.__ModuleLoader__.load({
             ctx.arc(particle.x * width, particle.y * height, particle.size, 0, Math.PI * 2)
             ctx.fill()
           }
+          drawGalaxyBloom(cx, cy, store.t)
           for (const entry of store.nodes.values()) {
             entry.currentWeight += (entry.targetWeight - entry.currentWeight) * Math.min(1, dt * 4)
             entry.alpha += (entry.targetAlpha - entry.alpha) * Math.min(1, dt * 4)
             entry.r += (radiusOf(entry.node, entry.currentWeight) - entry.r) * Math.min(1, dt * 6)
+            const position = galaxy.get(entry.node.id)
+            if (position !== undefined) {
+              entry.x = position.x
+              entry.y = position.y
+              entry.z = position.z
+            }
             const projected = project(entry, store.t)
             entry.screenX = projected.x
             entry.screenY = projected.y
@@ -3336,6 +3416,8 @@ window.__ModuleLoader__.load({
       parseAllGradientStops,
       sliceLinearGradient,
       GRAPH_PALETTES,
+      galaxyOrbits,
+      galaxyOrbitPoint,
       inject: ['slots', 'layout'],
       apply(ctx) {
         try {

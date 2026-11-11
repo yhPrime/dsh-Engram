@@ -360,6 +360,47 @@ check('关系图页：整块画布 + 右上角配色胶囊（跟随主题 / 蓝�
   assert.ok(source.includes("#0b1020"), '深色背景没有实际底色')
   assert.ok(source.includes("#f6f8fc"), '浅色背景没有实际底色')
 })
+check('关系图像星系盘：重节点靠内且转得快、经验绕自己的类型、子技能绕套件', () => {
+  const data = {
+    nodes: [
+      { id: 'root', kind: 'root', weight: 1 },
+      { id: 'type:重', kind: 'type', weight: 1, label: '重' },
+      { id: 'type:轻', kind: 'type', weight: 0.3, label: '轻' },
+      { id: 'exp:1', kind: 'experience', typeId: '重', weight: 0.5 },
+      { id: 'exp:2', kind: 'experience', typeId: '轻', weight: 0.5 },
+      { id: 'skill:套件子', kind: 'skill', weight: 0.5 },
+      { id: 'suite:组', kind: 'suite', weight: 0.4 },
+      { id: 'skill:裸', kind: 'skill', weight: 0.2 },
+    ],
+    edges: [
+      { source: 'type:重', target: 'exp:1', kind: 'derived', strength: 0.5 },
+      { source: 'suite:组', target: 'skill:套件子', kind: 'suite', strength: 0.5 },
+    ],
+  }
+  const orbits = module.galaxyOrbits(data)
+  assert.equal(orbits.size, 7, 'root 之外每个节点都要有轨道')
+  assert.equal(orbits.has('root'), false, 'root 是核，不该有轨道')
+  const heavy = orbits.get('type:重')
+  const light = orbits.get('type:轻')
+  assert.ok(heavy.radius < light.radius, `重节点应更靠内：${heavy.radius} vs ${light.radius}`)
+  assert.ok(heavy.omega > light.omega, `重节点应转得更快：${heavy.omega.toFixed(3)} vs ${light.omega.toFixed(3)}`)
+  assert.equal(orbits.get('exp:1').parentId, 'type:重', '经验应绕自己的类型公转')
+  assert.equal(orbits.get('skill:套件子').parentId, 'suite:组', '子技能应绕套件公转')
+  assert.equal(orbits.get('skill:裸').parentId, null, '没有父的技能应绕核')
+  assert.ok(orbits.get('exp:1').radius < 120, '经验轨道半径应远小于盘面半径')
+  for (const [id, orbit] of orbits) {
+    assert.ok(orbit.theta0 >= 0 && orbit.theta0 <= Math.PI * 2 + 0.01, `${id} 的初始角度越界：${orbit.theta0}`)
+  }
+  // 时间推进后节点要真的在转（重力 → 公转），不是静态分布
+  const orbit = orbits.get('type:重')
+  const start = module.galaxyOrbitPoint(orbit, 0.5, 0, 0, 1, null)
+  const later = module.galaxyOrbitPoint(orbit, 0.5, 0, 1, 1, null)
+  assert.ok(Math.abs(start.x - later.x) > 0.5 || Math.abs(start.z - later.z) > 0.5, '过了 1 秒节点没有移动')
+  // spinScale=0 时静止（设置里把旋转关掉）
+  const still = module.galaxyOrbitPoint(orbit, 0.5, 0, 5, 0, null)
+  const still2 = module.galaxyOrbitPoint(orbit, 0.5, 0, 0, 0, null)
+  assert.equal(still.x, still2.x, 'spinScale=0 时应停在初始角度')
+})
 check('关系图配色：多层背景只取 linear 那层；浅色停靠点压进可读区间；有「蓝紫星辰」', () => {
   const parse = module.parseGradientStops
   // 昔涟主题真实写法：4 层 radial 光斑 + 最后一层 linear 底色
