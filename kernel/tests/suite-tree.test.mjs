@@ -13,6 +13,7 @@ process.env.DSH_HOME = home
 const skills = await import('../skills.js')
 const {
   applySkillNodeAction,
+  applySkillOutcome,
   assertSafeRelPath,
   buildSkillTree,
   createSkill,
@@ -143,6 +144,17 @@ check('组节点没有技能时动作报错', () => {
 
 check('applySkillNodeAction 拒绝未知动作', () => {
   assert.throws(() => applySkillNodeAction(dataDir, 'nope', 'standalone'), /不认识的节点动作/)
+})
+
+check('套件子技能反馈：id 不被打回叶子名，账本照常更新', () => {
+  make('suite-d/child-d', '反馈')
+  const out = applySkillOutcome(dataDir, 'suite-d/child-d', 'helped')
+  assert.equal(out.action, 'feedback')
+  const row = readSkillBySlug(dataDir, 'suite-d/child-d')
+  assert.equal(row.id, 'suite-d/child-d')
+  assert.equal(row.meta.id, 'suite-d/child-d')
+  assert.equal(row.meta.confidence.uses, 1)
+  assert.equal(row.meta.confidence.helped, 1)
 })
 
 fs.rmSync(root, { recursive: true, force: true })

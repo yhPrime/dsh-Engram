@@ -166,6 +166,18 @@ window.__ModuleLoader__.load({
 .eng-skill-row[data-on="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent); }
 .eng-skill-name { font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eng-skill-desc { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
+/* 技能套件树：chevron 只负责展开/收起，行本身负责选中详情 */
+.eng-tree-row { padding-top: 8px; padding-bottom: 8px; align-items: flex-start; }
+.eng-tree-toggle { flex: 0 0 18px; width: 18px; height: 18px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 10px; line-height: 1; cursor: pointer; }
+.eng-tree-toggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.eng-tree-toggle:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.eng-suite-tag { display: inline-flex; align-items: center; height: 18px; margin-left: 8px; padding: 0 7px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 10px; font-weight: 500; cursor: pointer; vertical-align: middle; }
+.eng-suite-tag:hover { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); }
+.eng-suite-tag[data-static="true"] { cursor: default; }
+.eng-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.eng-crumb button { padding: 0; border: 0; background: none; color: var(--dsw-alias-brand-primary); font: inherit; font-size: 11px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.eng-crumb button:hover { color: var(--dsw-alias-label-primary); }
+.eng-crumb-sep { opacity: .5; }
 .eng-nav-sep { height: 1px; margin: 10px 8px; background: var(--dsw-alias-border-l1); }
 @container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
@@ -266,6 +278,145 @@ window.__ModuleLoader__.load({
       const date = new Date(value)
       if (Number.isNaN(date.getTime())) return '—'
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    }
+
+    /* ------------------------------------------------------------------
+     * 技能套件树：路径 id、展开状态、面包屑/互链的纯函数。
+     * 服务端 `/skills` 的 tree 是权威；旧响应没有 tree 时用平铺 rows 兜底，
+     * 保证单技能 / 老内核下页面照常可用。
+     * ------------------------------------------------------------------ */
+    const SUITE_OPEN_KEY = 'eng-suite-open'
+
+    function suiteStore() {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage !== null) return localStorage
+      } catch {
+        // 隐私模式 / 测试环境：忽略
+      }
+      try {
+        if (typeof window !== 'undefined' && window !== null && window.localStorage) return window.localStorage
+      } catch {
+        // 同上
+      }
+      return null
+    }
+
+    /** 展开状态：只记「开着的 path」，默认全收起。 */
+    function readSuiteOpen() {
+      try {
+        const store = suiteStore()
+        const raw = store === null ? '' : store.getItem(SUITE_OPEN_KEY)
+        if (raw === null || raw === '') return {}
+        const parsed = JSON.parse(raw)
+        return parsed !== null && typeof parsed === 'object' && Array.isArray(parsed) === false ? parsed : {}
+      } catch {
+        return {}
+      }
+    }
+
+    function writeSuiteOpen(map) {
+      try {
+        const store = suiteStore()
+        if (store !== null) store.setItem(SUITE_OPEN_KEY, JSON.stringify(map || {}))
+      } catch {
+        // 存不了就只影响刷新后的展开状态，不影响本次操作
+      }
+    }
+
+    function pathSegmentsOf(value) {
+      return String(value === undefined || value === null ? '' : value).split('/').filter((segment) => segment !== '')
+    }
+
+    function lastSegmentOf(value) {
+      const segments = pathSegmentsOf(value)
+      return segments.length === 0 ? String(value || '') : segments[segments.length - 1]
+    }
+
+    function rootNameOf(value) {
+      const segments = pathSegmentsOf(value)
+      return segments.length === 0 ? '' : segments[0]
+    }
+
+    /** 技能行的相对路径 id：优先 `path`，但老 live 行的 path 是绝对目录，退回 `id`。 */
+    function relativePathOf(row) {
+      if (row === null || row === undefined) return ''
+      const raw = typeof row.path === 'string' ? row.path.trim() : ''
+      const looksRelative = raw !== '' && raw.includes('\\') === false && raw.startsWith('/') === false && /^[A-Za-z]:/u.test(raw) === false
+      if (looksRelative) return raw
+      return String(row.id || '')
+    }
+
+    function treeNodeAt(nodes, path) {
+      if (Array.isArray(nodes) === false || typeof path !== 'string' || path === '') return null
+      for (const node of nodes) {
+        if (node === null || node === undefined) continue
+        if (node.path === path) return node
+        const found = treeNodeAt(nodeChildrenOf(node), path)
+        if (found !== null) return found
+      }
+      return null
+    }
+
+    function nodeChildrenOf(node) {
+      return node !== null && node !== undefined && Array.isArray(node.children) ? node.children.filter((child) => child !== null && child !== undefined) : []
+    }
+
+    function nodeSkillCountOf(node) {
+      if (node === null || node === undefined) return 0
+      const declared = Number(node.skillCount)
+      if (Number.isFinite(declared) && declared > 0) return Math.trunc(declared)
+      let total = node.kind === 'group' ? 0 : 1
+      for (const child of nodeChildrenOf(node)) total += nodeSkillCountOf(child)
+      return total
+    }
+
+    function nodeDepthOf(node) {
+      const depth = Number(node && node.depth)
+      return Number.isFinite(depth) && depth > 0 ? Math.trunc(depth) : 0
+    }
+
+    function prefixPathsOf(path) {
+      const segments = pathSegmentsOf(path)
+      return segments.map((segment, index) => segments.slice(0, index + 1).join('/'))
+    }
+
+    /** 从平铺 rows 兜底出一层树（旧响应 / 单技能）。 */
+    function normalizeSkillTree(data) {
+      const rows = data !== null && data !== undefined && Array.isArray(data.skills) ? data.skills : []
+      const given = data !== null && data !== undefined && Array.isArray(data.tree) ? data.tree.filter((node) => node !== null && node !== undefined && typeof node.path === 'string' && node.path !== '') : []
+      if (given.length > 0) return given
+      const tree = []
+      for (const row of rows) {
+        const path = relativePathOf(row)
+        if (path === '') continue
+        tree.push({
+          path,
+          name: row.name || lastSegmentOf(path),
+          kind: row.kind === 'group' ? 'group' : 'skill',
+          depth: Number(row.depth) || 0,
+          skillCount: Number(row.skillCount) || 1,
+          registeredCount: row.globalRegistered ? 1 : 0,
+          children: [],
+        })
+      }
+      return tree
+    }
+
+    /** 子技能标签/面包屑要跳回的套件节点：优先顶层根，找不到就退到最近的已存在祖先。 */
+    function suitePathOf(tree, path) {
+      const prefixes = prefixPathsOf(path)
+      if (prefixes.length <= 1) return ''
+      const top = prefixes[0]
+      if (treeNodeAt(tree, top) !== null) return top
+      for (let index = prefixes.length - 2; index >= 0; index -= 1) {
+        if (treeNodeAt(tree, prefixes[index]) !== null) return prefixes[index]
+      }
+      return ''
+    }
+
+    function rowAtPath(rows, path) {
+      if (Array.isArray(rows) === false) return null
+      return rows.find((row) => relativePathOf(row) === path) || null
     }
 
     async function request(path, options = {}) {
@@ -662,6 +813,13 @@ window.__ModuleLoader__.load({
         error ? h('div', { className: 'eng-muted', style: { color: 'var(--eng-bad)', flexBasis: '100%' } }, error) : null)
     }
 
+    /**
+     * 技能页：按 `/skills.tree` 渲染套件抽屉。
+     *
+     * 结构以服务端目录树为权威（`tree`）；旧响应没有 tree 时用平铺 `skills` 兜底成一层。
+     * 展开状态只把「开着的」节点写进 localStorage['eng-suite-open']，默认全收起。
+     * 详情与管理动作按节点类型分三种：独立技能 / 根技能（含子技能）/ 组节点（只有子技能）。
+     */
     function Skills(props) {
       const skills = useLoad(useCallback(() => request('/skills'), []))
       const validation = useLoad(useCallback(() => request('/validate'), []))
@@ -669,10 +827,66 @@ window.__ModuleLoader__.load({
       const [intent, setIntent] = useState('')
       const [context, setContext] = useState('')
       const [notice, setNotice] = useState('')
-      // 「忘记技能」两步确认：第一下只把按钮换成「确认忘记」，避免误点删掉资产
+      // 「忘记技能」两步确认：第一下只换文案，第二下才真的删（删除还带 expect=N）
       const [confirmForget, setConfirmForget] = useState('')
+      // 套件树展开状态：默认全收起，只记开着的 path
+      const [openMap, setOpenMap] = useState(() => readSuiteOpen())
       const rows = skills.data ? skills.data.skills || [] : []
-      const current = selected === null ? null : rows.find((row) => row.id === selected) || null
+      const tree = useMemo(() => normalizeSkillTree(skills.data), [skills.data])
+      const current = selected === null ? null : rowAtPath(rows, selected)
+      const node = selected === null ? null : treeNodeAt(tree, selected) || (current === null ? null : {
+        path: relativePathOf(current),
+        name: current.name || relativePathOf(current),
+        kind: current.kind === 'group' ? 'group' : 'skill',
+        depth: Number(current.depth) || 0,
+        skillCount: Number(current.skillCount) || 1,
+        registeredCount: current.globalRegistered ? 1 : 0,
+        children: [],
+      })
+      const pathOfCurrent = node === null ? '' : String(node.path || '')
+      const kind = node !== null && node.kind === 'group' ? 'group' : 'skill'
+      const skillCount = nodeSkillCountOf(node)
+      const registeredCount = node === null ? 0 : Number(node.registeredCount) || 0
+      const childCount = node === null ? 0 : nodeChildrenOf(node).length
+      const isGroup = kind === 'group'
+      const isChild = isGroup === false && node !== null && nodeDepthOf(node) > 0
+      const isRootSkill = isGroup === false && node !== null && isChild === false && childCount > 0
+      const isSimple = isGroup === false && isChild === false && isRootSkill === false
+      const allRegistered = skillCount > 0 && registeredCount >= skillCount
+      // 只渲染展开路径上的节点：默认收起时就是顶层节点
+      const visible = useMemo(() => {
+        const out = []
+        const walk = (nodes, depth) => {
+          for (const item of nodes) {
+            if (item === null || item === undefined) continue
+            out.push({ node: item, depth })
+            if (openMap[item.path] === true) walk(nodeChildrenOf(item), depth + 1)
+          }
+        }
+        walk(tree, 0)
+        return out
+      }, [tree, openMap])
+      const toggleNode = (path) => {
+        setOpenMap((previous) => {
+          const next = { ...previous }
+          if (next[path] === true) delete next[path]
+          else next[path] = true
+          writeSuiteOpen(next)
+          return next
+        })
+      }
+      // 标签 / 面包屑跳转：选中目标节点，并把它的所有祖先展开
+      const jumpTo = (path) => {
+        if (path === '' || treeNodeAt(tree, path) === null) return
+        setSelected(path)
+        setConfirmForget('')
+        setOpenMap((previous) => {
+          const next = { ...previous }
+          for (const prefix of prefixPathsOf(path).slice(0, -1)) next[prefix] = true
+          writeSuiteOpen(next)
+          return next
+        })
+      }
       const act = async (fn) => {
         try {
           setNotice(await fn())
@@ -682,24 +896,259 @@ window.__ModuleLoader__.load({
           setNotice(caught.message || String(caught))
         }
       }
+      /** 子树动作：register / unregister / forget（带 expect）/ detach。 */
+      const nodeAction = async (action, expect) => {
+        const path = pathOfCurrent
+        const leaf = lastSegmentOf(path)
+        const body = { path, action }
+        if (Number.isFinite(expect)) body.expect = Math.trunc(expect)
+        try {
+          const out = await request('/skill-node', { method: 'POST', body })
+          const total = Number(out && out.total) || 0
+          const failed = out && Array.isArray(out.failed) ? out.failed : []
+          // forget 的成功数在 deleted 上（没有 ok 字段）；detach 用 moved；register/unregister 用 ok
+          const done = out !== null && out !== undefined && out.ok !== undefined
+            ? Number(out.ok) || 0
+            : action === 'forget'
+              ? (out && out.deleted === true ? total : Math.max(0, total - failed.length))
+              : (out && out.moved === true ? 1 : 0)
+          let message = `已执行 ${action}：成功 ${done}/${total}`
+          if (action === 'register') message = `已注册 ${done}/${total} 个技能到全局`
+          else if (action === 'unregister') message = `已取消注册 ${done}/${total} 个技能`
+          else if (action === 'forget') message = `已删除 ${done} 个技能（共 ${total}）`
+          else if (action === 'detach') message = `已移出套件：${(out && out.to) || leaf}（现在是顶层技能）`
+          if (failed.length > 0) {
+            const details = failed.slice(0, 3).map((item) => `${item.path || '?'}：${item.message || item.error || '未知原因'}`).join('；')
+            message += `；失败 ${failed.length} 项：${details}${failed.length > 3 ? ' 等' : ''}`
+            if (action === 'register') {
+              const occupied = failed.some((item) => /occupied|占用|已存在|exists/iu.test(String(item.message || item.error || '')))
+              message += occupied
+                ? `。$DSH_HOME/skills/${leaf} 已被占用，未覆盖；请先取消注册或改名`
+                : `。目标目录被占用时不会覆盖（$DSH_HOME/skills/${leaf}），可先取消注册或改名`
+            }
+          }
+          setNotice(message)
+          setConfirmForget('')
+          if (action === 'forget' || action === 'detach') setSelected(null)
+          await Promise.all([skills.reload(), validation.reload()])
+          props.onChanged()
+        } catch (caught) {
+          setNotice(caught.message || String(caught))
+          setConfirmForget('')
+        }
+      }
+      // 管理动作单独一张卡，压在详情卡上面；按钮按节点类型分组（先于详情构造，保持「管理卡在上」的源码顺序）
+      const actionsCard = node === null ? null : h('div', { className: 'eng-card eng-skill-actions' },
+        isSimple && current !== null ? [
+          h(Button, {
+            key: 'simple-register',
+            small: true,
+            kind: current.globalRegistered ? undefined : 'primary',
+            title: current.globalRegistered
+              ? '把链接从 DSH skills 目录里删掉，技能回到经验库排序'
+              : '链接进 DSH 的 skills 目录：之后由 DSH 当普通技能加载，经验库不再排序它',
+            onClick: () => act(async () => {
+              const out = await request('/skill-global', { method: 'POST', body: { slug: current.id || pathOfCurrent, action: current.globalRegistered ? 'unregister' : 'register' } })
+              return out.registered
+                ? `已注册到全局：${out.targetDir}`
+                : `已取消注册${out.removed ? '' : '（链接本来就不在了，已清理记录）'}`
+            }),
+          }, current.globalRegistered ? '取消注册' : '注册技能到全局'),
+          h(Button, {
+            key: 'simple-forget',
+            small: true,
+            kind: 'danger',
+            title: confirmForget === pathOfCurrent ? '再点一次就删掉这个技能目录' : '从经验库删除这个技能',
+            onClick: () => {
+              if (confirmForget !== pathOfCurrent) {
+                setConfirmForget(pathOfCurrent)
+                return
+              }
+              act(async () => {
+                const out = await request('/skill-forget', { method: 'POST', body: { slug: current.id || pathOfCurrent } })
+                setConfirmForget('')
+                setSelected(null)
+                return `已忘记技能：${out.slug}`
+              })
+            },
+          }, confirmForget === pathOfCurrent ? '确认忘记' : '忘记技能'),
+        ] : null,
+        isRootSkill ? [
+          h(Button, {
+            key: 'root-register',
+            small: true,
+            kind: allRegistered ? undefined : 'primary',
+            title: '对整个套件（根技能 + 全部子技能）注册到 DSH skills 目录',
+            onClick: () => nodeAction(allRegistered ? 'unregister' : 'register'),
+          }, allRegistered ? '取消注册（含子技能）' : '注册到全局（含子技能）'),
+          h(Button, {
+            key: 'root-forget',
+            small: true,
+            kind: 'danger',
+            title: confirmForget === pathOfCurrent ? `再点一次会删除整棵子树（${skillCount} 个技能）` : '连同全部子技能从经验库删除',
+            onClick: () => {
+              if (confirmForget !== pathOfCurrent) {
+                setConfirmForget(pathOfCurrent)
+                return
+              }
+              nodeAction('forget', skillCount)
+            },
+          }, confirmForget === pathOfCurrent ? `确认删除 ${skillCount} 个技能` : `忘记技能（含 ${Math.max(0, skillCount - 1)} 个子技能）`),
+        ] : null,
+        isChild ? [
+          h(Button, {
+            key: 'child-register',
+            small: true,
+            kind: allRegistered ? undefined : 'primary',
+            title: '把这个子技能（含它自己的后代）注册到 DSH skills 目录',
+            onClick: () => nodeAction(allRegistered ? 'unregister' : 'register'),
+          }, allRegistered ? '取消注册' : '注册到全局'),
+          h(Button, {
+            key: 'child-forget',
+            small: true,
+            kind: 'danger',
+            title: confirmForget === pathOfCurrent ? '再点一次就删掉这个技能（含后代）' : '从经验库删除这个技能（含后代）',
+            onClick: () => {
+              if (confirmForget !== pathOfCurrent) {
+                setConfirmForget(pathOfCurrent)
+                return
+              }
+              nodeAction('forget', skillCount)
+            },
+          }, confirmForget === pathOfCurrent ? `确认删除 ${skillCount} 个技能` : '忘记技能'),
+          h(Button, {
+            key: 'child-detach',
+            small: true,
+            title: '把子技能移到顶层（技能不删，只解除套件关系）',
+            onClick: () => nodeAction('detach'),
+          }, '移出套件'),
+        ] : null,
+        isGroup ? [
+          h(Button, {
+            key: 'group-register',
+            small: true,
+            kind: allRegistered ? undefined : 'primary',
+            title: `注册整套（${skillCount} 个技能）到 DSH skills 目录`,
+            onClick: () => nodeAction(allRegistered ? 'unregister' : 'register'),
+          }, allRegistered ? '取消整套' : `注册整套（${skillCount} 个技能）`),
+          h(Button, {
+            key: 'group-forget',
+            small: true,
+            kind: 'danger',
+            title: confirmForget === pathOfCurrent ? `再点一次会删除整棵子树（${skillCount} 个技能）` : '删除整套（子技能一起删）',
+            onClick: () => {
+              if (confirmForget !== pathOfCurrent) {
+                setConfirmForget(pathOfCurrent)
+                return
+              }
+              nodeAction('forget', skillCount)
+            },
+          }, confirmForget === pathOfCurrent ? `确认删除 ${skillCount} 个技能` : `忘记整套（${skillCount} 个技能）`),
+        ] : null)
+      const crumb = pathSegmentsOf(pathOfCurrent).length > 1
+        ? h('div', { className: 'eng-crumb' }, pathSegmentsOf(pathOfCurrent).map((segment, index, segments) => {
+          const target = segments.slice(0, index + 1).join('/')
+          const isLast = index === segments.length - 1
+          const clickable = isLast === false && treeNodeAt(tree, target) !== null
+          return h('span', { key: target, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+            index > 0 ? h('span', { className: 'eng-crumb-sep' }, '/') : null,
+            clickable ? h('button', { type: 'button', onClick: () => jumpTo(target) }, segment) : h('span', { 'data-current': isLast ? 'true' : 'false' }, segment))
+        }))
+        : null
+      const detail = node === null
+        ? h('div', { className: 'eng-card eng-detail-card' }, h(Empty, null, '选一个技能看正文'))
+        : h('div', { className: 'eng-card eng-detail-card' },
+          h('div', { className: 'eng-detail' },
+            crumb,
+            h('h3', { className: 'eng-detail-title' }, node.name || pathOfCurrent),
+            isGroup
+              ? h('div', null,
+                h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, `组节点：${skillCount} 个技能${registeredCount > 0 ? ` · 已注册 ${registeredCount}/${skillCount}` : ''}`),
+                h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } }, '这个目录只用于收纳，没有 SKILL.md；注册 / 取消注册 / 忘记都会作用于整棵子树。'))
+              : h('div', null,
+                h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current === null ? '（读取中…）' : (current.description || '—')),
+                isRootSkill
+                  ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } }, `套件：${Math.max(0, skillCount - 1)} 个子技能 · 已注册 ${registeredCount}/${skillCount}`)
+                  : null,
+                isChild
+                  ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } }, `套件：${rootNameOf(pathOfCurrent)} · 路径 ${pathOfCurrent}`)
+                  : null,
+                current !== null && Number(current.packageFiles) > 0
+                  ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } },
+                    `整包：${current.packageFiles} 个文件 / ${fmtBytes(current.packageBytes)}${Array.isArray(current.packageDirs) && current.packageDirs.length > 0 ? ` · ${current.packageDirs.join('、')}` : ''}（导入时随 SKILL.md 一起复制）`)
+                  : null,
+                current === null ? null : h(SkillMetaEditor, { key: current.id || pathOfCurrent, row: current, onSaved: async (message) => { await skills.reload(); props.onChanged(); setNotice(message) } }),
+                current === null ? null : h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id || pathOfCurrent, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id || pathOfCurrent, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id || pathOfCurrent, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
+                h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } }, isRootSkill || isChild
+                  ? (allRegistered
+                    ? `已全部注册到全局（${registeredCount}/${skillCount}）：DSH 会把它们当普通技能加载，经验库不再排序/召回。`
+                    : `套件内已注册 ${registeredCount}/${skillCount} 个技能；注册 / 取消注册在管理卡里按子树执行。`)
+                  : (current !== null && current.globalRegistered
+                    ? `已注册到全局（${current.globalPath || 'DSH skills 目录'}）：DSH 会把它当真实技能加载，经验库不再排序/召回它；点「取消注册」回到经验库管理。`
+                    : '还没注册到全局：它归经验库自己管，召回时按需以技能形态交给模型；要当普通技能用就点「注册技能到全局」。')),
+                current !== null && Array.isArray(current.files) && current.files.length > 0
+                  ? h('div', { style: { marginBottom: 10 } }, h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '脚本附件'), current.files.map((file) => h('div', { key: file, className: 'eng-mono eng-muted' }, file)))
+                  : null,
+                h('pre', { className: 'eng-pre' }, current === null ? '（组节点没有正文）' : (current.body || '（空）')))))
       return h('div', { className: 'eng-fill' },
         skills.error ? h(Banner, { bad: true }, skills.error) : null,
         notice ? h(Banner, null, notice) : null,
-        h('div', { className: 'eng-split', 'data-open': current === null ? 'false' : 'true' },
+        h('div', { className: 'eng-split', 'data-open': node === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
-            rows.length === 0 ? h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀') : rows.map((row) => {
-              const [label, tone] = skillStateOf(row.status)
-              return h('div', { key: row.id, className: 'eng-skill-row', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => { setSelected(row.id); setConfirmForget('') } },
+            visible.length === 0 ? h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀') : visible.map(({ node: item, depth }) => {
+              const row = rowAtPath(rows, item.path)
+              const itemKind = item.kind === 'group' ? 'group' : 'skill'
+              const itemCount = nodeSkillCountOf(item)
+              const itemRegistered = Number(item.registeredCount) || 0
+              const children = nodeChildrenOf(item)
+              const isOpen = openMap[item.path] === true
+              const itemIsChild = itemKind === 'skill' && nodeDepthOf(item) > 0
+              const itemIsRoot = itemKind === 'skill' && itemIsChild === false && children.length > 0
+              const [label, tone] = row === null ? ['待验证', 'muted'] : skillStateOf(row.status)
+              const suiteTarget = itemIsChild ? suitePathOf(tree, item.path) : ''
+              return h('div', {
+                key: item.path,
+                className: 'eng-skill-row eng-tree-row',
+                'data-on': selected === item.path ? 'true' : 'false',
+                style: { paddingLeft: 8 + depth * 18 },
+                onClick: () => { setSelected(item.path); setConfirmForget('') },
+              },
+                children.length > 0
+                  ? h('button', {
+                    type: 'button',
+                    className: 'eng-tree-toggle',
+                    title: isOpen ? '收起子技能' : '展开子技能',
+                    'aria-label': isOpen ? '收起子技能' : '展开子技能',
+                    'aria-expanded': isOpen ? 'true' : 'false',
+                    onClick: (event) => { event.stopPropagation(); toggleNode(item.path) },
+                  }, isOpen ? '▾' : '▸')
+                  : h('span', { className: 'eng-tree-toggle', 'aria-hidden': 'true' }, ''),
                 h('div', { style: { flex: 1, minWidth: 0 } },
-                  // 列表里不铺描述：统一成一行，详情点开再看（描述留在 title 里悬停可见）
-                  h('div', { className: 'eng-skill-name', title: row.description || row.name }, row.name),
+                  h('div', { className: 'eng-skill-name', title: row !== null ? (row.description || row.name) : item.path },
+                    item.name || lastSegmentOf(item.path),
+                    itemKind === 'group'
+                      ? h('span', { className: 'eng-suite-tag', 'data-static': 'true' }, `${itemCount} 个技能`)
+                      : null,
+                    itemIsRoot
+                      ? h('button', { type: 'button', className: 'eng-suite-tag', title: isOpen ? '收起子技能' : '展开子技能', onClick: (event) => { event.stopPropagation(); toggleNode(item.path) } }, `套件 · ${Math.max(0, itemCount - 1)} 个子技能`)
+                      : null,
+                    suiteTarget !== ''
+                      ? h('button', { type: 'button', className: 'eng-suite-tag', title: '跳到所属套件', onClick: (event) => { event.stopPropagation(); jumpTo(suiteTarget) } }, `套件：${rootNameOf(item.path)}`)
+                      : null),
                   h('div', { className: 'eng-actions', style: { marginTop: 6 } },
-                    h(Badge, { tone }, label),
-                    h('span', { className: 'eng-muted' }, `uses ${row.uses || 0} · helped ${row.helped || 0} · hurt ${row.hurt || 0}`),
-                    row.globalRegistered ? h(Badge, { tone: 'brand' }, '全局') : null,
-                    row.pendingCommit ? h(Badge, { tone: 'warn' }, '待补提交') : null,
-                    h('span', { className: 'eng-muted' }, `文件 ${row.packageFiles || (Array.isArray(row.files) ? row.files.length : 0)}`))),
-                h('span', { className: 'eng-mono', style: { flex: '0 0 auto' } }, row.id))
+                    itemKind === 'skill' && row !== null ? h(Badge, { tone }, label) : null,
+                    itemKind === 'skill'
+                      ? h('span', { className: 'eng-muted' }, `uses ${row !== null ? row.uses || 0 : 0} · helped ${row !== null ? row.helped || 0 : 0} · hurt ${row !== null ? row.hurt || 0 : 0}`)
+                      : h('span', { className: 'eng-muted' }, `已注册 ${itemRegistered}/${itemCount}`),
+                    row !== null && row.globalRegistered ? h(Badge, { tone: 'brand' }, '全局') : null,
+                    row !== null && row.pendingCommit ? h(Badge, { tone: 'warn' }, '待补提交') : null,
+                    itemKind === 'skill'
+                      ? h('span', { className: 'eng-muted' }, `文件 ${row !== null ? row.packageFiles || (Array.isArray(row.files) ? row.files.length : 0) : 0}`)
+                      : null)),
+                h('span', { className: 'eng-mono', style: { flex: '0 0 auto' } }, item.path))
             })),
           h('div', { className: 'eng-stack' },
             h('div', { className: 'eng-card', style: { padding: 15 } },
@@ -712,83 +1161,33 @@ window.__ModuleLoader__.load({
               validation.data && validation.data.problems && validation.data.problems.length > 0
                 ? validation.data.problems.map((item) => h('div', { key: item.slug, className: 'eng-muted', style: { marginBottom: 6 } }, `${item.slug}：${item.problems.join('；')}`))
                 : h('div', { className: 'eng-muted' }, '全部健康')),
-            // 管理动作单独一张卡，压在详情卡上面（用户要的「详情盒子下沉、上面加个新盒子放按钮」）
-            current === null ? null : h('div', { className: 'eng-card eng-skill-actions' },
-              h(Button, {
-                small: true,
-                kind: current.globalRegistered ? undefined : 'primary',
-                title: current.globalRegistered
-                  ? '把链接从 DSH skills 目录里删掉，技能回到经验库排序'
-                  : '链接进 DSH 的 skills 目录：之后由 DSH 当普通技能加载，经验库不再排序它',
-                onClick: () => act(async () => {
-                  const out = await request('/skill-global', { method: 'POST', body: { slug: current.id, action: current.globalRegistered ? 'unregister' : 'register' } })
-                  return out.registered
-                    ? `已注册到全局：${out.targetDir}`
-                    : `已取消注册${out.removed ? '' : '（链接本来就不在了，已清理记录）'}`
-                }),
-              }, current.globalRegistered ? '取消注册' : '注册技能到全局'),
-              h(Button, {
-                small: true,
-                kind: 'danger',
-                title: confirmForget === current.id ? '再点一次就删掉这个技能目录' : '从经验库删除这个技能',
-                onClick: () => {
-                  if (confirmForget !== current.id) {
-                    setConfirmForget(current.id)
-                    return
-                  }
-                  act(async () => {
-                    const out = await request('/skill-forget', { method: 'POST', body: { slug: current.id } })
-                    setConfirmForget('')
-                    setSelected(null)
-                    return `已忘记技能：${out.slug}`
-                  })
-                },
-              }, confirmForget === current.id ? '确认忘记' : '忘记技能')),
-            current === null ? h('div', { className: 'eng-card eng-detail-card' }, h(Empty, null, '选一个技能看正文')) : h('div', { className: 'eng-card eng-detail-card' },
-              h('div', { className: 'eng-detail' },
-                h('h3', { className: 'eng-detail-title' }, current.name),
-                h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current.description || '—'),
-                current.packageFiles > 0
-                  ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } },
-                    `整包：${current.packageFiles} 个文件 / ${fmtBytes(current.packageBytes)}${Array.isArray(current.packageDirs) && current.packageDirs.length > 0 ? ` · ${current.packageDirs.join('、')}` : ''}（导入时随 SKILL.md 一起复制）`)
-                  : null,
-                h(SkillMetaEditor, { key: current.id, row: current, onSaved: async (message) => { await skills.reload(); props.onChanged(); setNotice(message) } }),
-                h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
-                h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } }, current.globalRegistered
-                  ? `已注册到全局（${current.globalPath || 'DSH skills 目录'}）：DSH 会把它当真实技能加载，经验库不再排序/召回它；点「取消注册」回到经验库管理。`
-                  : '还没注册到全局：它归经验库自己管，召回时按需以技能形态交给模型；要当普通技能用就点「注册技能到全局」。'),
-                Array.isArray(current.files) && current.files.length > 0
-                  ? h('div', { style: { marginBottom: 10 } }, h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '脚本附件'), current.files.map((file) => h('div', { key: file, className: 'eng-mono eng-muted' }, file)))
-                  : null,
-                h('pre', { className: 'eng-pre' }, current.body || '（空）'))))))
+            actionsCard,
+            detail)))
     }
 
     /**
-     * 在拖进来的文件夹里找 SKILL.md（浏览器没有路径能力，只能顺着 FileSystemEntry 往下钻）。
-     * 深度限制 4 层，避免用户把整个盘拖进来卡死。
+     * 在拖进来的文件夹里收集所有 SKILL.md（浏览器只有 FileSystemEntry，没有路径）。
+     * 每个结果带 `fullPath`，用来还原 `<根目录>/<子目录>/SKILL.md` 的套件层级。
+     * 深度限制 8 层、最多 60 个，避免用户把整个盘拖进来卡死。
      */
-    async function findSkillFileInEntry(entry, depth = 0) {
-      if (entry === null || entry === undefined) return null
+    async function collectSkillEntries(entry, depth, out) {
+      if (entry === null || entry === undefined || depth > 8 || out.length >= 60) return
       if (entry.isFile) {
         const file = await new Promise((resolve) => entry.file(resolve, () => resolve(null)))
-        if (!file) return null
-        return /^skill\.md$/iu.test(file.name) || /\.md$/iu.test(file.name) ? file : null
+        if (file && /^skill\.md$/iu.test(file.name)) out.push({ file, fullPath: String(entry.fullPath || '') })
+        return
       }
-      if (!entry.isDirectory || depth >= 4) return null
+      if (!entry.isDirectory) return
       const reader = entry.createReader()
       const readBatch = () => new Promise((resolve) => reader.readEntries(resolve, () => resolve([])))
       let batch = await readBatch()
-      while (batch.length > 0) {
+      while (batch.length > 0 && out.length < 60) {
         for (const child of batch) {
-          const found = await findSkillFileInEntry(child, depth + 1)
-          if (found !== null) return found
+          await collectSkillEntries(child, depth + 1, out)
+          if (out.length >= 60) break
         }
         batch = await readBatch()
       }
-      return null
     }
 
     /**
@@ -839,6 +1238,9 @@ window.__ModuleLoader__.load({
       const dirInputRef = useRef(null)
       // 浏览器选文件夹时一次可能读到多个 SKILL.md（套件），先攒起来再一次性提交
       const [contentsDraft, setContentsDraft] = useState([])
+      // 套件的根目录名（来自 webkitRelativePath / 拖拽目录名）与可改的套件名
+      const [suiteRoot, setSuiteRoot] = useState('')
+      const [suiteName, setSuiteName] = useState('')
       // 套件批量导入进度：{ total, done, current }；非空时弹窗整体切成进度条视图
       const [progress, setProgress] = useState(null)
       const canSubmit = busy === false && (sourcePath.trim() !== '' || content.trim() !== '' || contentsDraft.length > 0)
@@ -846,6 +1248,52 @@ window.__ModuleLoader__.load({
       const nameOfSkill = (text) => {
         const matched = /^---[\s\S]*?\nname:\s*(.+)$/mu.exec(String(text || ""))
         return matched === null ? '未命名技能' : matched[1].trim().replace(/^['"]|['"]$/gu, '')
+      }
+      const readTextOf = async (file) => {
+        try {
+          const text = await file.text()
+          return String(text || '').trim() === '' ? '' : text
+        } catch {
+          return ''
+        }
+      }
+      /** webkitRelativePath：`套件/子技能/SKILL.md` → { root:'套件', relPath:'子技能' }。 */
+      const relPartsOf = (relative) => {
+        const segments = String(relative || '').split(/[\\/]/u).filter((segment) => segment !== '')
+        if (segments.length <= 1) return { root: '', relPath: '' }
+        return { root: segments[0], relPath: segments.slice(1, -1).join('/') }
+      }
+      /** 套件草稿：根目录名只认首次出现的那个；套件名可被输入框改掉。 */
+      const applySuiteDraft = (items) => {
+        const roots = Array.from(new Set(items.map((item) => item.root).filter((root) => root !== '')))
+        setContentsDraft(items)
+        setSuiteRoot(roots.length === 1 ? roots[0] : '')
+        setSuiteName(roots.length === 1 ? roots[0] : '')
+        setContent('')
+        setSourcePath('')
+        setFileName(`${items.length} 个技能（套件）`)
+        setError('')
+      }
+      const draftFromFiles = async (skillDocs) => {
+        const items = []
+        for (const file of skillDocs.slice(0, 30)) {
+          const text = await readTextOf(file)
+          if (text === '') continue
+          const located = relPartsOf(file.webkitRelativePath)
+          items.push({ name: nameOfSkill(text), text, root: located.root, relPath: located.relPath })
+        }
+        return items
+      }
+      const suiteRootForItem = (item) => {
+        if (item === null || item === undefined || item.root === '') return ''
+        // 单根时允许用输入框改名；多根（一次拖多个文件夹）时各用各的根名，避免被合并
+        if (suiteName.trim() !== '' && suiteRoot !== '') return suiteName.trim()
+        return item.root
+      }
+      const pathForItem = (item) => {
+        const root = suiteRootForItem(item)
+        if (root === '') return ''
+        return item.relPath === '' ? root : `${root}/${item.relPath}`
       }
       const takeFile = async (file) => {
         if (file === null || file === undefined) return
@@ -867,6 +1315,9 @@ window.__ModuleLoader__.load({
           setContent(text)
           setFileName(name)
           setSourcePath('')
+          setContentsDraft([])
+          setSuiteRoot('')
+          setSuiteName('')
           setError('')
         } catch (caught) {
           setError(`读取失败：${caught && caught.message ? caught.message : String(caught)}`)
@@ -901,24 +1352,54 @@ window.__ModuleLoader__.load({
           setSourcePath(droppedPath)
           setContent('')
           setFileName('')
+          setContentsDraft([])
+          setSuiteRoot('')
+          setSuiteName('')
           setError('')
           return
         }
         const items = (event.dataTransfer && event.dataTransfer.items) || []
         const files = []
+        const dirs = []
         for (const item of items) {
           if (item === null || item.kind !== 'file') continue
           const entry = typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null
           if (entry !== null && entry !== undefined && entry.isDirectory) {
-            const found = await findSkillFileInEntry(entry)
-            if (found !== null) {
-              await takeFile(found)
-              return
-            }
+            dirs.push({ entry, name: String(entry.name || '') })
             continue
           }
           const file = item.getAsFile()
           if (file !== null) files.push(file)
+        }
+        // 拖进来的是文件夹：沿 FileSystemEntry 收集所有 SKILL.md，按目录层级还原套件
+        if (dirs.length > 0) {
+          const collected = []
+          for (const dir of dirs) {
+            const found = []
+            await collectSkillEntries(dir.entry, 0, found)
+            for (const one of found) {
+              const text = await readTextOf(one.file)
+              if (text === '') continue
+              const segments = String(one.fullPath || '').split('/').filter((segment) => segment !== '')
+              // fullPath 形如 /套件/子技能/SKILL.md：去掉根目录名与文件名
+              const relPath = segments.slice(1, -1).join('/')
+              collected.push({ name: nameOfSkill(text), text, root: dir.name, relPath })
+            }
+          }
+          if (collected.length > 1) {
+            applySuiteDraft(collected)
+            return
+          }
+          if (collected.length === 1) {
+            setContent(collected[0].text)
+            setFileName('SKILL.md')
+            setSourcePath('')
+            setContentsDraft([])
+            setSuiteRoot('')
+            setSuiteName('')
+            setError('')
+            return
+          }
         }
         // 2) items 为空时退回 dataTransfer.files
         const fallback = Array.from((event.dataTransfer && event.dataTransfer.files) || [])
@@ -931,26 +1412,18 @@ window.__ModuleLoader__.load({
         const list = Array.from((event.target && event.target.files) || [])
         if (event.target) event.target.value = ''
         if (list.length === 0) return
-        // 文件夹里可能是一个技能（1 个 SKILL.md），也可能是套件（每个子目录一个 SKILL.md）
+        // 文件夹里可能是一个技能（1 个 SKILL.md），也可能是套件（多个子目录各带 SKILL.md）
         const skillDocs = list.filter((file) => /^skill\.md$/iu.test(file.name))
         if (skillDocs.length > 1) {
-          const texts = []
-          for (const file of skillDocs.slice(0, 30)) {
-            try {
-              const text = await file.text()
-              if (String(text || '').trim() !== '') texts.push(text)
-            } catch {
-              // 单个读失败跳过，不让整次选择失败
-            }
+          const items = await draftFromFiles(skillDocs)
+          if (items.length > 1) {
+            applySuiteDraft(items)
+            return
           }
-          setContentsDraft(texts)
-          setContent('')
-          setSourcePath('')
-          setFileName(`${texts.length} 个技能（套件）`)
-          setError('')
-          return
         }
         setContentsDraft([])
+        setSuiteRoot('')
+        setSuiteName('')
         const picked = skillDocs[0] || list.find((file) => /\.md$/iu.test(file.name)) || list[0]
         if (picked !== undefined) await takeFile(picked)
       }
@@ -965,13 +1438,16 @@ window.__ModuleLoader__.load({
         try {
           if (batch !== null) {
           const agg = { suite: true, count: 0, items: [] }
-          const rows = batch.map((text) => ({ name: nameOfSkill(text), state: "waiting", category: "", tags: [], error: "", model: "", classifier: "" }))
+          const rows = batch.map((item) => ({ name: item.name, path: pathForItem(item), state: "waiting", category: "", tags: [], error: "", model: "", classifier: "" }))
           // 逐个导入：进度条前进一格，同时把该技能的分类结果写进下面的列表
           for (let index = 0; index < batch.length; index += 1) {
             rows[index].state = "running"
             setProgress({ total: batch.length, done: index, current: rows[index].name, rows: rows.map((row) => ({ ...row })) })
             try {
-              const one = await request('/skills/import', { method: 'POST', body: { content: batch[index], categories, notes } })
+              const rootNameForItem = suiteRootForItem(batch[index])
+              // 同时带两种形状：顶层 content+suiteRoot+relPath（接口契约），以及内核当前消费的
+              // contents:[{text,suiteRoot,relPath}]——两边谁先落地都能按目录结构写入。
+              const one = await request('/skills/import', { method: 'POST', body: { content: batch[index].text, categories, notes, suiteRoot: rootNameForItem === '' ? undefined : rootNameForItem, relPath: rootNameForItem === '' ? undefined : batch[index].relPath, contents: rootNameForItem === '' ? undefined : [{ text: batch[index].text, suiteRoot: rootNameForItem, relPath: batch[index].relPath }] } })
               const item = (one.items || [])[0] || {}
               rows[index].state = "done"
               rows[index].category = String(item.category || "")
@@ -983,7 +1459,7 @@ window.__ModuleLoader__.load({
             } catch (caught) {
               rows[index].state = "failed"
               rows[index].error = caught.message || String(caught)
-              agg.items.push({ action: 'failed', name: rows[index].name, error: rows[index].error })
+              agg.items.push({ action: 'failed', name: rows[index].name, path: rows[index].path, error: rows[index].error })
             }
             setProgress({ total: batch.length, done: index + 1, current: index + 1 < batch.length ? rows[index + 1].name : "", rows: rows.map((row) => ({ ...row })) })
           }            setProgress(null)
@@ -1004,15 +1480,16 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 批量导入时：表单换成「进度条 + 临时会话」——分类用的那个会话在输入框的位置流式显示
+      // 批量导入时：表单换成「进度条 + 逐行状态 + 临时会话」——分类用的那个会话流式显示
       if (progress !== null) {
         const percent = Math.round((progress.done / Math.max(1, progress.total)) * 100)
         const rows = progress.rows || []
         const model = (rows.find((row) => row.model !== '') || {}).model || '分类会话'
+        const stateLabel = (state) => state === 'done' ? '已导入' : state === 'failed' ? '失败' : state === 'running' ? '导入中' : '等待'
         const messages = [{ role: 'system', text: `临时会话已启动 · ${model} · 共 ${progress.total} 个技能` }]
         for (const row of rows) {
           if (row.state === 'waiting') continue
-          messages.push({ role: 'user', text: `分类：${row.name}` })
+          messages.push({ role: 'user', text: `分类：${row.name}${row.path ? `（${row.path}）` : ''}` })
           if (row.state === 'failed') messages.push({ role: 'assistant', text: `失败：${row.error}`, bad: true })
           else if (row.state === 'done') messages.push({ role: 'assistant', text: `${row.category === '' ? '未分类' : row.category}${row.tags.length > 0 ? ' · ' + row.tags.join(' / ') : ''}` })
           else messages.push({ role: 'assistant', text: '处理中…' })
@@ -1022,6 +1499,13 @@ window.__ModuleLoader__.load({
             h('h3', { className: 'eng-modal-title' }, '正在导入技能'),
             h('div', { className: 'eng-progress-text' }, progress.current === '' ? `已完成 ${progress.done}/${progress.total}` : `正在导入 ${Math.min(progress.done + 1, progress.total)}/${progress.total}：${progress.current}`),
             h('div', { className: 'eng-progress-track' }, h('div', { className: 'eng-progress-bar', style: { width: `${percent}%` } })),
+            h('div', { className: 'eng-progress-list' }, rows.map((row, index) => h('div', { className: 'eng-progress-item', 'data-state': row.state, key: index },
+              h('span', { className: 'eng-progress-dot' }),
+              h('span', { className: 'eng-progress-name', title: row.path || row.name }, row.path || row.name),
+              h('span', { className: 'eng-progress-state' }, stateLabel(row.state)),
+              row.category === '' ? null : h('span', { className: 'eng-progress-tag' }, row.category),
+              row.tags.length === 0 ? null : h('span', { className: 'eng-progress-tag eng-progress-tag-soft' }, row.tags.join(' / ')),
+              row.error === '' ? null : h('span', { className: 'eng-progress-error', style: { color: 'var(--eng-bad)' } }, row.error)))),
             h('div', { className: 'eng-session' }, messages.map((message, index) => h('div', { className: 'eng-session-msg', 'data-role': message.role, 'data-bad': message.bad ? 'true' : 'false', key: index },
               h('span', { className: 'eng-session-role' }, message.role === 'user' ? '分类请求' : message.role === 'system' ? '会话' : '分类会话'),
               h('span', { className: 'eng-session-text' }, message.text))))))
@@ -1039,7 +1523,13 @@ window.__ModuleLoader__.load({
           h('input', { ref: fileInputRef, type: 'file', accept: '.md,.markdown,text/markdown', style: { display: 'none' }, onChange: onPicked }),
           h('input', { ref: dirInputRef, type: 'file', webkitdirectory: '', directory: '', multiple: true, style: { display: 'none' }, onChange: onPicked }),
           h('input', { className: 'eng-input', style: { marginTop: 10 }, autoFocus: true, value: sourcePath, onKeyDown: (event) => { if (event.key === 'Enter' && canSubmit && !busy) submit() }, placeholder: '或粘贴来源路径：C:\\Users\\you\\my-skill（最稳，服务端直接读）', onChange: (event) => setSourcePath(event.target.value) }),
-          h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, '文件夹需含 SKILL.md；套件（子目录各带 SKILL.md）逐个导入；只复制正文，脚本用 exp_skill_attach 补；导入会用一次模型调用做分类。'),
+          contentsDraft.length > 1 && suiteRoot !== ''
+            ? h('div', { className: 'eng-fixed-target', style: { marginTop: 8 } },
+              h('span', { className: 'eng-muted' }, '套件名'),
+              h('input', { className: 'eng-input', style: { width: 200 }, value: suiteName, placeholder: suiteRoot, onChange: (event) => setSuiteName(event.target.value) }),
+              h('span', { className: 'eng-muted' }, `→ skills/${suiteName.trim() === '' ? suiteRoot : suiteName.trim()}/…`))
+            : null,
+          h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, '文件夹需含 SKILL.md；套件按目录结构导入（保留子目录，套件名可改）；只复制正文，脚本用 exp_skill_attach 补；导入会用一次模型调用做分类。'),
           showAdvanced
             ? h('div', null,
               h('input', { className: 'eng-input', style: { marginTop: 8 }, value: categoriesDraft, placeholder: '分类（逗号分隔，可多个）', onChange: (event) => setCategoriesDraft(event.target.value) }),

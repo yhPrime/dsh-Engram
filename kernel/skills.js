@@ -1375,7 +1375,7 @@ function applySkillObstacleUnlocked(dataDir, slug, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const skill = readSkill(dir)
+  const skill = readSkill(dir, slug)
   if (skill === null) return { action: 'missing', slug }
   const signature = normalizeSignature(options.signature || options.blockedBy || 'obstacle')
   const label = options.label || summarizeSignature(options.signature || options.blockedBy || signature)
@@ -1394,7 +1394,7 @@ export function applySkillObstacle(dataDir, slug, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const locked = withSkillLock(dataDir, assertSafeSlug(String(slug)), () => applySkillObstacleUnlocked(dataDir, slug, options), options)
+  const locked = withSkillLock(dataDir, assertSafeRelPath(String(slug)), () => applySkillObstacleUnlocked(dataDir, slug, options), options)
   return locked.busy === true ? { action: 'busy', slug } : locked.value
 }
 
@@ -1406,7 +1406,7 @@ function applySkillOutcomeUnlocked(dataDir, slug, result, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const skill = readSkill(dir)
+  const skill = readSkill(dir, slug)
   if (skill === null) return { action: 'missing', slug }
   const now = new Date().toISOString()
   const confidence = skill.meta.confidence
@@ -1433,6 +1433,6 @@ export function applySkillOutcome(dataDir, slug, result, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const locked = withSkillLock(dataDir, assertSafeSlug(String(slug)), () => applySkillOutcomeUnlocked(dataDir, slug, result, options), options)
+  const locked = withSkillLock(dataDir, assertSafeRelPath(String(slug)), () => applySkillOutcomeUnlocked(dataDir, slug, result, options), options)
   return locked.busy === true ? { action: 'busy', slug } : locked.value
 }

@@ -231,7 +231,8 @@
 固化技能列表。来源是 exp-lib 的 `exp_consolidate` 写出的 `.exp/skills/<slug>/`（`SKILL.md` + `skill.json`）；mock 模式给 5 条示例技能。
 
 - `mock`：内置 5 条，覆盖已固化 / 试用中 / 不稳定 / 待验证 / 有未解障碍
-- `live`：扫 `<dataDir>/skills/*/`；没有目录返回空数组；`skill.json` 读坏仍按 `SKILL.md` 出一条
+- `live`：递归扫 `<dataDir>/skills/`；任何含 `SKILL.md` 的目录都是技能，中间目录是组节点。`id` 是相对路径（`套件/子技能`），顶层技能 id 与目录名相同；`skill.json` 读坏仍按 `SKILL.md` 出一条。
+- 返回新增 `tree`：`[{ id, path, name, kind: 'skill'|'group', depth, rootName, parentPath, skillCount, registeredCount, childCount, children: [...] }]`。`skills` 行同时补 `path/depth/parentPath/rootName/childCount`。
 
 ```json
 {
@@ -342,7 +343,7 @@
 
 - mock：`data.source.mode === 'mock'`，`notice` 以「当前是示例数据」开头；反馈写内存，进程重启即恢复。
 - live：`data.source.mode === 'live'`，`readOnly === true`；读不到文件时 `exists === false` 且 `notice` 说明原因，界面显示空态而不是报错。
-- 固化技能同样分界：mock 是内置 5 条；live 读 `<dataDir>/skills/<slug>/`，没有技能时返回空数组（界面空态）。
+- 固化技能同样分界：mock 是内置 5 条；live 递归读 `<dataDir>/skills/`（含套件子目录），没有技能时返回空数组（界面空态）。
 
 
 ## 数据源默认值（0.6.0）
@@ -368,24 +369,36 @@ body: `{ intent, context? }` → `{ action, slug?, derivedFromCount? }`；mock �
 body: `{ slug, result: helped|hurt|neutral }` → `{ id, result, G_before?, G_after? }`
 
 ### `POST /skills/import`
-body: `{ path?, content?, categories?: string[], notes?: string[] }` → `{ suite, count, items: [{ slug, name, category, tags, order, classifier, note }] }`
+body: `{ path?, content?, contents?: (string | { text, suiteRoot?, relPath? })[], suiteRoot?, relPath?, categories?: string[], notes?: string[] }` → `{ suite, rootName?, count, items: [{ slug, id, path, name, category, tags, order, classifier, note, package? }] }`
 
-- `path` 指向文件夹时：根上有 SKILL.md → 单条；根上没有、但子目录各带 SKILL.md → 按**技能套件**逐个导入（`suite:true`）。
+- `path` 指向文件夹时：根上只有 SKILL.md、没有子技能 → 单条；根上有总入口 + 子目录技能，或子目录各带 SKILL.md → 按**技能套件**整棵导入（`suite:true`）。整棵目录只复制一次到 `<dataDir>/skills/<根名>/`，子技能保留相对路径，**不再摊平**。
+- `contents` 是浏览器通道：字符串按单条导入；`{text, suiteRoot, relPath}` 按 `suiteRoot/relPath` 还原目录层级。也接受顶层 `suiteRoot` + `relPath` + 单条 `content`。
+- 根名默认取来源文件夹名；`skills`、`skill` 这类泛名取上一级，客户端可传改后的套件名。
 - `categories` / `notes` 会写到每条导入技能的 `skill.json`（一个技能可挂多个分类、多条便签）。
+- 套件导入时每个技能各走一次分类调用；`classifier` 如实标 `session` 或 `local`。
 - 每条都会走一次分类（临时模型会话或本地关键词），套件是 N 次分类调用。
 
 ### `POST /skill-global`
 body: `{ slug, action: register|unregister }` → `{ slug, targetDir, mode, registered }`
 
-`register`：把 `<dataDir>/skills/<slug>/` **链接**（优先 junction，建不了才复制）到 `$DSH_HOME/skills/<slug>/`，之后按普通 DSH 技能加载。
+`slug` 也接受套件子技能的相对路径（`套件/子技能`）。`register`：把技能目录**链接**（优先 junction，建不了才复制）到 `$DSH_HOME/skills/<叶子名>/`，之后按普通 DSH 技能加载。
 注册后**经验库不再排序/召回这个技能**（`listSkills({onlyLocal:true})` 会过滤掉它），避免两个引擎同时抢着用；`unregister` 删掉这条链接并清掉记录，技能回到经验库排序池。
 目标已被别人占用时返回 400 `skill-global-failed`，绝不覆盖。错误码：`slug-required` / `bad-action` / `unsupported`。
+
+### `POST /skill-node`
+body: `{ path, action: register|unregister|forget|detach, expect? }` → `{ action, path, total, ok, failed: [{ path, message }], results, deleted? }`
+
+- `path` 是相对 skillsRoot 的节点路径（组节点或技能节点都行，如 `ai-base-tools`、`动画/gestures`）。
+- `register` / `unregister`：对**子树内所有技能**逐个执行，单项失败不中断，失败项进 `failed`；注册目标仍是 `$DSH_HOME/skills/<叶子名>`，被占用时该条失败、不覆盖。
+- `forget`：必须带 `expect` = 子树技能数；不匹配返回 400（列表过期，刷新再试）。先逐个取消注册，再删节点目录；节点是链接时拒绝删除。
+- `detach`：仅子技能；移到顶层同名目录，重名返回 400，不覆盖。
+- 错误码：`node-required` / `bad-action` / `unsupported` / `skill-node-failed`。
 
 ### `POST /skill-meta`
 body: `{ slug, typeNames?: string[], notes?: string[] }` → `{ slug, typeName, typeNames, notes }`：改技能的分类（可多个）与便签（可多条）。错误码：`slug-required` / `skill-meta-failed`。
 
 ### `POST /skill-forget`
-body: `{ slug }` → `{ slug, deleted, unregistered }`：删除技能目录（注册着的会先取消注册）。错误码：`slug-required` / `skill-forget-failed`。
+body: `{ slug }` → `{ slug, deleted, unregistered }`：删除技能目录（注册着的会先取消注册）。`slug` 也接受套件子技能的相对路径；删整个套件请用 `/skill-node` 的 `forget`（带 `expect`）。错误码：`slug-required` / `skill-forget-failed`。
 
 ### `POST /type`
 body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结果；mock 返回 501 unsupported
@@ -408,7 +421,7 @@ body: `{ messageId, sessionId?, outcome?, type?, note? }` → `{ id, intent, act
 
 ### 技能不写进 DSH skills 目录（边界）
 
-`<dataDir>/skills/<slug>/` 只归经验库自己管：**不**复制到 `$DSH_HOME/skills/`，也不交给宿主的技能管理插件当「已安装技能」。
+`<dataDir>/skills/<路径>/` 只归经验库自己管（顶层技能是 `<slug>/`，套件子技能是 `<套件>/<子技能>/`）：**不**复制到 `$DSH_HOME/skills/`，也不交给宿主的技能管理插件当「已安装技能」。
 召回时由 `exp_recall` 按需把技能正文作为结果返回——用到它的时候它才是技能，平时它只是经验库里的一份资产。
 因此没有 `POST /skill-install`（已下线），工具的 `exp_consolidate` / `exp_skill_attach` 也不再有 `install` 参数。缺 slug 的报错码 `slug-required` 现在只由 `/skill-feedback` 使用。
 

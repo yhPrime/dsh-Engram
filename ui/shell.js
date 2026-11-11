@@ -395,13 +395,19 @@ export async function buildImportSkill(source, body = {}, deps = {}) {
   const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
   const notes = Array.isArray(body.notes) ? body.notes.map(String) : []
   // 套件导入走 contents 数组（浏览器选文件夹/多选 SKILL.md）：字符串或 {text, suiteRoot, relPath} 都收。
-  const contents = Array.isArray(body.contents)
+  let contents = Array.isArray(body.contents)
     ? body.contents.filter((item) => {
       if (typeof item === 'string') return item.trim() !== ''
       if (item && typeof item === 'object') return String(item.text || item.content || '').trim() !== ''
       return false
     })
     : []
+  // 兼容客户端另一种写法：顶层给 suiteRoot/relPath + 单条 content。
+  const suiteRoot = String(body.suiteRoot || '').trim()
+  const relPath = String(body.relPath || '').trim()
+  if (contents.length === 0 && content.trim() !== '' && (suiteRoot !== '' || relPath !== '')) {
+    contents = [{ text: content, suiteRoot, relPath }]
+  }
   if (filePath === '' && content.trim() === '' && contents.length === 0) {
     throw codedError('source-required', '要么拖入/选择 SKILL.md，要么粘贴正文')
   }
