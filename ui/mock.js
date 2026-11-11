@@ -544,7 +544,7 @@ export function createMockSource() {
     },
     usageRows(limit) {
       const size = Math.max(1, Math.min(500, Math.trunc(Number(limit) || 100)))
-      return usage.slice(-size)
+      return usage.slice(-size).map((row) => ({ ...row, chars: Number(row.chars) || (row.tool === 'exp_recall' ? 1800 : 260) }))
     },
     skills() {
       return skills

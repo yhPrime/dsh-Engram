@@ -140,6 +140,13 @@ check('⑧ 没有相关经验时不许瞎推荐：明说「没有」', () => {
   assert.ok(recalled.weak === true || /没有(足够|相似度)/.test(note), `应标 weak 或明说没有相关，实际：weak=${recalled.weak} note=${note}`)
 })
 
+check('⑨ 完全无关且一条候选都没有：weak=true（终验发现）', () => {
+  const agent = newAgent()
+  const recalled = agent.recall('给花店写一份周末促销文案（朋友圈）')
+  assert.equal(recalled.weak, true)
+  assert.deepEqual(recalled.candidates, [])
+})
+
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

@@ -1502,7 +1502,8 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     return payload
   }
   if (experiences.length === 0) {
-    return attach({ intent, V: 0, neighbor_count: 0, mode: 'evidence', degenerate: true, note: '经验库没有可见条目。', candidates: [] })
+    // 空库同样算「没有足够相关」：调用方（界面/模型）靠 weak 判断要不要硬推候选。
+    return attach({ intent, V: 0, neighbor_count: 0, mode: 'evidence', degenerate: true, note: '经验库没有可见条目。', candidates: [], weak: true, topSimilarity: 0 })
   }
   const queryContext = normalizeContext(options.context)
   const k = Math.max(1, Math.trunc(Number(limit) || 8))
@@ -1661,9 +1662,10 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
 
   // 相关性下限（0.13.0）：用**实际展示的条**算（复核发现：用全量会把没展示的高分条算进来，weak 漏报）。
   // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
+  // 一条候选都没有时同样算「没有足够相关」（终验发现：空候选时 weak 是 undefined，调用方没法判）。
   const shownSimilarity = truncated.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
   const topSimilarity = shownSimilarity
-  weak = truncated.length > 0 && shownSimilarity < 0.4
+  weak = truncated.length === 0 || shownSimilarity < 0.4
   let note
   if (neighbors.length === 0) {
     note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
