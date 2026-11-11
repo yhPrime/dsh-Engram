@@ -299,7 +299,7 @@ export function createLiveSource(config = {}) {
           withChars += 1
         }
       }
-      return { calls: rows.length, chars, avgChars: withChars > 0 ? Math.round(chars / withChars) : 0, byTool }
+      return { calls: rows.length, chars, withChars, avgChars: withChars > 0 ? Math.round(chars / withChars) : 0, byTool }
     },
 
     feedback(id, result) {

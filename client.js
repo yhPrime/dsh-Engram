@@ -1609,7 +1609,8 @@ window.__ModuleLoader__.load({
         error ? h(Banner, { bad: true }, error) : null,
         h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
           h('div', { className: 'eng-detail-title' }, '经验库 token 账'),
-          h('div', { className: 'eng-muted' }, `最近 ${stat.calls} 次调用 · 回执合计 ${stat.chars} 字符 · 平均 ${stat.avgChars}/次`),
+          h('div', { className: 'eng-muted' }, `最近 ${stat.calls} 次调用 · 回执合计 ${stat.chars} 字符 · 平均 ${stat.avgChars}/次`
+            + (stat.calls > 0 && !stat.chars ? '（历史记录没有字符统计，0.13 起才有）' : '')),
           h('div', { className: 'eng-actions', style: { marginTop: 8 } },
             Object.entries(stat.byTool || {}).map(([tool, count]) => h(Badge, { key: tool, tone: 'muted' }, `${tool} ${count}`)))),
         h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
