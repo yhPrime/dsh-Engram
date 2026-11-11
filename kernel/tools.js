@@ -30,6 +30,7 @@ import {
 import { findRecordBinding, userMessageForRecord } from './session.js'
 import { measure, slimRecall, slimReceipt } from './token-budget.js'
 import { pendingBrief } from './brief.js'
+import { summarizeUserEdits } from './artifact-diff.js'
 import { routeCluster } from './cluster.js'
 import { resolveEngramDataDir } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId } from './skills.js'
@@ -51,6 +52,17 @@ export function buildTools(defineTool, config = {}) {
   const dataDirOf = () => resolveEngramDataDir(config)
   // 用法日志（零 token）：只回答「召回到底有没有被用起来」；config.usageLog=false 可关。
   const usageOptions = { enabled: config.usageLog !== false, maxBytes: config.usageLogMaxBytes }
+  // 手改摘要（P3）：有 artifacts 就对比「上次提交版 vs 用户版」，压成 ≤80 字放进 brief。
+  const pendingEdit = (item) => {
+    if (item === undefined || item === null || !Array.isArray(item.artifacts) || item.artifacts.length === 0) return ''
+    const cwd = String(item.cwd || config.cwd || '').trim()
+    if (cwd === '') return ''
+    try {
+      return summarizeUserEdits({ cwd, artifacts: item.artifacts }).summary
+    } catch {
+      return ''
+    }
+  }
   // 回填结果的回执：只报「成功几条 + 失败明细」，不把入参原样回显（省 token，模型知道自己传了什么）。
   const verdictSummary = (results) => {
     if (!Array.isArray(results) || results.length === 0) return undefined
@@ -187,7 +199,7 @@ export function buildTools(defineTool, config = {}) {
       const active = visibleExperiences(store)
       const pending = config.pendingReceipt === false
         ? []
-        : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item) }) }))
+        : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item), edit: pendingEdit(item) }) }))
       const receipt = slimReceipt({
         action: result.action,
         id: result.experience.id,
@@ -292,7 +304,7 @@ export function buildTools(defineTool, config = {}) {
       if (verdictResults.some((item) => item.ok) || pendingOut.rows.length > 0 || pendingOut.skipped.length > 0) writeStore(dataDir, store)
       const pending = config.pendingReceipt === false
         ? []
-        : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item) }) }))
+        : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item), edit: pendingEdit(item) }) }))
       // 技能命中时不再吞掉经验候选：技能给正文，经验给参考（并列返回），
       // 否则同一意图下刚写的经验会被技能模式完全遮住（验收时发现的读路径问题）。
       if (picked !== null) {
@@ -302,12 +314,14 @@ export function buildTools(defineTool, config = {}) {
         const candidates = args.detail === true || config.slimRecall === false
           ? (result.candidates || []).slice(0, recallLimit)
           : (slimRecall(result, { limit: 2, detail: false }).candidates || [])
-        // 技能命中不代表经验候选相关：候选最高相似度 <0.4 时同样标 weak，别让 note 反称「可参考」。
-        const maxSimilarity = candidates.reduce((max, candidate) => Math.max(
-          max,
-          ...(candidate.evidence || []).map((evidence) => Number(evidence.similarity) || 0),
-        ), 0)
+        // 技能命中不代表经验候选相关：与普通路径同口径，用候选的 mean_similarity（拿不到再退回证据相似度）。
+        const similarityOf = (candidate) => (Number.isFinite(Number(candidate.mean_similarity))
+          ? Number(candidate.mean_similarity)
+          : Math.max(0, ...(candidate.evidence || []).map((evidence) => Number(evidence.similarity) || 0)))
+        const maxSimilarity = candidates.reduce((max, candidate) => Math.max(max, similarityOf(candidate)), 0)
         const weakCandidates = candidates.length > 0 && maxSimilarity < 0.4
+        const relevanceGeneral = !weakCandidates && candidates.length > 0 && maxSimilarity < 0.5
+        const similarityText = String(Math.round(maxSimilarity * 10000) / 10000)
         const skillPayload = {
           mode,
           intent: String(args.intent || ''),
@@ -337,11 +351,14 @@ export function buildTools(defineTool, config = {}) {
           pendingSkills: pendingSkills,
           pending: pending.length > 0 ? pending : undefined,
           verdicts: verdictSummary(verdictResults),
-          ...(weakCandidates ? { weak: true, topSimilarity: Math.round(maxSimilarity * 10000) / 10000 } : {}),
+          ...(weakCandidates ? { weak: true } : {}),
+          ...(weakCandidates || relevanceGeneral ? { topSimilarity: Math.round(maxSimilarity * 10000) / 10000 } : {}),
           note: (picked.trial
             ? '试用技能（未养熟）：先看 matchedTerms 是否相关，无关就换 intent 重试；相关则照做，用完 exp_feedback 回填。'
             : '高确定技能：先看 matchedTerms，无关就是错配，换 intent 重试；成功用 exp_feedback 回填，遇阻记 skillId+blockedBy。')
-            + (weakCandidates ? ' 经验候选都不够相关（最高相似度低），别当参考。' : (candidates.length > 0 ? ' 下方候选可参考。' : '')),
+            + (weakCandidates
+              ? ' 经验候选都不够相关（最高相似度低），别当参考。'
+              : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : ''))),
         }
         logUsage(dataDir, {
           tool: 'exp_recall',

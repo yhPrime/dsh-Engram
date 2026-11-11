@@ -30,7 +30,7 @@ async function check(name, fn) {
   }
 }
 
-const ALLOWED_CORE = new Set(['kernel.js', 'retrieval.js', 'cluster.js', 'store.js', 'skills.js', 'tools.js', 'settings.js', 'brief.js', 'session.js', 'token-budget.js'])
+const ALLOWED_CORE = new Set(['kernel.js', 'retrieval.js', 'cluster.js', 'store.js', 'skills.js', 'tools.js', 'settings.js', 'brief.js', 'session.js', 'token-budget.js', 'ooxml.js', 'artifact-diff.js'])
 const FORBIDDEN_IMPORTS = ['@deepseek-ai/', './provider', './plugin', './index']
 
 function importsOf(file) {

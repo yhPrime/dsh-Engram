@@ -26,7 +26,7 @@ const devRoot = path.dirname(here)
 const releaseRoot = path.resolve(process.argv[2] || path.join(devRoot, '..', 'dsh-Engram'))
 
 const ROOT_FILES = ['index.js', 'plugin.js', 'client.js', 'cordis.patch.yml', 'icon.svg']
-const KERNEL_FILES = ['index.js', 'plugin.js', 'core.js', 'engine.js', 'settings.js', 'store.js', 'kernel.js', 'retrieval.js', 'cluster.js', 'skills.js', 'import-skill.js', 'tools.js', 'git-sync.js', 'github.js', 'github-device.js', 'github-transport.js', 'chat-save.js', 'brief.js', 'session.js', 'token-budget.js']
+const KERNEL_FILES = ['index.js', 'plugin.js', 'core.js', 'engine.js', 'settings.js', 'store.js', 'kernel.js', 'retrieval.js', 'cluster.js', 'skills.js', 'import-skill.js', 'tools.js', 'git-sync.js', 'github.js', 'github-device.js', 'github-transport.js', 'chat-save.js', 'brief.js', 'session.js', 'token-budget.js', 'ooxml.js', 'artifact-diff.js']
 const UI_FILES = ['shell.js', 'live.js', 'mock.js', 'data-source.js', 'icons-gallery.js']
 
 function copyFile(from, to) {

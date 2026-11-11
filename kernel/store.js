@@ -1676,7 +1676,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   }
   // 0.40–0.50 是「沾边但换主题」的地带：不判 weak（候选仍可用），但必须明说相关度一般，别照抄。
   if (!weak && shownSimilarity >= 0.4 && shownSimilarity < 0.5) {
-    note += '（相关度一般，参考而非照抄。）'
+    note += `（相关度一般 ${round4(shownSimilarity)}，参考而非照抄。）`
   }
   // 全族都是负回报时，排序仍会给出一个「最不坏」的——必须明说别照做，否则模型会把失败做法当推荐。
   const allNegative = candidates.length > 0 && candidates.every((item) => item.evidence.every((evidence) => (Number(evidence.G) || 0) < 0))
