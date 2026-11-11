@@ -258,14 +258,19 @@ export function buildTools(defineTool, config = {}) {
             files: (hit.skill.meta.files || []).map((item) => item.path),
             confidence: { ...hit.skill.meta.confidence, reason: confidenceReason(hit.skill.meta) },
             score: Math.round(hit.score * 1000) / 1000,
+            // 自查依据：命中词。任务里明显无关却命中的技能，按错配处理。
+            match: {
+              matchedTerms: Array.isArray(hit.matchedTerms) ? hit.matchedTerms : [],
+              selfCheck: '先看 matchedTerms 与当前任务是否真的相关；明显无关说明这次是错配，换更具体的 intent 重试（例如把「页面动画」换成「CSS 过渡/帧预算/缓动曲线」），不要硬套这个技能。',
+            },
           },
           candidates,
           brief: result.brief,
           route: result.route,
           pendingSkills,
           note: picked.trial
-            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：可以按它做，但先自行核对；用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后自动升级为高确定技能。下面的 candidates 是同类经验，可当参考。`
-            : `高确定技能：直接用，下面的 candidates 是同类经验（可参考、不必再排一遍）。成功用 exp_feedback("skill:${hit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
+            ? `试用技能（还没养熟，${confidenceReason(hit.skill.meta)}）：先看 skill.match.matchedTerms 是否与任务真的相关，明显无关就换 intent 重试；相关再按它做，用完用 exp_feedback("skill:${hit.skill.slug}", "helped"/"hurt") 回填，累计 3 次且比例 ≥0.8 后自动升级为高确定技能。下面的 candidates 是同类经验，可当参考。`
+            : `高确定技能：直接用；但先扫一眼 skill.match.matchedTerms，跟当前任务明显无关就是错配，换更具体的 intent 重试。下面的 candidates 是同类经验（可参考、不必再排一遍）。成功用 exp_feedback("skill:${hit.skill.slug}", "helped") 回填；遇阻用 exp_record 带 skillId 与 blockedBy 记一条。`,
         }
       }      // 归纳提示（实验，2026-11-07）：同族样本够多时给一段原料让模型自己归纳；config.induction=false 可关。
       if (config.induction !== false) {

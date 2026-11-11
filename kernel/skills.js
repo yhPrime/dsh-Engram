@@ -48,15 +48,56 @@ export function assertSafeSlug(value) {
   return slug
 }
 
-/** 在 skillsRoot 内解析技能目录；越界或符号链接直接拒绝。 */
-export function skillDirOf(dataDir, slug) {
-  const safe = assertSafeSlug(slug)
-  const root = path.resolve(skillsRootOf(dataDir))
-  const dir = path.resolve(root, safe)
-  const rel = path.relative(root, dir)
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`技能路径越界：${slug}`)
+const RESERVED_SEGMENT = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
+const ILLEGAL_SEGMENT = /[<>:"/\\|?*\u0000-\u001f]/
+
+/**
+ * 套件树里的一个路径段。
+ *
+ * 新建技能仍走 `assertSafeSlug`（严格小写短横线）；套件里的子目录要保住来源原名，
+ * 所以这里放宽到「文件系统安全」：允许中文、空格、点、下划线，但拒绝穿越、
+ * 非法字符、尾点/尾空格与 Windows 保留名。名字只在 skillsRoot 内解析，不拼绝对路径。
+ */
+export function assertSafePathSegment(value) {
+  const name = String(value || '')
+  if (name === '' || name === '.' || name === '..') throw new Error(`技能路径段非法：${name}`)
+  if (name.length > 100) throw new Error(`技能路径段超过 100 字符：${name}`)
+  if (ILLEGAL_SEGMENT.test(name)) throw new Error(`技能路径段含非法字符：${name}`)
+  if (/[. ]$/.test(name)) throw new Error(`技能路径段不能以点或空格结尾：${name}`)
+  if (RESERVED_SEGMENT.test(name)) throw new Error(`技能路径段不能是 Windows 保留名：${name}`)
+  return name
+}
+
+/** 技能 id：相对 skillsRoot 的 POSIX 路径（`套件/子技能`），逐段校验。 */
+export function assertSafeRelPath(value) {
+  const raw = String(value || '')
+  if (raw === '' || raw.length > 512) throw new Error('技能 id 为空或过长')
+  if (raw.startsWith('/') || raw.endsWith('/') || raw.includes('\\')) throw new Error(`技能 id 非法：${raw}`)
+  const parts = raw.split('/')
+  if (parts.some((part) => part === '' || part === '.' || part === '..')) throw new Error(`技能 id 含空段或穿越：${raw}`)
+  for (const part of parts) assertSafePathSegment(part)
+  return parts.join('/')
+}
+
+/** 目录是不是链接（symlink 或 Windows junction）。junction 的 lstat 不报 symlink，要读 readlink。 */
+export function pathIsLink(target) {
   try {
-    if (fs.lstatSync(dir).isSymbolicLink()) throw new Error(`技能目录不能是符号链接：${slug}`)
+    if (fs.lstatSync(target).isSymbolicLink()) return true
+    return fs.readlinkSync(target) !== ''
+  } catch {
+    return false
+  }
+}
+
+/** 在 skillsRoot 内解析技能目录；越界或链接直接拒绝。 */
+export function skillDirOf(dataDir, id) {
+  const safe = assertSafeRelPath(id)
+  const root = path.resolve(skillsRootOf(dataDir))
+  const dir = path.resolve(root, ...safe.split('/'))
+  const rel = path.relative(root, dir)
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`技能路径越界：${safe}`)
+  try {
+    if (pathIsLink(dir)) throw new Error(`技能目录不能是链接：${safe}`)
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
   }
@@ -67,7 +108,7 @@ export function skillDirOf(dataDir, slug) {
     const dirReal = realpath(dir)
     const realRel = path.relative(rootReal, dirReal)
     if (realRel === '' || realRel.startsWith('..') || path.isAbsolute(realRel)) {
-      throw new Error(`技能目录越界（realpath）：${slug}`)
+      throw new Error(`技能目录越界（realpath）：${safe}`)
     }
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
@@ -173,7 +214,7 @@ function renderSkillMd(name, description, body) {
   return `---\nname: ${oneLine(name)}\ndescription: ${oneLine(description)}\n---\n\n${String(body || '').trim()}\n`
 }
 
-function defaultMeta(id) {
+export function defaultMeta(id) {
   return {
     id,
     typeName: '',
@@ -275,22 +316,33 @@ export function deriveSkillDraft(candidates, options = {}) {
   }
 }
 
-/** 读一个技能目录；缺 SKILL.md 返回 null，损坏的 skill.json 用默认值兜底。 */
-export function readSkill(dir) {
+/**
+ * 读一个技能目录；缺 SKILL.md 返回 null，损坏的 skill.json 用默认值兜底。
+ * id 是相对 skillsRoot 的 POSIX 路径（顶层技能 = 目录名）；不传时退回目录名。
+ */
+export function readSkill(dir, id = path.basename(dir)) {
   try {
-    if (fs.lstatSync(dir).isSymbolicLink()) return null
+    if (pathIsLink(dir)) return null
   } catch {
     return null
   }
   const skillFile = path.join(dir, SKILL_FILENAME)
   if (!fs.existsSync(skillFile)) return null
   const { fields, body } = parseFrontmatter(fs.readFileSync(skillFile, 'utf8'))
-  const slug = path.basename(dir)
-  const meta = normalizeMeta(readJsonFile(path.join(dir, META_FILENAME)), slug)
+  let rel = String(id || path.basename(dir)).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  if (rel === '') rel = path.basename(dir)
+  const meta = normalizeMeta(readJsonFile(path.join(dir, META_FILENAME)), rel)
+  // 磁盘路径是唯一事实源：账本里的旧 id 不拦路，读出来按当前位置纠正（写回发生在下次落盘）。
+  meta.id = rel
+  const parts = rel.split('/')
   return {
-    slug,
+    id: rel,
+    slug: rel,
+    path: rel,
+    parentPath: parts.length > 1 ? parts.slice(0, -1).join('/') : '',
+    depth: parts.length - 1,
     dir,
-    name: fields.name && fields.name !== '' ? fields.name : slug,
+    name: fields.name && fields.name !== '' ? fields.name : parts[parts.length - 1],
     description: fields.description || '',
     body,
     meta,
@@ -299,14 +351,24 @@ export function readSkill(dir) {
 
 export function readSkillBySlug(dataDir, slug) {
   try {
-    return readSkill(skillDirOf(dataDir, slug))
+    const id = assertSafeRelPath(slug)
+    return readSkill(skillDirOf(dataDir, id), id)
   } catch {
     return null
   }
 }
 
+// 技能包里的这些目录不会放技能；跳过可避免为了找子技能去遍历上万个附件文件。
+export const SKILL_SCAN_SKIP_DIRS = new Set([
+  'node_modules', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'dist', 'build',
+  'scripts', 'references', 'templates', 'assets', 'images', 'image', 'data', 'examples',
+])
+
 /**
- * 列出技能。
+ * 列出技能（递归）。
+ *
+ * 技能套件在磁盘上就是目录树：任何含 SKILL.md 的目录都是技能，中间目录只是收纳。
+ * 所以这里递归扫描，子技能 id 是相对 skillsRoot 的路径（`套件/子技能`）。
  * options.onlyLocal=true 时不返回「已全局注册」的技能——它们已经交给 DSH 当真实技能用，
  * 经验库不再参与排序/召回，避免两个引擎同时抢着用它。
  */
@@ -315,20 +377,41 @@ export function listSkills(dataDir, options = {}) {
   const root = skillsRootOf(dataDir)
   if (!fs.existsSync(root)) return []
   const skills = []
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue
-    let dir
+  const visited = new Set()
+  const walk = (dir, rel, depth) => {
+    if (depth > 12) return
+    let real = ''
     try {
-      dir = skillDirOf(dataDir, entry.name)
+      real = fs.realpathSync(dir)
     } catch {
-      continue
+      return
     }
-    const skill = readSkill(dir)
-    if (skill === null) continue
-    if (onlyLocal && globalRegistrationOf(skill) !== null) continue
-    skills.push(skill)
+    if (visited.has(real)) return
+    visited.add(real)
+    let entries = []
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (entry.name.startsWith('.')) continue
+      if (SKILL_SCAN_SKIP_DIRS.has(entry.name)) continue
+      const childRel = rel === '' ? entry.name : `${rel}/${entry.name}`
+      let childDir
+      try {
+        childDir = skillDirOf(dataDir, childRel)
+      } catch {
+        continue
+      }
+      const skill = readSkill(childDir, childRel)
+      if (skill !== null && (!onlyLocal || globalRegistrationOf(skill) === null)) skills.push(skill)
+      walk(childDir, childRel, depth + 1)
+    }
   }
-  return skills.sort((left, right) => (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0))
+  walk(path.resolve(root), '', 0)
+  return skills.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
 }
 
 /** 写技能目录（SKILL.md + skill.json）。 */
@@ -455,9 +538,12 @@ export function globalRegistrationOf(skill) {
 export function registerSkillGlobally(dataDir, slug, options = {}) {
   const skill = readSkillBySlug(dataDir, slug)
   if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  const id = skill.id
+  // 链接目标用叶子名：套件里的子技能也要能在 DSH 的 skills/ 下被单独加载。
+  const leaf = id.split('/').pop()
   const root = path.resolve(options.root || dshGlobalSkillsRoot())
   fs.mkdirSync(root, { recursive: true })
-  const target = path.join(root, skill.slug)
+  const target = path.join(root, leaf)
   let mode = 'junction'
   let link = null
   try {
@@ -480,12 +566,12 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
   }
   skill.meta.globalRegistered = { path: target, at: new Date().toISOString(), mode }
   writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${slug}): register globally`)
+  const committed = commitSkills(dataDir, `skill(${id}): register globally`)
   if (!committed) {
     skill.meta.pendingCommit = true
     writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
   }
-  return { slug, targetDir: target, mode, registered: true }
+  return { slug: id, id, leaf, targetDir: target, mode, registered: true }
 }
 
 /**
@@ -495,9 +581,11 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
 export function unregisterSkillFromDsh(dataDir, slug) {
   const skill = readSkillBySlug(dataDir, slug)
   if (skill === null) throw new Error(`没有这个技能：${slug}`)
+  const id = skill.id
+  const leaf = id.split('/').pop()
   const registered = globalRegistrationOf(skill)
-  const target = registered !== null ? registered.path : path.join(dshGlobalSkillsRoot(), skill.slug)
-  const expected = path.join(path.dirname(target), skill.slug)
+  const target = registered !== null ? registered.path : path.join(dshGlobalSkillsRoot(), leaf)
+  const expected = path.join(path.dirname(target), leaf)
   let removed = false
   if (path.resolve(target) === path.resolve(expected)) {
     let isLink = false
@@ -532,12 +620,12 @@ export function unregisterSkillFromDsh(dataDir, slug) {
   }
   delete skill.meta.globalRegistered
   writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${slug}): unregister globally`)
+  const committed = commitSkills(dataDir, `skill(${id}): unregister globally`)
   if (!committed) {
     skill.meta.pendingCommit = true
     writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
   }
-  return { slug, targetDir: target, removed, registered: false }
+  return { slug: id, id, leaf, targetDir: target, removed, registered: false }
 }
 
 /**
@@ -580,9 +668,202 @@ export function forgetSkill(dataDir, slug) {
       unregistered = false
     }
   }
+  if (pathIsLink(skill.dir)) throw new Error(`拒绝删除链接：${slug}`)
   fs.rmSync(skill.dir, { recursive: true, force: true })
-  const committed = commitSkills(dataDir, `skill(${slug}): forget`)
-  return { slug, deleted: true, unregistered, commit: committed }
+  const committed = commitSkills(dataDir, `skill(${skill.id}): forget`)
+  return { slug: skill.id, id: skill.id, deleted: true, unregistered, commit: committed }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 套件树（磁盘即结构）                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 由技能列表构建目录树。
+ * 含 SKILL.md 的目录是技能节点（kind=skill）；只为收纳存在的中间目录是组节点（kind=group）。
+ * skillCount / registeredCount 按子树累计。
+ */
+export function buildSkillTree(skills) {
+  const input = Array.isArray(skills) ? skills : []
+  const nodes = new Map()
+  const roots = []
+  const ensure = (id) => {
+    const existing = nodes.get(id)
+    if (existing) return existing
+    const parts = id.split('/')
+    const node = {
+      path: id,
+      name: parts[parts.length - 1],
+      kind: 'group',
+      depth: parts.length - 1,
+      skillCount: 0,
+      registeredCount: 0,
+      skill: null,
+      children: [],
+    }
+    nodes.set(id, node)
+    if (parts.length === 1) roots.push(node)
+    else ensure(parts.slice(0, -1).join('/')).children.push(node)
+    return node
+  }
+  for (const skill of input) {
+    if (!skill || typeof skill.id !== 'string' || skill.id === '') continue
+    const node = ensure(skill.id)
+    node.kind = 'skill'
+    node.name = skill.name || node.name
+    node.skill = skill
+  }
+  const count = (node) => {
+    let total = node.kind === 'skill' ? 1 : 0
+    // 内核技能对象带 meta.globalRegistered 记录；界面行只有 globalRegistered 布尔，两种都认。
+    let registered = node.skill
+      ? (node.skill.globalRegistered === true || globalRegistrationOf(node.skill) !== null ? 1 : 0)
+      : 0
+    for (const child of node.children) {
+      const sub = count(child)
+      total += sub.total
+      registered += sub.registered
+    }
+    node.skillCount = total
+    node.registeredCount = registered
+    node.childCount = Math.max(0, total - (node.kind === 'skill' ? 1 : 0))
+    node.children.sort((left, right) => left.name.localeCompare(right.name, 'zh'))
+    return { total, registered }
+  }
+  for (const root of roots) count(root)
+  roots.sort((left, right) => left.name.localeCompare(right.name, 'zh'))
+  return roots
+}
+
+/** 某个节点下的所有技能（含自身）。组节点就是整棵子树。 */
+export function subtreeSkills(skills, nodePath) {
+  const id = assertSafeRelPath(nodePath)
+  const list = Array.isArray(skills) ? skills : []
+  return list.filter((skill) => skill.id === id || skill.id.startsWith(`${id}/`))
+}
+
+/** 在树里按路径找节点；找不到返回 null。 */
+export function findSkillTreeNode(tree, nodePath) {
+  const id = assertSafeRelPath(nodePath)
+  const stack = Array.isArray(tree) ? [...tree] : []
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (node.path === id) return node
+    if (Array.isArray(node.children) && node.children.length > 0) stack.push(...node.children)
+  }
+  return null
+}
+
+function assertNodeExists(dataDir, nodePath) {
+  const id = assertSafeRelPath(nodePath)
+  const skills = listSkills(dataDir)
+  const members = subtreeSkills(skills, id)
+  if (members.length === 0) throw new Error(`没有这个节点：${id}`)
+  return { id, skills, members }
+}
+
+/** 子树注册到全局：逐项执行，单项失败不中断。 */
+export function registerSkillTree(dataDir, nodePath, options = {}) {
+  const { id, members } = assertNodeExists(dataDir, nodePath)
+  const results = []
+  const failed = []
+  for (const skill of members) {
+    try {
+      results.push(registerSkillGlobally(dataDir, skill.id, options))
+    } catch (error) {
+      failed.push({ path: skill.id, message: error && error.message ? error.message : String(error) })
+    }
+  }
+  return { action: 'register', path: id, total: members.length, ok: results.length, failed, results }
+}
+
+/** 子树取消注册：逐项执行，单项失败不中断。 */
+export function unregisterSkillTree(dataDir, nodePath) {
+  const { id, members } = assertNodeExists(dataDir, nodePath)
+  const results = []
+  const failed = []
+  for (const skill of members) {
+    if (globalRegistrationOf(skill) === null) continue
+    try {
+      results.push(unregisterSkillFromDsh(dataDir, skill.id))
+    } catch (error) {
+      failed.push({ path: skill.id, message: error && error.message ? error.message : String(error) })
+    }
+  }
+  return { action: 'unregister', path: id, total: members.length, ok: results.length, failed, results }
+}
+
+/**
+ * 子树删除：先按 expect 校验数量（防 UI 过期），再逐个取消注册，最后删节点目录。
+ * 节点目录必须是普通目录；链接一律拒绝（删链接会连带删目标，11-10 踩过）。
+ */
+export function forgetSkillTree(dataDir, nodePath, options = {}) {
+  const { id, members } = assertNodeExists(dataDir, nodePath)
+  const expect = Number(options.expect)
+  if (!Number.isFinite(expect)) throw new Error('删除节点必须带 expect（子树技能数）')
+  if (expect !== members.length) throw new Error(`数量不匹配：预期 ${expect}，实际 ${members.length}（列表可能已过期，刷新后再试）`)
+  const unregistered = []
+  const failed = []
+  for (const skill of members) {
+    if (globalRegistrationOf(skill) === null) continue
+    try {
+      if (unregisterSkillFromDsh(dataDir, skill.id).removed) unregistered.push(skill.id)
+    } catch (error) {
+      failed.push({ path: skill.id, message: error && error.message ? error.message : String(error) })
+    }
+  }
+  if (failed.length > 0) {
+    // 还有注册没摘干净就删目录会留悬空链接：整单拒绝，让用户重试。
+    throw new Error(`有 ${failed.length} 个技能取消注册失败，已停止删除：${failed.map((item) => item.path).join('、')}`)
+  }
+  const dir = skillDirOf(dataDir, id)
+  if (!fs.existsSync(dir)) throw new Error(`没有这个节点目录：${id}`)
+  if (pathIsLink(dir)) throw new Error(`拒绝删除链接：${id}`)
+  fs.rmSync(dir, { recursive: true, force: true })
+  const committed = commitSkills(dataDir, `skill(${id}): forget subtree (${members.length})`)
+  return { action: 'forget', path: id, deleted: true, total: members.length, unregistered, failed, commit: committed }
+}
+
+/** 按磁盘现状重写所有技能的 skill.json.id（移动目录后调用）。 */
+export function rewriteSkillIds(dataDir) {
+  let changed = 0
+  for (const skill of listSkills(dataDir)) {
+    const metaPath = path.join(skill.dir, META_FILENAME)
+    if (!fs.existsSync(metaPath)) continue
+    const raw = readJsonFile(metaPath)
+    if (raw === null || typeof raw !== 'object') continue
+    if (raw.id === skill.id) continue
+    raw.id = skill.id
+    writeJsonFile(metaPath, raw)
+    changed += 1
+  }
+  return changed
+}
+
+/** 把子技能移出套件（移到顶层）。顶层重名直接拒绝，不覆盖。 */
+export function moveSkillToTop(dataDir, nodePath) {
+  const id = assertSafeRelPath(nodePath)
+  const skill = readSkillBySlug(dataDir, id)
+  if (skill === null) throw new Error(`没有这个技能：${id}（组节点不能移出）`)
+  const parts = id.split('/')
+  if (parts.length < 2) return { action: 'detach', path: id, moved: false, to: id }
+  const leaf = parts[parts.length - 1]
+  const target = skillDirOf(dataDir, leaf)
+  if (fs.existsSync(target)) throw new Error(`顶层已有同名技能：${leaf}（先改名或移走）`)
+  fs.renameSync(skill.dir, target)
+  rewriteSkillIds(dataDir)
+  const committed = commitSkills(dataDir, `skill(${id}): detach to top`)
+  return { action: 'detach', path: id, moved: true, to: leaf, commit: committed }
+}
+
+/** 通用节点动作入口（shell 只调这一个）。 */
+export function applySkillNodeAction(dataDir, action, nodePath, options = {}) {
+  const name = String(action || '').trim().toLowerCase()
+  if (name === 'register') return registerSkillTree(dataDir, nodePath, options)
+  if (name === 'unregister') return unregisterSkillTree(dataDir, nodePath)
+  if (name === 'forget') return forgetSkillTree(dataDir, nodePath, options)
+  if (name === 'detach') return moveSkillToTop(dataDir, nodePath)
+  throw new Error(`不认识的节点动作：${action}`)
 }
 
 function copyTree(fromDir, toDir) {
@@ -647,7 +928,9 @@ function skillWarningFor(skill, intent) {
 function withSkillLock(dataDir, slug, fn, options = {}) {
   const lockDir = path.join(String(dataDir || ''), '.locks')
   fs.mkdirSync(lockDir, { recursive: true })
-  const lockFile = path.join(lockDir, `${slug}.lock`)
+  // 套件子技能的 id 带 `/`，不能直接当文件名：压成单段，避免把锁写到不存在的子目录。
+  const lockName = String(slug || '').replace(/[^\w.\u4e00-\u9fa5-]+/gu, '_').slice(0, 120) || 'skill'
+  const lockFile = path.join(lockDir, `${lockName}.lock`)
   const timeoutMs = Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 2000
   const staleMs = Number.isFinite(Number(options.staleMs)) ? Number(options.staleMs) : 5000
   const deadline = Date.now() + timeoutMs
@@ -733,11 +1016,11 @@ function mergeSkillBodies(existingBody, draftBody) {
   return `${merged.trim()}\n`
 }
 
-/** 创建/更新技能（带锁）：同一 slug 的读-改-写串行。 */
+/** 创建/更新技能（带锁）：同一 id 的读-改-写串行。id 可以是套件里的相对路径。 */
 export function createSkill(dataDir, draft) {
-  const slug = assertSafeSlug(draft.slug || slugify(draft.name))
-  const locked = withSkillLock(dataDir, slug, () => createSkillUnlocked(dataDir, draft))
-  if (locked.busy === true) throw new Error(`技能正在被另一个进程写入：${slug}`)
+  const id = assertSafeRelPath(draft.id || draft.slug || slugify(draft.name))
+  const locked = withSkillLock(dataDir, id, () => createSkillUnlocked(dataDir, { ...draft, id }))
+  if (locked.busy === true) throw new Error(`技能正在被另一个进程写入：${id}`)
   return locked.value
 }
 
@@ -753,12 +1036,12 @@ function persistSkill(dataDir, dir, draft, meta, message) {
 }
 
 function createSkillUnlocked(dataDir, draft) {
-  const root = skillsRootOf(dataDir)
-  const slug = assertSafeSlug(draft.slug || slugify(draft.name))
-  const dir = skillDirOf(dataDir, slug)
-  const existing = readSkill(dir)
+  const id = assertSafeRelPath(draft.id || draft.slug || slugify(draft.name))
+  const dir = skillDirOf(dataDir, id)
+  const existing = readSkill(dir, id)
   const action = existing === null ? 'created' : 'updated'
-  const meta = existing === null ? defaultMeta(slug) : existing.meta
+  const meta = existing === null ? defaultMeta(id) : existing.meta
+  meta.id = id
   meta.typeName = draft.typeName || meta.typeName || ''
   if (Array.isArray(draft.typeNames)) meta.typeNames = draft.typeNames.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 12)
   if (Array.isArray(draft.notes)) meta.notes = draft.notes.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 50)
@@ -774,14 +1057,14 @@ function createSkillUnlocked(dataDir, draft) {
     ? (existing !== null ? mergeSkillBodies(existing.body, draft.body) : draft.body.trim())
     : (existing !== null ? existing.body : defaultBody(draft))
   const message = action === 'created'
-    ? `skill: ${slug} — 创建（源自 ${meta.derivedFrom.length} 条经验）`
-    : `skill: ${slug} — 更新定义`
+    ? `skill: ${id} — 创建（源自 ${meta.derivedFrom.length} 条经验）`
+    : `skill: ${id} — 更新定义`
   const committed = persistSkill(dataDir, dir, {
-    name: draft.name || (existing !== null ? existing.name : slug),
+    name: draft.name || (existing !== null ? existing.name : id),
     description: draft.description || (existing !== null ? existing.description : ''),
     body,
   }, meta, message)
-  return { action, slug, dir, commit: committed }
+  return { action, slug: id, id, dir, commit: committed }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -924,7 +1207,7 @@ export function matchSkill(skills, intent, options = {}) {
     //    这样「编程板」「研学」这类开头就点题的技能不会被长描述或套件入口挤掉。
     // 另按描述长度做 specificity：超长描述（套件总入口 600+ 字）命中一切，需要压一档。
     const specificity = Math.min(1, 500 / Math.max(200, text.length))
-    const similarity = jaccardScore + coverage * (0.2 + jaccardScore) * specificity + 0.25 * headCoverage
+    const similarity = jaccardScore + coverage * (0.2 + jaccardScore) * specificity + 0.25 * headCoverage 
     if (similarity < (Number(options.minSimilarity) || MATCH_MIN_SIMILARITY)) continue
     let contextScore = 0
     if (queryContext.length > 0) {
@@ -940,7 +1223,10 @@ export function matchSkill(skills, intent, options = {}) {
     // 一有反馈（uses>0）就回落，排序随实际使用回归正常。
     const freshBoost = (Number((skill.meta.confidence || {}).uses) || 0) === 0 ? 0.06 : 0
     const score = similarity + contextScore * 0.1 + freshBoost
-    candidates.push({ skill, score, size: text.length })
+    // 命中词：把「query 的哪些词在这个技能里找到了」一起带出去，
+    // 让模型能自查相关性（命中词跟任务明显无关 = 错配，应该换 intent 重试）。
+    const matchedTerms = units.filter((unit) => text.includes(unit)).slice(0, 8)
+    candidates.push({ skill, score, size: text.length, matchedTerms })
   }
   if (candidates.length === 0) return null
   candidates.sort((left, right) => right.score - left.score)
@@ -1089,7 +1375,7 @@ function applySkillObstacleUnlocked(dataDir, slug, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const skill = readSkill(dir)
+  const skill = readSkill(dir, slug)
   if (skill === null) return { action: 'missing', slug }
   const signature = normalizeSignature(options.signature || options.blockedBy || 'obstacle')
   const label = options.label || summarizeSignature(options.signature || options.blockedBy || signature)
@@ -1108,7 +1394,7 @@ export function applySkillObstacle(dataDir, slug, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const locked = withSkillLock(dataDir, assertSafeSlug(String(slug)), () => applySkillObstacleUnlocked(dataDir, slug, options), options)
+  const locked = withSkillLock(dataDir, assertSafeRelPath(String(slug)), () => applySkillObstacleUnlocked(dataDir, slug, options), options)
   return locked.busy === true ? { action: 'busy', slug } : locked.value
 }
 
@@ -1120,7 +1406,7 @@ function applySkillOutcomeUnlocked(dataDir, slug, result, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const skill = readSkill(dir)
+  const skill = readSkill(dir, slug)
   if (skill === null) return { action: 'missing', slug }
   const now = new Date().toISOString()
   const confidence = skill.meta.confidence
@@ -1147,6 +1433,6 @@ export function applySkillOutcome(dataDir, slug, result, options = {}) {
   } catch {
     return { action: 'invalid', slug }
   }
-  const locked = withSkillLock(dataDir, assertSafeSlug(String(slug)), () => applySkillOutcomeUnlocked(dataDir, slug, result, options), options)
+  const locked = withSkillLock(dataDir, assertSafeRelPath(String(slug)), () => applySkillOutcomeUnlocked(dataDir, slug, result, options), options)
   return locked.busy === true ? { action: 'busy', slug } : locked.value
 }

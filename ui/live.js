@@ -159,7 +159,10 @@ function skillRowFromEngine(skill) {
     // 文件被移走：updatedAt 留空
   }
   return skillRowOf({
-    id: skill.slug,
+    id: skill.id,
+    path: skill.id,
+    depth: skill.depth,
+    parentPath: skill.parentPath,
     name: skill.name,
     description: skill.description,
     body: skill.body,
@@ -186,7 +189,7 @@ function skillRowFromEngine(skill) {
     globalPath: meta.globalRegistered && meta.globalRegistered.path ? String(meta.globalRegistered.path) : '',
     lastUsedAt: confidence.lastUsedAt || '',
     updatedAt,
-    path: skill.dir,
+    dir: skill.dir,
   })
 }
 

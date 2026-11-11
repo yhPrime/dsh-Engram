@@ -18,7 +18,7 @@ import path from 'node:path'
 
 import { createHash } from 'node:crypto'
 
-import { commitSkills, createSkill, skillDirOf } from './skills.js'
+import { assertSafePathSegment, assertSafeRelPath, commitSkills, createSkill, defaultMeta, listSkills, META_FILENAME, readSkill, skillDirOf, SKILL_SCAN_SKIP_DIRS, slugify, writeFileAtomic } from './skills.js'
 
 /** 单次导入的正文上限：技能是给人读的，超过这个大小说明导错了东西。 */
 export const MAX_IMPORT_BYTES = 512 * 1024
@@ -37,8 +37,8 @@ export const SESSION_MAX_TOKENS = 400
 export const CLASSIFY_SYSTEM = [
   '你是一个技能归档器。读用户给的技能文本，判断它属于哪个已有类型、打哪些标签、以及排序分。',
   '只输出一个 JSON 对象，不要任何解释、不要代码块。',
-  '字段：category（必须是给定类型列表里的一个；都不合适就给空字符串）、tags（3–6 个中文或英文短词）、order（0–100 的整数，越通用越常用越高）。',
-  '例：{"category":"代码 / 插件","tags":["dsh 插件","提交 PR"],"order":60}',
+  '字段：category（必须是给定类型列表里的一个；都不合适就给空字符串）、tags（3–6 个中文或英文短词）、order（0–100 的整数，越通用越常用越高）、summaryZh（用一句中文说清这个技能处理什么任务，12–40 字；技能原文是英文时也必须给）。',
+  '例：{"category":"代码 / 插件","tags":["dsh 插件","提交 PR"],"order":60,"summaryZh":"给 DSH 写插件并提交 PR 的完整流程"}',
 ].join('\n')
 
 const TAG_STOPWORDS = new Set([
@@ -58,6 +58,16 @@ function normalizeNewlines(text) {
  * 解析 SKILL.md：拆出 frontmatter 的 name / description 与正文。
  * 没有 frontmatter 时整篇当正文，名字留给调用方兜底。
  */
+/** 标签 = 分类器给的 tags + 中文摘要：两者都当检索关键词用，去重并限制条数。 */
+function skillTagsOf(decided) {
+  const tags = Array.isArray(decided && decided.tags) ? decided.tags : []
+  const summary = String((decided && decided.summaryZh) || '').trim()
+  const merged = [...tags.map(String), ...(summary === '' ? [] : [summary])]
+    .map((item) => item.trim())
+    .filter((item) => item !== '')
+  return [...new Set(merged)].slice(0, 12)
+}
+
 function createdOrderOf(decidedOrder) {
   const value = Number(decidedOrder)
   if (!Number.isFinite(value)) return DEFAULT_ORDER
@@ -199,10 +209,12 @@ export function parseClassification(rawText) {
     ? [...new Set(parsed.tags.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean))].slice(0, MAX_TAGS)
     : []
   const order = Number(parsed.order)
+  const summaryZh = typeof parsed.summaryZh === 'string' ? parsed.summaryZh.trim().slice(0, 120) : ''
   return {
     category,
     tags,
     order: Number.isFinite(order) ? Math.max(0, Math.min(100, Math.round(order))) : DEFAULT_ORDER,
+    summaryZh,
   }
 }
 
@@ -214,7 +226,7 @@ export function alignClassification(parsed, typeNames = []) {
   if (parsed === null) return null
   const names = typeNames.map((name) => String(name || '').trim()).filter(Boolean)
   const category = names.includes(parsed.category) ? parsed.category : ''
-  return { category, tags: parsed.tags, order: parsed.order }
+  return { category, tags: parsed.tags, order: parsed.order, summaryZh: parsed.summaryZh || "" }
 }
 
 /**
@@ -276,6 +288,7 @@ export async function classifyWithSession({ llm, route, text, typeNames = [] }) 
       category: parsed.category,
       tags: parsed.tags,
       order: parsed.order,
+      summaryZh: parsed.summaryZh || '',
       classifier: 'session',
       model: route.model,
       provider: route.provider,
@@ -385,7 +398,7 @@ const PACKAGE_SKIP_DIRS = new Set(['.git', 'node_modules', '.venv', 'venv', '__p
  * 单文件 ≤8MB、总文件 ≤20000、总大小 ≤120MB；超了只跳过并如实记在 package.skipped。
  * `files` 仍只登记 scripts/（≤40 条），避免上万条把 skill.json 撑爆。
  */
-export function copySkillPackage(dataDir, slug, fromDir) {
+export function copySkillPackage(dataDir, slug, fromDir, options = {}) {
   const target = skillDirOf(dataDir, slug)
   const dirs = new Set()
   const scriptFiles = []
@@ -434,32 +447,235 @@ export function copySkillPackage(dataDir, slug, fromDir) {
     }
   }
   walk(fromDir, '')
-  const metaPath = path.join(target, 'skill.json')
-  let meta = {}
-  try {
-    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
-  } catch {
-    meta = {}
-  }
-  meta.package = {
-    source: fromDir,
-    files: fileCount,
-    bytes,
-    dirs: [...dirs].sort(),
-    skipped,
-    copiedAt: new Date().toISOString(),
-  }
-  if (scriptFiles.length > 0) {
-    const merged = Array.isArray(meta.files) ? [...meta.files] : []
-    for (const file of scriptFiles) {
-      const index = merged.findIndex((item) => item && item.path === file.path)
-      if (index >= 0) merged[index] = file
-      else merged.push(file)
+  const dirsList = [...dirs].sort()
+  if (options.writeMeta !== false) {
+    const metaPath = path.join(target, 'skill.json')
+    let meta = {}
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+    } catch {
+      meta = {}
     }
-    meta.files = merged.slice(0, 40)
+    meta.package = {
+      source: fromDir,
+      files: fileCount,
+      bytes,
+      dirs: dirsList,
+      skipped,
+      copiedAt: new Date().toISOString(),
+    }
+    if (scriptFiles.length > 0) {
+      const merged = Array.isArray(meta.files) ? [...meta.files] : []
+      for (const file of scriptFiles) {
+        const index = merged.findIndex((item) => item && item.path === file.path)
+        if (index >= 0) merged[index] = file
+        else merged.push(file)
+      }
+      meta.files = merged.slice(0, 40)
+    }
+    fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
   }
-  fs.writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
-  return { fileCount, bytes, dirs: meta.package.dirs, skipped }
+  return { fileCount, bytes, dirs: dirsList, skipped }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 套件树导入                                                                  */
+/* -------------------------------------------------------------------------- */
+
+const GENERIC_SUITE_NAMES = new Set(['skills', 'skill', 'skills-master', 'skills-main', 'skills-dev'])
+
+function safeRootName(raw) {
+  const candidate = String(raw || '').trim() || 'suite'
+  try {
+    return assertSafePathSegment(candidate)
+  } catch {
+    return slugify(candidate) || `suite-${Date.now().toString(36)}`
+  }
+}
+
+function collectSkillDocs(dir, rel, out, depth = 0) {
+  if (depth > 12) return
+  let entries = []
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    if (entry.name.startsWith('.')) continue
+    if (SKILL_SCAN_SKIP_DIRS.has(entry.name)) continue
+    const childDir = path.join(dir, entry.name)
+    const childRel = rel === '' ? entry.name : `${rel}/${entry.name}`
+    const doc = findSkillDoc(childDir)
+    if (doc !== null) {
+      const stat = fs.statSync(doc)
+      if (stat.size > MAX_IMPORT_BYTES) throw new Error(`文件太大（${stat.size} 字节），上限 ${MAX_IMPORT_BYTES}：${doc}`)
+      out.push({
+        relPath: childRel,
+        name: entry.name,
+        text: fs.readFileSync(doc, 'utf8'),
+        file: doc,
+        dir: childDir,
+      })
+    }
+    collectSkillDocs(childDir, childRel, out, depth + 1)
+  }
+}
+
+/**
+ * 读导入来源的目录树：
+ * - 单文件 / 粘贴正文 → single；
+ * - 文件夹里只有一个 SKILL.md → single（保持旧行为，按一个技能导入）；
+ * - 文件夹里 ≥2 个 SKILL.md（含根上的总入口）→ suite，子技能按相对路径保留。
+ */
+export function readImportTree({ filePath = '', content = '' } = {}) {
+  const target = String(filePath || '').trim()
+  if (target === '') {
+    const pasted = String(content || '')
+    if (pasted.trim() === '') throw new Error('要么给一个 SKILL.md 路径，要么粘贴正文')
+    if (Buffer.byteLength(pasted, 'utf8') > MAX_IMPORT_BYTES) throw new Error(`正文太大，上限 ${MAX_IMPORT_BYTES} 字节`)
+    return { mode: 'single', rootName: '', sourceDir: '', singlePath: '', nodes: [{ relPath: '', text: pasted, file: '', dir: '' }] }
+  }
+  let stat = null
+  try {
+    stat = fs.statSync(target)
+  } catch {
+    throw new Error(`读不到这个路径：${target}`)
+  }
+  if (stat.isFile()) {
+    return { mode: 'single', rootName: '', sourceDir: '', singlePath: target, nodes: [] }
+  }
+  if (!stat.isDirectory()) throw new Error(`不是一个文件或文件夹：${target}`)
+  const nodes = []
+  const rootDoc = findSkillDoc(target)
+  if (rootDoc !== null) {
+    const rootStat = fs.statSync(rootDoc)
+    if (rootStat.size > MAX_IMPORT_BYTES) throw new Error(`文件太大（${rootStat.size} 字节），上限 ${MAX_IMPORT_BYTES}`)
+    nodes.push({ relPath: '', name: path.basename(target), text: fs.readFileSync(rootDoc, 'utf8'), file: rootDoc, dir: target })
+  }
+  collectSkillDocs(target, '', nodes)
+  if (nodes.length === 0) {
+    throw new Error(`这个文件夹里没有 SKILL.md，也没有带 SKILL.md 的子目录（技能套件要求每个技能一个子目录）：${target}`)
+  }
+  if (nodes.length === 1) {
+    return { mode: 'single', rootName: '', sourceDir: nodes[0].dir, singlePath: nodes[0].dir, nodes }
+  }
+  let rootName = path.basename(target)
+  if (GENERIC_SUITE_NAMES.has(rootName.toLowerCase())) {
+    rootName = path.basename(path.dirname(target)) || rootName
+  }
+  return { mode: 'suite', rootName: safeRootName(rootName), sourceDir: target, singlePath: '', nodes }
+}
+
+/** 目录摘要：文件数/字节/一级目录，写进 skill.json 的 package。 */
+function summarizeDir(dir) {
+  const dirs = new Set()
+  let files = 0
+  let bytes = 0
+  let skipped = 0
+  const walk = (current, rel) => {
+    let entries = []
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue
+      if (PACKAGE_SKIP_DIRS.has(entry.name)) continue
+    }
+  }
+  walk(dir, '')
+  return { source: dir, files, bytes, dirs: [...dirs].sort(), skipped, copiedAt: new Date().toISOString() }
+}
+
+function existingMetaOf(dir, id) {
+  const skill = readSkill(dir, id)
+  return skill !== null ? skill.meta : defaultMeta(id)
+}
+
+/** 套件目录：整棵树复制一次，再给每个 SKILL.md 写账本（不重写正文，保持来源原样）。 */
+async function importSuiteTree({ dataDir, tree, typeNames, categories, notes, deps }) {
+  const rootName = tree.rootName
+  const existingIds = new Set(listSkills(dataDir).map((skill) => skill.id))
+  const copied = copySkillPackage(dataDir, rootName, tree.sourceDir, { writeMeta: false })
+  const getLlm = typeof deps.getLlm === 'function' ? deps.getLlm : () => null
+  const getRoute = typeof deps.getRoute === 'function' ? deps.getRoute : () => null
+  let llm = null
+  let route = null
+  try {
+    llm = getLlm()
+  } catch {
+    llm = null
+  }
+  try {
+    route = routeOf(getRoute())
+  } catch {
+    route = null
+  }
+  const items = []
+  for (const node of tree.nodes) {
+    const id = node.relPath === '' ? rootName : `${rootName}/${node.relPath}`
+    const dir = skillDirOf(dataDir, id)
+    const parsed = parseSkillMarkdown(node.text)
+    const name = parsed.name.trim() !== '' ? parsed.name.trim() : (node.name || id.split('/').pop())
+    const body = parsed.body.trim() !== '' ? parsed.body.trim() : node.text.trim()
+    const bySession = await classifyWithSession({ llm, route, text: body, typeNames })
+    const decided = bySession !== null ? bySession : localClassify({ text: body, typeNames })
+    const meta = existingMetaOf(dir, id)
+    meta.id = id
+    meta.typeName = decided.category || meta.typeName || ''
+    if (Array.isArray(categories)) meta.typeNames = categories.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 12)
+    if (Array.isArray(notes)) meta.notes = notes.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 50)
+    meta.context = skillTagsOf(decided)
+    meta.triggers = skillTagsOf(decided)
+    meta.order = createdOrderOf(decided.order)
+    meta.package = summarizeDir(dir)
+    writeFileAtomic(path.join(dir, META_FILENAME), `${JSON.stringify(meta, null, 2)}\n`)
+    items.push({
+      action: existingIds.has(id) ? 'updated' : 'created',
+      slug: id,
+      id,
+      name,
+      source: node.file,
+      category: decided.category,
+      tags: decided.tags,
+      order: meta.order,
+      classifier: decided.classifier,
+      model: decided.model || '',
+      note: decided.note,
+      package: { fileCount: meta.package.files, bytes: meta.package.bytes, dirs: meta.package.dirs, skipped: meta.package.skipped },
+    })
+  }
+  const committed = commitSkills(dataDir, `skill(${rootName}): import suite (${items.length})`)
+  return { suite: true, rootName, count: items.length, items, copied, commit: committed }
+}
+
+/** 浏览器批量导入：contents 可以是字符串，也可以是 {text, suiteRoot, relPath}。 */
+async function importContents({ dataDir, contents, typeNames, categories, notes, deps }) {
+  const items = []
+  let suiteRoot = ''
+  for (const raw of contents) {
+    const entry = typeof raw === 'string' ? { text: raw } : (raw && typeof raw === 'object' ? raw : null)
+    if (entry === null) continue
+    const text = String(entry.text || entry.content || '')
+    if (text.trim() === '') continue
+    const rootRaw = String(entry.suiteRoot || '').trim()
+    const relRaw = String(entry.relPath || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+    let id = ''
+    if (rootRaw !== '') {
+      const root = assertSafePathSegment(rootRaw)
+      suiteRoot = suiteRoot || root
+      id = relRaw === '' ? root : `${root}/${assertSafeRelPath(relRaw)}`
+    } else if (relRaw !== '') {
+      const rel = assertSafeRelPath(relRaw)
+      suiteRoot = suiteRoot || rel.split('/')[0]
+      id = rel
+    }
+    items.push(await importSkill({ dataDir, content: text, id, typeNames, categories, notes, deps }))
+  }
+  return { suite: suiteRoot !== '', rootName: suiteRoot, count: items.length, items }
 }
 
 /**
@@ -468,7 +684,7 @@ export function copySkillPackage(dataDir, slug, fromDir) {
  * 返回里带 classifier（'session' 或 'local'）与 note，调用方要原样展示——
  * 用户有权知道这次导入到底花没花模型调用。
  */
-export async function importSkill({ dataDir, filePath = '', content = '', typeNames = [], categories = [], notes = [], deps = {} } = {}) {
+export async function importSkill({ dataDir, filePath = '', content = '', id = '', typeNames = [], categories = [], notes = [], deps = {} } = {}) {
   if (String(dataDir || '') === '') throw new Error('没有数据目录，无法写入技能')
   const { text, source, dir: sourceDir = '' } = readImportSource({ filePath, content })
   const parsed = parseSkillMarkdown(text)
@@ -497,14 +713,17 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
   const decided = bySession !== null ? bySession : localClassify({ text: body, typeNames })
 
   const created = createSkill(dataDir, {
+    // 套件子技能由调用方给相对路径 id；普通导入仍按名字生成顶层 slug。
+    id: id || undefined,
     name,
     description: parsed.description,
     body,
     typeName: decided.category,
     typeNames: Array.isArray(categories) ? categories : [],
     notes: Array.isArray(notes) ? notes : [],
-    context: decided.tags,
-    triggers: decided.tags,
+    // 中文摘要直接进标签：英文技能靠中文标签才能被中文任务匹配到（匹配读 name/description/tags）。
+    context: skillTagsOf(decided),
+    triggers: skillTagsOf(decided),
     // 新建技能一律先从高位起步（模型给的 order 只在更高时才采用），
     // 刚加进来的技能先让人看见、能被触发，之后靠实际使用回归正常。
     order: createdOrderOf(decided.order),
@@ -517,6 +736,7 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
   return {
     action: created.action,
     slug: created.slug,
+    id: created.slug,
     name,
     source,
     category: decided.category,
@@ -530,18 +750,30 @@ export async function importSkill({ dataDir, filePath = '', content = '', typeNa
 }
 
 /**
- * 导入一到多个技能：路径给的是套件文件夹时逐个导入，返回 items。
- * 每条都会真实走一次分类（模型会话或本地关键词），所以套件导入是 N 次分类调用——界面上要如实说明。
+ * 导入一到多个技能。
+ * - 路径指向套件文件夹：整棵目录一次复制，子技能按相对路径保留（不再摊平）；
+ * - 浏览器 contents：按 suiteRoot/relPath 还原层级；
+ * - 单文件/单技能文件夹：仍按一个顶层技能导入。
+ * 每个技能都会真实走一次分类（模型会话或本地关键词），界面上要如实说明。
  */
 export async function importSkills({ dataDir, filePath = '', content = '', contents = [], typeNames = [], categories = [], notes = [], deps = {} } = {}) {
-  // 浏览器一次只能把文件读成文本：整包/套件靠 contents 数组送过来
-  const sources = Array.isArray(contents) && contents.length > 0
-    ? contents.filter((text) => typeof text === 'string' && text.trim() !== '').map((text) => ({ text, source: '粘贴内容', file: '' }))
-    : readImportSources({ filePath, content })
-  const items = []
-  for (const source of sources) {
-    // 有来源文件就再走一次 filePath：这样 importSkill 才拿得到目录，把整包一起复制进去
-    items.push(await importSkill({ dataDir, filePath: source.file || '', content: source.file ? '' : source.text, typeNames, categories, notes, deps }))
+  const contentItems = Array.isArray(contents) ? contents : []
+  if (contentItems.length > 0) {
+    return importContents({ dataDir, contents: contentItems, typeNames, categories, notes, deps })
   }
-  return { suite: sources.length > 1, count: items.length, items }
+  const target = String(filePath || '').trim()
+  const tree = readImportTree({ filePath: target, content: target === '' ? content : '' })
+  if (tree.mode === 'suite') {
+    return importSuiteTree({ dataDir, tree, typeNames, categories, notes, deps })
+  }
+  const item = await importSkill({
+    dataDir,
+    filePath: tree.singlePath || '',
+    content: target === '' ? content : '',
+    typeNames,
+    categories,
+    notes,
+    deps,
+  })
+  return { suite: false, count: 1, items: [item] }
 }

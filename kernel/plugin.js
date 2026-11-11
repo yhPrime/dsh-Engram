@@ -65,7 +65,7 @@ export async function apply(ctx, rawConfig = {}) {
       audit(config, 'apply: systemPrompt unavailable, hint skipped')
       return
     }
-    prompt.section({ name: 'exp-lib', order: 160, text: () => renderHint(config) })
+    prompt.section({ name: 'exp-lib', order: 160, text: () => renderHint(config, Number(config.maxHintChars) || 1400) })
     audit(config, 'apply: prompt section registered')
   }
 

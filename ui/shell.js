@@ -33,7 +33,7 @@ import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEng
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { importSkills } from '../kernel/import-skill.js'
-import { forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
+import { applySkillNodeAction, buildSkillTree, forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
@@ -291,16 +291,62 @@ export function buildFeedback(source, id, result) {
   return source.feedback(id, result)
 }
 
-/** `/skills` 的 data：固化技能列表 + 状态分布。 */
+function treeOrderOf(node) {
+  if (node.skill) return Number(node.skill.order) || 0
+  return node.children.reduce((max, child) => Math.max(max, treeOrderOf(child)), 0)
+}
+
+/** 把内核树节点转成给界面的轻量节点（不把整行 skill 对象塞进去）。 */
+function publicTreeNode(node, rootName) {
+  const root = rootName || node.path
+  const skill = node.skill
+  return {
+    id: node.path,
+    path: node.path,
+    name: skill ? skill.name : node.name,
+    kind: node.kind,
+    depth: node.depth,
+    rootName: root,
+    parentPath: node.depth > 0 ? node.path.slice(0, node.path.lastIndexOf('/')) : '',
+    skillCount: node.skillCount,
+    registeredCount: node.registeredCount,
+    childCount: Math.max(0, node.skillCount - (skill ? 1 : 0)),
+    children: node.children.map((child) => publicTreeNode(child, root)),
+  }
+}
+
+/** 技能行补上树上的位置信息（path/depth/rootName/childCount）。 */
+function decorateSkillRows(tree, rows) {
+  const info = new Map()
+  const visit = (node, root) => {
+    if (node.skill) {
+      info.set(node.path, {
+        path: node.path,
+        depth: node.depth,
+        rootName: root,
+        parentPath: node.depth > 0 ? node.path.slice(0, node.path.lastIndexOf('/')) : '',
+        childCount: Math.max(0, node.skillCount - 1),
+      })
+    }
+    for (const child of node.children) visit(child, root)
+  }
+  for (const node of tree) visit(node, node.path)
+  return rows.map((row) => ({ ...row, ...(info.get(row.id) || { path: row.id }) }))
+}
+
+/** `/skills` 的 data：固化技能列表 + 状态分布 + 目录树。 */
 export function buildSkills(source) {
   const read = source.read() || {}
   const rows = safeSkills(source)
+  const tree = buildSkillTree(rows)
+  tree.sort((left, right) => treeOrderOf(right) - treeOrderOf(left) || left.name.localeCompare(right.name, 'zh'))
   return {
     source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
     notice: String(read.notice || ''),
     total: rows.length,
     summary: skillSummaryOf(rows),
-    skills: rows,
+    skills: decorateSkillRows(tree, rows),
+    tree: tree.map((node) => publicTreeNode(node)),
   }
 }
 
@@ -348,9 +394,20 @@ export async function buildImportSkill(source, body = {}, deps = {}) {
   const content = typeof body.content === 'string' ? body.content : ''
   const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
   const notes = Array.isArray(body.notes) ? body.notes.map(String) : []
-  // 套件导入走 contents 数组（浏览器选文件夹/多选 SKILL.md），此前的守门只认 path/content，
-  // 界面明明显示「已选择 18 个技能（套件）」却报「要么拖入/选择 SKILL.md」，就是漏了这一支。
-  const contents = Array.isArray(body.contents) ? body.contents.map(String).filter((item) => item.trim() !== '') : []
+  // 套件导入走 contents 数组（浏览器选文件夹/多选 SKILL.md）：字符串或 {text, suiteRoot, relPath} 都收。
+  let contents = Array.isArray(body.contents)
+    ? body.contents.filter((item) => {
+      if (typeof item === 'string') return item.trim() !== ''
+      if (item && typeof item === 'object') return String(item.text || item.content || '').trim() !== ''
+      return false
+    })
+    : []
+  // 兼容客户端另一种写法：顶层给 suiteRoot/relPath + 单条 content。
+  const suiteRoot = String(body.suiteRoot || '').trim()
+  const relPath = String(body.relPath || '').trim()
+  if (contents.length === 0 && content.trim() !== '' && (suiteRoot !== '' || relPath !== '')) {
+    contents = [{ text: content, suiteRoot, relPath }]
+  }
   if (filePath === '' && content.trim() === '' && contents.length === 0) {
     throw codedError('source-required', '要么拖入/选择 SKILL.md，要么粘贴正文')
   }
@@ -587,6 +644,25 @@ export async function handleRequest(req, res, source, deps = {}) {
         return json(res, 200, { ok: true, data: { ...result, action } })
       } catch (error) {
         return fail(res, 400, 'skill-global-failed', error && error.message ? error.message : String(error))
+      }
+    }
+    if (route === '/skill-node') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const nodePath = String((body && (body.path || body.slug)) || '').trim()
+      if (nodePath === '') return fail(res, 400, 'node-required', '缺少节点 path')
+      const action = String((body && body.action) || '').trim().toLowerCase()
+      if (!['register', 'unregister', 'forget', 'detach'].includes(action)) {
+        return fail(res, 400, 'bad-action', 'action 只能是 register / unregister / forget / detach')
+      }
+      if (active.mode !== 'live') return fail(res, 400, 'unsupported', '示例数据不支持节点操作')
+      const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()
+      try {
+        const result = applySkillNodeAction(dataDir, action, nodePath, { expect: body && body.expect })
+        resetSourceCache()
+        return json(res, 200, { ok: true, data: result })
+      } catch (error) {
+        return fail(res, 400, 'skill-node-failed', error && error.message ? error.message : String(error))
       }
     }
     if (route === '/skill-meta') {
