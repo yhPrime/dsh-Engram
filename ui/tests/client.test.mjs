@@ -384,12 +384,13 @@ check('关系图像星系盘：重节点靠内且转得快、经验绕自己的�
   const light = orbits.get('type:轻')
   assert.ok(heavy.radius < light.radius, `重节点应更靠内：${heavy.radius} vs ${light.radius}`)
   assert.ok(heavy.omega > light.omega, `重节点应转得更快：${heavy.omega.toFixed(3)} vs ${light.omega.toFixed(3)}`)
-  assert.equal(orbits.get('exp:1').parentId, 'type:重', '经验应绕自己的类型公转')
-  assert.equal(orbits.get('skill:套件子').parentId, 'suite:组', '子技能应绕套件公转')
+  assert.equal(orbits.get('exp:1').parentId, 'type:重', '经验应挂在它的类型上')
+  assert.equal(orbits.get('skill:套件子').parentId, 'suite:组', '子技能应挂在套件上')
   assert.equal(orbits.get('skill:裸').parentId, null, '没有父的技能应绕核')
-  assert.ok(orbits.get('exp:1').radius < 120, '经验轨道半径应远小于盘面半径')
+  assert.ok(Math.abs(orbits.get('exp:1').radius - orbits.get('type:重').radius) <= 90, '经验的半径应贴着它的类型（同一段旋臂）')
+  assert.equal(orbits.get('exp:1').arm, orbits.get('type:重').arm, '经验应和它的类型在同一条臂上')
   for (const [id, orbit] of orbits) {
-    assert.ok(orbit.theta0 >= 0 && orbit.theta0 <= Math.PI * 2 + 0.01, `${id} 的初始角度越界：${orbit.theta0}`)
+    assert.ok(orbit.theta0 >= 0 && orbit.theta0 <= Math.PI * 4 + 0.5, `${id} 的初始角度越界：${orbit.theta0}`)
   }
   // 时间推进后节点要真的在转（重力 → 公转），不是静态分布
   const orbit = orbits.get('type:重')
