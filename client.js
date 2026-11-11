@@ -69,6 +69,12 @@ window.__ModuleLoader__.load({
 .eng-progress-tag { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; font-size: 11px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.14)); }
 .eng-progress-tag-soft { opacity: 0.75; }
 .eng-progress-error { flex-shrink: 0; font-size: 11px; }
+.eng-session { margin-top: 10px; max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.10)); }
+.eng-session-msg { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; }
+.eng-session-role { flex: 0 0 64px; opacity: 0.7; text-align: right; }
+.eng-session-text { flex: 1 1 auto; word-break: break-word; }
+.eng-session-msg[data-role="system"] .eng-session-text { opacity: 0.75; }
+.eng-session-msg[data-bad="true"] .eng-session-text { text-decoration: line-through; opacity: 0.8; }
 .eng-progress-bar { height: 100%; border-radius: 999px; background: var(--dsw-alias-brand-primary, currentColor); transition: width 180ms ease; }
 .eng-modal-warn { margin: 12px 0 14px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
@@ -959,7 +965,7 @@ window.__ModuleLoader__.load({
         try {
           if (batch !== null) {
           const agg = { suite: true, count: 0, items: [] }
-          const rows = batch.map((text) => ({ name: nameOfSkill(text), state: "waiting", category: "", tags: [], error: "" }))
+          const rows = batch.map((text) => ({ name: nameOfSkill(text), state: "waiting", category: "", tags: [], error: "", model: "", classifier: "" }))
           // 逐个导入：进度条前进一格，同时把该技能的分类结果写进下面的列表
           for (let index = 0; index < batch.length; index += 1) {
             rows[index].state = "running"
@@ -970,6 +976,8 @@ window.__ModuleLoader__.load({
               rows[index].state = "done"
               rows[index].category = String(item.category || "")
               rows[index].tags = Array.isArray(item.tags) ? item.tags.slice(0, 3) : []
+              rows[index].model = String(item.model || "")
+              rows[index].classifier = String(item.classifier || "")
               agg.count += Number(one.count) || 1
               agg.items.push(...(one.items || []))
             } catch (caught) {
@@ -996,23 +1004,27 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 批量导入时：表单换成「进度条 + 每个技能的实时状态 / 分类结果」
+      // 批量导入时：表单换成「进度条 + 临时会话」——分类用的那个会话在输入框的位置流式显示
       if (progress !== null) {
         const percent = Math.round((progress.done / Math.max(1, progress.total)) * 100)
-        const stateText = (row) => row.state === 'done' ? '已导入' : row.state === 'failed' ? '失败' : row.state === 'running' ? '导入中…' : '等待'
+        const rows = progress.rows || []
+        const model = (rows.find((row) => row.model !== '') || {}).model || '分类会话'
+        const messages = [{ role: 'system', text: `临时会话已启动 · ${model} · 共 ${progress.total} 个技能` }]
+        for (const row of rows) {
+          if (row.state === 'waiting') continue
+          messages.push({ role: 'user', text: `分类：${row.name}` })
+          if (row.state === 'failed') messages.push({ role: 'assistant', text: `失败：${row.error}`, bad: true })
+          else if (row.state === 'done') messages.push({ role: 'assistant', text: `${row.category === '' ? '未分类' : row.category}${row.tags.length > 0 ? ' · ' + row.tags.join(' / ') : ''}` })
+          else messages.push({ role: 'assistant', text: '处理中…' })
+        }
         return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '正在导入技能' },
           h('div', { className: 'eng-modal' },
             h('h3', { className: 'eng-modal-title' }, '正在导入技能'),
             h('div', { className: 'eng-progress-text' }, progress.current === '' ? `已完成 ${progress.done}/${progress.total}` : `正在导入 ${Math.min(progress.done + 1, progress.total)}/${progress.total}：${progress.current}`),
             h('div', { className: 'eng-progress-track' }, h('div', { className: 'eng-progress-bar', style: { width: `${percent}%` } })),
-            h('div', { className: 'eng-progress-meta' }, `${percent}% · 每个技能依次做一次临时会话分类，结果显示在下面`),
-            h('div', { className: 'eng-progress-list' }, (progress.rows || []).map((row, index) => h('div', { className: 'eng-progress-item', 'data-state': row.state, key: `${index}-${row.name}` },
-              h('span', { className: 'eng-progress-dot' }),
-              h('span', { className: 'eng-progress-name', title: row.name }, row.name),
-              h('span', { className: 'eng-progress-state' }, stateText(row)),
-              row.state === 'done' && row.category !== '' ? h('span', { className: 'eng-progress-tag' }, row.category) : null,
-              row.state === 'done' && row.tags.length > 0 ? h('span', { className: 'eng-progress-tag eng-progress-tag-soft' }, row.tags.join(' / ')) : null,
-              row.state === 'failed' ? h('span', { className: 'eng-progress-error', title: row.error }, '失败') : null)))))
+            h('div', { className: 'eng-session' }, messages.map((message, index) => h('div', { className: 'eng-session-msg', 'data-role': message.role, 'data-bad': message.bad ? 'true' : 'false', key: index },
+              h('span', { className: 'eng-session-role' }, message.role === 'user' ? '分类请求' : message.role === 'system' ? '会话' : '分类会话'),
+              h('span', { className: 'eng-session-text' }, message.text))))))
       }
       return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加技能' },
         h('div', { className: 'eng-modal' },
