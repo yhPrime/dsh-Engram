@@ -53,7 +53,7 @@ export const SETTINGS_SPEC = {
     { key: 'hint', label: '每轮提示段', type: 'boolean', hint: '关闭后不再向系统提示写经验库用法', tip: '开启时，每轮系统提示里会多一段以「【经验库】」开头的说明（条数/类型目录/用法）。关掉后要重载插件才会撤掉已经注册的那一段——保存后提示段不会立刻消失。' },
     { key: 'hintMode', label: '提示段样式', type: 'enum', values: ['slim', 'full'], labels: { slim: '瘦身（默认，约 120 字符）', full: '完整（含类型/技能目录）' }, tip: '瘦身档只写「怎么用 + 条数 + 待判定 + 前几个技能」；完整档会列全部类型与技能，每轮固定开销约 1,300 字符。' },
     { key: 'hintSkills', label: '提示段列技能', type: 'boolean', tip: '瘦身档里是否列技能名（按顺序最多 8 个）；关掉后技能只在 exp_recall 命中时出现。' },
-    { key: 'recallLimitDefault', label: '召回默认条数', type: 'number', hint: '默认 2', tip: 'exp_recall 不传 limit 时返回几条候选。显式传 limit 时按传的来（上限 8）。' },
+    { key: 'recallLimitDefault', label: '召回默认条数', type: 'number', hint: '默认 3', tip: 'exp_recall 不传 limit 时返回几条候选。显式传 limit 时按传的来（上限 8）。' },
     { key: 'pendingTtl', label: '待判定提醒次数', type: 'number', hint: '默认 3', tip: '一条待判定记录随回执出现几次仍未被回填，就自动转 skipped（止损，不再打扰模型）。' },
     { key: 'pendingReceipt', label: '回执带待判定', type: 'boolean', tip: '关闭后 exp_record / exp_recall 的返回里不再附带 pending，判定只能靠控制台查看。' },
     { key: 'usageLog', label: '用法日志', type: 'boolean', hint: '记录 exp_* 调用，用于使用记录页', tip: '把每次 exp_record / exp_recall / exp_feedback 的调用写进 <数据目录>/usage.jsonl，零 token 开销；关掉后「使用记录」页就没有新数据。' },

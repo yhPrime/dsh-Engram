@@ -1366,10 +1366,12 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     : (manualCluster !== null
       ? { clusterId: manualCluster.id, name: manualCluster.name, score: 1, fallback: false, candidates: [] }
       : routeCluster(store, intent))
+  // weak 先声明：空库提前返回时 attach 也会读它（空库视为不弱）。
+  let weak = false
   const attach = (payload) => {
     if (route === null) return payload
     payload.route = route
-    payload.brief = buildBrief(store, route, payload.candidates || [])
+    if (!weak) payload.brief = buildBrief(store, route, payload.candidates || [])
     return payload
   }
   if (experiences.length === 0) {
@@ -1509,7 +1511,8 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   let note
   // 相关性下限（0.13.0，行为复核发现）：候选全都不像时，不能还给一排「按优势排序」的瞎推荐。
   const topSimilarity = candidates.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
-  const weak = candidates.length > 0 && topSimilarity < 0.35
+  // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
+  weak = candidates.length > 0 && topSimilarity < 0.4
   if (neighbors.length === 0) {
     note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
   } else if (weak) {
@@ -1557,7 +1560,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     const floor = Math.max(0.25, RECALL_MIN_SIMILARITY)
     return [...experiences]
       .map((row) => ({ row, similarity: similarityV2(query, stateOf(row.intent, row.action)) }))
-      .filter((item) => item.similarity >= floor)
+      .filter((item) => item.similarity >= floor && item.row.verdict !== 'skipped')
       .sort((left, right) => String(right.row.lastSeenAt || right.row.ts || '').localeCompare(String(left.row.lastSeenAt || left.row.ts || '')))
       .slice(0, 2)
       .map((item) => ({
@@ -1587,7 +1590,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   })
   // 巩固：同族够多且有正负对照时给一条「候选规则」（不写库、零 LLM）。
   // 用**全部**候选算，不用截断后的输出——默认 limit=2 时也要能给出候选规则。
-  if (options.consolidation !== false) {
+  if (options.consolidation !== false && !weak) {
     const consolidated = buildConsolidation(candidates, { minSamples: options.consolidationMinSamples })
     if (consolidated !== null) payload.consolidated = consolidated
   }

@@ -243,7 +243,7 @@ export function buildTools(defineTool, config = {}) {
     description: '按任务意图召回历史经验。默认先做簇路由（确定性的簇内检索，无同族回退全库）；返回 brief（记忆简报）、route（路由结果）与 candidates。mode=advantage：按 JitRL 优势排序；mode=evidence：无成败对照，Â 不具区分度，改按相似度×证据强度排序。',
     parameters: {
       intent: { type: 'string', required: true, description: '当前任务意图。写「对象+任务+关键约束」（如「给研学课 PPT 插一页（深蓝色调）」）；只写「再来一页」这种省略句会因相似度不足召回不到。' },
-      limit: { type: 'number', description: '返回几条候选做法，默认 4；显式给就按给的值（≤8，簇内也不截到 4）。改稿/纠错要看「上次那条」时给 5~6。' },
+      limit: { type: 'number', description: '返回几条候选做法，默认 3；显式给就按给的值（≤8，簇内也不截到 4）。改稿/纠错要看「上次那条」时给 5~6。' },
       cluster: { type: 'string', description: '可选：直接指定簇（类型名或 id），跳过路由。' },
       context: { type: 'array', description: '可选：当前任务的情境线索；给了就优先召回情境匹配的经验。' },
       mark: { type: 'boolean', description: '可选：把这次召回记为一次「主动提取」（累加 retrievals，用于证据展示，不改排序）。' },
@@ -280,7 +280,7 @@ export function buildTools(defineTool, config = {}) {
         if (type === null) throw new Error(`没有这个簇：${String(args.cluster)}（用 exp_type list 看现有类型）`)
         clusterId = type.id
       }
-      const recallLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || Number(config.recallLimitDefault) || 2)))
+      const recallLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || Number(config.recallLimitDefault) || 3)))
       const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false })
       result.pendingSkills = pendingSkills
       // 待判定：随回执带出（≤2 条）。
