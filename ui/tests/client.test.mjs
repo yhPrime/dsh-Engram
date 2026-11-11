@@ -304,7 +304,10 @@ check('添加技能弹窗：拖拽区 + 来源路径，高级选项折叠（做�
   assert.ok(source.includes('{ path: sourcePath.trim() }'), '来源路径没有走服务端直读分支')
   assert.ok(source.includes('droppedPathOf'), '拖放没有从 uri-list 里抠路径的兜底')
   assert.ok(source.includes('contentsDraft'), '浏览器选文件夹没有多技能（套件）处理')
-  assert.ok(source.includes('{ contents: contentsDraft }'), '套件没有按 contents 数组提交')
+  assert.ok(source.includes('const batch = sourcePath.trim()'), '套件没有走批量分支')
+  assert.ok(source.includes('body: { content: batch[index]'), '套件没有逐个提交（进度条要靠逐个推进）')
+  assert.ok(source.includes('eng-progress-track'), '批量导入没有进度条视图')
+  assert.ok(source.includes('正在导入技能'), '进度视图没有标题')
 })
 check('推送前发现远端有新提交：弹窗给「覆盖 / 换远端仓库 / 另建分支」三条路', () => {
   const dialog = module.PushConflictDialog

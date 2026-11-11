@@ -53,6 +53,9 @@ window.__ModuleLoader__.load({
 .eng-modal-mask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, .34); }
 .eng-modal { width: min(660px, 100%); max-height: min(760px, 88vh); overflow: auto; padding: 18px 20px 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px; background: var(--dsw-alias-bg-layer-2); box-shadow: 0 18px 48px rgba(0, 0, 0, .2); }
 .eng-modal-title { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+.eng-progress-text { font-size: 13px; line-height: 1.6; margin: 6px 0 10px; }
+.eng-progress-track { height: 8px; border-radius: 999px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.18)); overflow: hidden; }
+.eng-progress-bar { height: 100%; border-radius: 999px; background: var(--dsw-alias-brand-primary, currentColor); transition: width 180ms ease; }
 .eng-modal-warn { margin: 12px 0 14px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
 .eng-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
@@ -816,7 +819,14 @@ window.__ModuleLoader__.load({
       const dirInputRef = useRef(null)
       // 浏览器选文件夹时一次可能读到多个 SKILL.md（套件），先攒起来再一次性提交
       const [contentsDraft, setContentsDraft] = useState([])
+      // 套件批量导入进度：{ total, done, current }；非空时弹窗整体切成进度条视图
+      const [progress, setProgress] = useState(null)
       const canSubmit = busy === false && (sourcePath.trim() !== '' || content.trim() !== '' || contentsDraft.length > 0)
+      // 从 SKILL.md frontmatter 取名字，用于进度条显示
+      const nameOfSkill = (text) => {
+        const matched = /^---[\s\S]*?\nname:\s*(.+)$/mu.exec(String(text || ""))
+        return matched === null ? '未命名技能' : matched[1].trim().replace(/^['"]|['"]$/gu, '')
+      }
       const takeFile = async (file) => {
         if (file === null || file === undefined) return
         const name = String(file.name || '')
@@ -927,13 +937,34 @@ window.__ModuleLoader__.load({
       const submit = async () => {
         setBusy(true)
         setError('')
+        setResult(null)
+        const splitList = (text) => String(text || '').split(/[,，\n]/u).map((item) => item.trim()).filter((item) => item !== '')
+        const categories = splitList(categoriesDraft)
+        const notes = splitList(notesDraft)
+        const batch = sourcePath.trim() === '' && contentsDraft.length > 1 ? contentsDraft : null
         try {
-          const splitList = (text) => String(text || '').split(/[,，\n]/u).map((item) => item.trim()).filter((item) => item !== '')
-          const body = sourcePath.trim() !== ''
-            ? { path: sourcePath.trim() }
-            : (contentsDraft.length > 1 ? { contents: contentsDraft } : { content })
-          body.categories = splitList(categoriesDraft)
-          body.notes = splitList(notesDraft)
+          if (batch !== null) {
+            const agg = { suite: true, count: 0, items: [] }
+            // 逐个导入：每装好一个就把进度条往前推一格，弹窗只留进度条
+            for (let index = 0; index < batch.length; index += 1) {
+              setProgress({ total: batch.length, done: index, current: nameOfSkill(batch[index]) })
+              try {
+                const one = await request('/skills/import', { method: 'POST', body: { content: batch[index], categories, notes } })
+                agg.count += Number(one.count) || 1
+                agg.items.push(...(one.items || []))
+              } catch (caught) {
+                agg.items.push({ action: 'failed', name: nameOfSkill(batch[index]), error: caught.message || String(caught) })
+              }
+              setProgress({ total: batch.length, done: index + 1, current: index + 1 < batch.length ? nameOfSkill(batch[index + 1]) : "" })
+            }
+            setProgress(null)
+            setResult(agg)
+            props.onImported(agg)
+            return
+          }
+          const body = sourcePath.trim() !== '' ? { path: sourcePath.trim() } : { content }
+          body.categories = categories
+          body.notes = notes
           const out = await request('/skills/import', { method: 'POST', body })
           setResult(out)
           props.onImported(out)
@@ -942,6 +973,17 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy(false)
         }
+      }
+
+      // 批量导入时：不再显示表单，整块换成进度条
+      if (progress !== null) {
+        const percent = Math.round((progress.done / Math.max(1, progress.total)) * 100)
+        return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '正在导入技能' },
+          h('div', { className: 'eng-modal' },
+            h('h3', { className: 'eng-modal-title' }, '正在导入技能'),
+            h('div', { className: 'eng-progress-text' }, progress.current === '' ? `已完成 ${progress.done}/${progress.total}` : `正在导入 ${Math.min(progress.done + 1, progress.total)}/${progress.total}：${progress.current}`),
+            h('div', { className: 'eng-progress-track' }, h('div', { className: 'eng-progress-bar', style: { width: `${percent}%` } })),
+            h('div', { className: 'eng-muted', style: { marginTop: 8, fontSize: 12 } }, `${percent}% · 每装好一个技能，进度条就前进一格；全部完成后自动关闭`)))
       }
       return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加技能' },
         h('div', { className: 'eng-modal' },
