@@ -505,18 +505,7 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
   }
   skill.meta.files = files
   appendScriptsSection(skill.dir, files)
-  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${slug}): attach ${added.length} file(s)`)
-  if (committed) {
-    // 提交成功后必须复位，否则 pendingSkills 会一直报「待补提交」。
-    if (skill.meta.pendingCommit !== false) {
-      skill.meta.pendingCommit = false
-      writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-    }
-  } else {
-    skill.meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  }
+  const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${slug}): attach ${added.length} file(s)`)
   return { slug, files, added, commit: committed }
 }
 
@@ -572,12 +561,7 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
     }
   }
   skill.meta.globalRegistered = { path: target, at: new Date().toISOString(), mode }
-  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${id}): register globally`)
-  if (!committed) {
-    skill.meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  }
+  commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): register globally`)
   return { slug: id, id, leaf, targetDir: target, mode, registered: true }
 }
 
@@ -626,12 +610,7 @@ export function unregisterSkillFromDsh(dataDir, slug) {
     }
   }
   delete skill.meta.globalRegistered
-  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${id}): unregister globally`)
-  if (!committed) {
-    skill.meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  }
+  commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): unregister globally`)
   return { slug: id, id, leaf, targetDir: target, removed, registered: false }
 }
 
@@ -654,12 +633,7 @@ export function updateSkillMeta(dataDir, slug, patch = {}) {
   if (patch.order !== undefined && Number.isFinite(Number(patch.order))) {
     meta.order = Math.max(0, Math.min(100, Math.round(Number(patch.order))))
   }
-  writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
-  const committed = commitSkills(dataDir, `skill(${slug}): meta`)
-  if (!committed) {
-    meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
-  }
+  const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), meta, `skill(${slug}): meta`)
   return { slug, typeName: meta.typeName, typeNames: meta.typeNames, notes: meta.notes, commit: committed }
 }
 
@@ -923,6 +897,21 @@ export function ensureSkillsRepo(dataDir) {
   }
 }
 
+/**
+ * 写 meta 并提交：提交前先把 pendingCommit 置 false（提交快照里就是 false），失败再置 true。
+ * 只置 true 不复位会让 UI 永远显示「待补提交」（技能复验发现）。
+ */
+function commitMeta(dataDir, metaFile, meta, message) {
+  meta.pendingCommit = false
+  writeJsonFile(metaFile, meta)
+  const committed = commitSkills(dataDir, message)
+  if (!committed) {
+    meta.pendingCommit = true
+    writeJsonFile(metaFile, meta)
+  }
+  return committed
+}
+
 /** 提交 skills/ 路径；失败返回 false（写入仍然保留，调用方记 pendingCommit）。 */
 function skillWarningFor(skill, intent) {
   if (!skill) return null
@@ -982,7 +971,7 @@ export function commitSkills(dataDir, message) {
   // 仓库根在 dataDir/.git（ensureSkillsRepo 在 dataDir 初始化），不是 dataDir/skills/.git。
   try {
     const lock = path.join(String(dataDir || ''), '.git', 'index.lock')
-    if (fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs > 60000) fs.unlinkSync(lock)
+    if (fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs > 600000) fs.unlinkSync(lock)
   } catch {
     // 清锁失败不阻断：让 git 自己报错
   }
