@@ -240,12 +240,13 @@ await checkAsync('有模型会话：用模型给的分类，classifier=session',
   })
   assert.equal(out.classifier, 'session')
   assert.equal(out.category, '文档 / 教案')
-  assert.equal(out.order, 77)
+  // 新建技能一律从高位起步（模型给的 77 低于 90，不采用）
+  assert.equal(out.order, 90)
   assert.equal(out.action, 'created')
   const row = readSkill(path.join(dataDir, 'skills', out.slug))
   assert.ok(row !== null, '技能目录应已落盘')
   assert.equal(row.meta.typeName, '文档 / 教案')
-  assert.equal(row.meta.order, 77)
+  assert.equal(row.meta.order, 90)
 })
 
 await checkAsync('没有模型：退回本地，classifier=local 且不报错', async () => {
