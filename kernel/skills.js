@@ -507,7 +507,13 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
   appendScriptsSection(skill.dir, files)
   writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
   const committed = commitSkills(dataDir, `skill(${slug}): attach ${added.length} file(s)`)
-  if (!committed) {
+  if (committed) {
+    // 提交成功后必须复位，否则 pendingSkills 会一直报「待补提交」。
+    if (skill.meta.pendingCommit !== false) {
+      skill.meta.pendingCommit = false
+      writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
+    }
+  } else {
     skill.meta.pendingCommit = true
     writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
   }
@@ -889,7 +895,7 @@ function gitRun(cwd, args) {
     encoding: 'utf8',
     stdio: 'ignore',
     // 技能树可以上万文件：git add/commit 会超过 15s，超时被杀会留下 index.lock 并让后续提交永久失败。
-    timeout: 180000,
+    timeout: 300000,
     windowsHide: true,
   })
 }
@@ -899,7 +905,7 @@ function gitCapture(cwd, args) {
     return String(execFileSync('git', ['-C', cwd, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 180000,
+      timeout: 300000,
       windowsHide: true,
     }) || '')
   } catch {
@@ -973,8 +979,9 @@ function sleepSync(ms) {
 
 export function commitSkills(dataDir, message) {
   // 上一次被超时杀掉的 git 会留下 index.lock：超过 60s 的视为残留，清掉再提交，否则永久卡死。
+  // 仓库根在 dataDir/.git（ensureSkillsRepo 在 dataDir 初始化），不是 dataDir/skills/.git。
   try {
-    const lock = path.join(skillsRootOf(dataDir), '.git', 'index.lock')
+    const lock = path.join(String(dataDir || ''), '.git', 'index.lock')
     if (fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs > 60000) fs.unlinkSync(lock)
   } catch {
     // 清锁失败不阻断：让 git 自己报错

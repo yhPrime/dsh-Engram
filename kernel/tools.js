@@ -318,9 +318,9 @@ export function buildTools(defineTool, config = {}) {
             body: (() => {
               // 正文可能几万字（实测某技能 28k）：回执里截到 12k 并标注，完整正文用 readSkill 读。
               const raw = String(hit.skill.body || '')
-              return raw.length > 12000 ? `${raw.slice(0, 12000)}\n…（正文过长已截断，共 ${raw.length} 字符；完整内容用 readSkill 读）` : raw
+              return raw.length > 6000 ? `${raw.slice(0, 6000)}\n…（正文过长已截断，共 ${raw.length} 字符；完整内容用 readSkill 读）` : raw
             })(),
-            ...(String(hit.skill.body || '').length > 12000 ? { bodyTruncated: true, bodyChars: String(hit.skill.body).length } : {}),
+            ...(String(hit.skill.body || '').length > 6000 ? { bodyTruncated: true, bodyChars: String(hit.skill.body).length } : {}),
             context: hit.skill.meta.context,
             files: (hit.skill.meta.files || []).map((item) => item.path),
             confidence: { ...hit.skill.meta.confidence, reason: confidenceReason(hit.skill.meta) },
@@ -553,7 +553,8 @@ export function buildTools(defineTool, config = {}) {
         slug,
         files: skill === null ? [] : (skill.meta.files || []).map((item) => item.path),
         bodyUpdated: merged !== null,
-        commit: attached !== null && attached.commit === true,
+        // 只改正文时 attached 为 null，但 createSkill 已经提交过：commit 要按实际来源报。
+        commit: attached !== null ? attached.commit === true : (merged !== null && merged.commit === true),
       }
     },
   })

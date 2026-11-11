@@ -1663,7 +1663,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
   const shownSimilarity = truncated.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
   const topSimilarity = shownSimilarity
-  weak = truncated.length > 0 && shownSimilarity < 0.4
+  weak = truncated.length > 0 && shownSimilarity < 0.46
   let note
   if (neighbors.length === 0) {
     note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
