@@ -2124,6 +2124,7 @@ window.__ModuleLoader__.load({
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
           if (node.kind === 'type') return 4 + Math.pow(w, 0.85) * 7
+          if (node.kind === 'suite') return 6 + Math.pow(w, 0.85) * 6
           if (node.kind === 'skill') return 4.5 + Math.pow(w, 0.9) * 5.5
           return 1.1 + Math.pow(w, 0.9) * 3.2
         }
@@ -2177,19 +2178,60 @@ window.__ModuleLoader__.load({
               })
             }
           }
-          for (const node of skills) {
-            const derived = data.edges.filter((edge) => edge.target === node.id && edge.kind === 'derived').map((edge) => positions.get(edge.source)).filter(Boolean)
-            let base = { x: 0, y: 0, z: 0 }
-            if (derived.length > 0) {
-              base = derived.reduce((sum, item) => ({ x: sum.x + item.x / derived.length, y: sum.y + item.y / derived.length, z: sum.z + item.z / derived.length }), { x: 0, y: 0, z: 0 })
-            } else {
+          // 套件层级：先放顶层节点，再按「父 → 子」把子技能摆到父节点周围。
+          const hierarchy = data.nodes.filter((node) => node.kind === 'skill' || node.kind === 'suite')
+          const parentOf = new Map()
+          for (const edge of data.edges) if (edge.kind === 'suite') parentOf.set(edge.target, edge.source)
+          const queue = []
+          for (const node of hierarchy) {
+            if (parentOf.has(node.id)) continue
+            let base
+            if (node.kind === 'suite') {
               const a = rand(`${node.id}a`) * Math.PI * 2
               const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-              const rr = 300 + rand(`${node.id}r`) * 90
+              const rr = 330 + rand(`${node.id}r`) * 70
               base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
+            } else {
+              const derived = data.edges.filter((edge) => edge.target === node.id && edge.kind === 'derived').map((edge) => positions.get(edge.source)).filter(Boolean)
+              if (derived.length > 0) {
+                base = derived.reduce((sum, item) => ({ x: sum.x + item.x / derived.length, y: sum.y + item.y / derived.length, z: sum.z + item.z / derived.length }), { x: 0, y: 0, z: 0 })
+              } else {
+                const a = rand(`${node.id}a`) * Math.PI * 2
+                const b = Math.acos(2 * rand(`${node.id}b`) - 1)
+                const rr = 300 + rand(`${node.id}r`) * 90
+                base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
+              }
+              const a = rand(`${node.id}a`) * Math.PI * 2
+              base = { x: base.x + Math.cos(a) * 46, y: base.y + (rand(`${node.id}y`) - 0.5) * 60, z: base.z + Math.sin(a) * 46 }
             }
+            positions.set(node.id, base)
+            queue.push(node)
+          }
+          while (queue.length > 0) {
+            const parent = queue.shift()
+            const base = positions.get(parent.id) || { x: 0, y: 0, z: 0 }
+            const children = hierarchy.filter((node) => parentOf.get(node.id) === parent.id)
+            if (children.length === 0) continue
+            const rr = 42 + Math.sqrt(children.length) * 13
+            children.forEach((child, index) => {
+              const y = children.length === 1 ? 0 : 1 - (index / (children.length - 1)) * 2
+              const ring = Math.sqrt(Math.max(0, 1 - y * y))
+              const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(child.id) * 0.4
+              positions.set(child.id, {
+                x: base.x + Math.cos(phi) * ring * rr,
+                y: base.y + y * rr * 0.72,
+                z: base.z + Math.sin(phi) * ring * rr,
+              })
+              queue.push(child)
+            })
+          }
+          // 理论上不会有漏网节点；真漏了也给个位置，别让它停在原点。
+          for (const node of hierarchy) {
+            if (positions.has(node.id)) continue
             const a = rand(`${node.id}a`) * Math.PI * 2
-            positions.set(node.id, { x: base.x + Math.cos(a) * 46, y: base.y + (rand(`${node.id}y`) - 0.5) * 60, z: base.z + Math.sin(a) * 46 })
+            const b = Math.acos(2 * rand(`${node.id}b`) - 1)
+            const rr = 300 + rand(`${node.id}r`) * 90
+            positions.set(node.id, { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr })
           }
           return positions
         }
@@ -2382,10 +2424,11 @@ window.__ModuleLoader__.load({
             const relatedEdge = focusId === null || bright
             ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : 0.1)
             const gradient = ctx.createLinearGradient(from.screenX, from.screenY, to.screenX, to.screenY)
-            gradient.addColorStop(0, palette.nodeLight || palette.node)
-            gradient.addColorStop(1, palette.edge || palette.node)
+            const isSuiteEdge = edgeState.edge.kind === 'suite'
+            gradient.addColorStop(0, isSuiteEdge ? (palette.highlight || palette.node) : (palette.nodeLight || palette.node))
+            gradient.addColorStop(1, isSuiteEdge ? (palette.glow || palette.node) : (palette.edge || palette.node))
             ctx.strokeStyle = gradient
-            ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : 1.7)) * near
+            ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : (isSuiteEdge ? 2.1 : 1.7))) * near
             ctx.shadowBlur = bloom ? (4 + strength * 10) * near : 0
             ctx.shadowColor = edgeState.edge.kind === 'derived' ? palette.node2 : palette.glow
             ctx.beginPath()
@@ -2413,7 +2456,7 @@ window.__ModuleLoader__.load({
             const isSelected = store.selected !== null && store.selected === node.id
             // 三类节点分开取色：经验=主色、类型=第二停靠点、技能=高亮色。
             // 这样主题渐变（多停靠点）才看得出来，不然图上一片单色。
-            const color = node.kind === 'skill' ? (palette.highlight || palette.node) : node.kind === 'type' ? (palette.node2 || palette.node) : palette.node
+            const color = node.kind === 'skill' ? (palette.highlight || palette.node) : node.kind === 'suite' ? (palette.node2 || palette.node) : node.kind === 'type' ? (palette.node2 || palette.node) : palette.node
             const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.09 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
             const nearFactor = Math.min(1.6, Math.max(0.35, entry.screenF))
             let energy = 1
@@ -2472,12 +2515,14 @@ window.__ModuleLoader__.load({
                 ctx.arc(0, 0, Math.max(0.7, screenRadius * 0.34), 0, Math.PI * 2)
                 ctx.fill()
               }
-              if (node.kind === 'skill') {
+              if (node.kind === 'skill' || node.kind === 'suite') {
                 ctx.beginPath()
-                ctx.arc(0, 0, screenRadius * 1.9, 0, Math.PI * 2)
+                ctx.arc(0, 0, screenRadius * (node.kind === 'suite' ? 2.2 : 1.9), 0, Math.PI * 2)
                 ctx.strokeStyle = color
-                ctx.lineWidth = 0.9
+                ctx.lineWidth = node.kind === 'suite' ? 1.1 : 0.9
+                if (node.kind === 'suite') ctx.setLineDash([3, 2.4])
                 ctx.stroke()
+                if (node.kind === 'suite') ctx.setLineDash([])
               }
               ctx.restore()
             }
@@ -2540,16 +2585,20 @@ window.__ModuleLoader__.load({
             onClick: () => pickPalette(key),
           }, label))),
         selection === null ? null : h('div', { className: 'eng-graph-detail' },
-          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'type' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'type' ? '类型' : selection.kind === 'skill' ? '技能' : '经验')),
+          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'type' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'type' ? '类型' : selection.kind === 'suite' ? '套件' : selection.kind === 'skill' ? '技能' : '经验')),
           h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
           h('dl', { className: 'eng-kv' },
             selection.kind === 'experience' ? h('dt', null, '结果') : null,
             selection.kind === 'experience' ? h('dd', null, `${outcomeOf(selection.outcome)[0]} · G ${fmtNumber(selection.G)}`) : null,
             selection.kind === 'skill' ? h('dt', null, '使用') : null,
             selection.kind === 'skill' ? h('dd', null, `uses ${selection.uses || 0} · helped ${selection.helped || 0} · hurt ${selection.hurt || 0}`) : null,
+            selection.kind === 'skill' && (selection.childCount || 0) > 0 ? h('dt', null, '子技能') : null,
+            selection.kind === 'skill' && (selection.childCount || 0) > 0 ? h('dd', null, String(selection.childCount)) : null,
+            selection.kind === 'suite' ? h('dt', null, '子技能数') : null,
+            selection.kind === 'suite' ? h('dd', null, String(selection.count || 0)) : null,
             selection.kind === 'type' ? h('dt', null, '经验数') : null,
             selection.kind === 'type' ? h('dd', null, String(selection.count || 0)) : null,
-            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, String(selection.id || '').replace(/^(exp|skill|type):/, '')))))
+            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, String(selection.id || '').replace(/^(exp|skill|type|suite):/, '')))))
     }
 
     function Settings(props) {

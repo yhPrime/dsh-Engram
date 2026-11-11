@@ -476,19 +476,66 @@ export function buildGraph(source) {
     edges.push({ source: `type:${typeId}`, target: `exp:${row.id}`, kind: 'type', strength: 0.25 + Math.min(0.5, Math.abs(Number(row.G) || 0) * 0.25) })
     expIds.add(row.id)
   }
+  const skillTree = buildSkillTree(skills)
+  const skillNodes = new Map()
+  const walkSkill = (node, parentId) => {
+    const id = node.kind === 'group' ? `suite:${node.path}` : `skill:${node.path}`
+    if (node.kind === 'group') {
+      nodes.push({
+        id,
+        kind: 'suite',
+        label: node.name,
+        path: node.path,
+        parent: parentId || '',
+        depth: node.depth,
+        count: node.skillCount,
+        weight: Math.min(1, 0.5 + node.skillCount / 20),
+      })
+    } else {
+      const skill = node.skill
+      const skillNode = {
+        id,
+        kind: 'skill',
+        label: skill.name,
+        path: node.path,
+        parent: parentId || '',
+        depth: node.depth,
+        childCount: node.childCount,
+        status: skill.status,
+        uses: skill.uses || 0,
+        helped: skill.helped || 0,
+        hurt: skill.hurt || 0,
+        weight: Math.min(1, 0.45 + (skill.uses || 0) / 12),
+      }
+      nodes.push(skillNode)
+      skillNodes.set(node.path, skillNode)
+    }
+    // 顶层挂根；套件内部挂父节点（总技能或组节点），这样图上能看出母子关系。
+    edges.push({
+      source: parentId || 'root',
+      target: id,
+      kind: parentId === '' ? 'root' : 'suite',
+      strength: parentId === '' ? 0.55 : 0.9,
+    })
+    for (const child of node.children) walkSkill(child, id)
+  }
+  for (const rootNode of skillTree) walkSkill(rootNode, '')
   for (const skill of skills) {
     const id = String(skill.id || '')
-    nodes.push({ id: `skill:${id}`, kind: 'skill', label: skill.name, status: skill.status, uses: skill.uses || 0, helped: skill.helped || 0, hurt: skill.hurt || 0, weight: Math.min(1, 0.45 + (skill.uses || 0) / 12) })
+    const node = skillNodes.get(id)
+    if (!node) continue
     const derived = Array.isArray(skill.derivedFrom) ? skill.derivedFrom : []
     const linked = derived.filter((experienceId) => expIds.has(String(experienceId)))
     for (const experienceId of linked) edges.push({ source: `exp:${experienceId}`, target: `skill:${id}`, kind: 'derived', strength: 0.5 + Math.min(0.45, (skill.uses || 0) / 12) })
-    if (linked.length === 0) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
+    // 独立技能没有经验来源时仍然挂根；套件子技能已有父边，不再重复挂根。
+    if (linked.length === 0 && !String(id).includes('/')) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
   }
+  const suiteRoots = skillTree.filter((node) => node.kind === 'group' || node.skillCount > 1).length
   return {
     notice: String(read.notice || ''),
     nodes,
     edges,
-    summary: { types: types.length, experiences: rows.length, skills: skills.length },
+    summary: { types: types.length, experiences: rows.length, skills: skills.length, suites: suiteRoots },
     updatedAt: String(read.updatedAt || ''),
   }
 }

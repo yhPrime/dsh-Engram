@@ -502,6 +502,29 @@ await check('POST /settings：内核参数落盘、可清空', async () => {
 })
 
 
+await check('GET /graph：套件节点与父子边（总技能 + 组节点）', async () => {
+  const dir = tempDir()
+  createSkill(dir, { id: 'demo-suite', name: '套件总技能', description: '根', body: '# 何时用\n根', typeName: '代码 / 插件' })
+  createSkill(dir, { id: 'demo-suite/a', name: '子甲', description: '甲', body: '# 何时用\n甲', typeName: '代码 / 插件' })
+  createSkill(dir, { id: 'demo-suite/b', name: '子乙', description: '乙', body: '# 何时用\n乙', typeName: '代码 / 插件' })
+  createSkill(dir, { id: 'group-only/x', name: '组内子', description: '组', body: '# 何时用\n组', typeName: '代码 / 插件' })
+  const source = createLiveSource({ dataDir: dir })
+  const { status, payload } = await call(source, '/graph')
+  assert.equal(status, 200)
+  const data = payload.data
+  const rootSkill = data.nodes.find((node) => node.id === 'skill:demo-suite')
+  assert.equal(rootSkill.kind, 'skill')
+  assert.equal(rootSkill.childCount, 2)
+  const group = data.nodes.find((node) => node.id === 'suite:group-only')
+  assert.equal(group.kind, 'suite')
+  assert.equal(group.count, 1)
+  const rootSkillEdge = data.edges.find((edge) => edge.source === 'skill:demo-suite' && edge.target === 'skill:demo-suite/a')
+  assert.equal(rootSkillEdge.kind, 'suite')
+  const groupEdge = data.edges.find((edge) => edge.source === 'suite:group-only' && edge.target === 'skill:group-only/x')
+  assert.equal(groupEdge.kind, 'suite')
+  assert.equal(data.summary.suites, 2)
+})
+
 await check('GET /graph：根/类型/经验/技能节点与边齐全', async () => {
   const source = createMockSource()
   const { status, payload } = await call(source, '/graph')
