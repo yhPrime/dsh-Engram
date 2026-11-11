@@ -307,6 +307,9 @@ check('添加技能弹窗：拖拽区 + 来源路径，高级选项折叠（做�
   assert.ok(source.includes('const batch = sourcePath.trim()'), '套件没有走批量分支')
   assert.ok(source.includes('body: { content: batch[index]'), '套件没有逐个提交（进度条要靠逐个推进）')
   assert.ok(source.includes('eng-progress-track'), '批量导入没有进度条视图')
+  assert.ok(source.includes('eng-progress-list'), '进度视图没有每个技能的列表')
+  assert.ok(source.includes("'data-state': row.state"), '列表行没有状态标记')
+  assert.ok(source.includes('eng-progress-tag'), '列表行没有分类/标签')
   assert.ok(source.includes('正在导入技能'), '进度视图没有标题')
 })
 check('推送前发现远端有新提交：弹窗给「覆盖 / 换远端仓库 / 另建分支」三条路', () => {

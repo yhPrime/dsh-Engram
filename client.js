@@ -55,6 +55,20 @@ window.__ModuleLoader__.load({
 .eng-modal-title { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
 .eng-progress-text { font-size: 13px; line-height: 1.6; margin: 6px 0 10px; }
 .eng-progress-track { height: 8px; border-radius: 999px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.18)); overflow: hidden; }
+.eng-progress-meta { margin: 6px 0 10px; font-size: 12px; opacity: 0.72; }
+.eng-progress-list { max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 6px 0; }
+.eng-progress-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; font-size: 12px; }
+.eng-progress-item[data-state="running"] { background: var(--dsw-alias-bg-module, rgba(128,128,128,0.12)); }
+.eng-progress-item[data-state="failed"] { outline: 1px solid var(--dsw-alias-state-error, rgba(200,60,60,0.45)); }
+.eng-progress-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.45)); }
+.eng-progress-item[data-state="running"] .eng-progress-dot { background: var(--dsw-alias-brand-primary, currentColor); }
+.eng-progress-item[data-state="done"] .eng-progress-dot { background: var(--dsw-alias-state-success, rgba(40,160,90,0.9)); }
+.eng-progress-item[data-state="failed"] .eng-progress-dot { background: var(--dsw-alias-state-error, rgba(200,60,60,0.9)); }
+.eng-progress-name { flex: 0 1 auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eng-progress-state { flex-shrink: 0; opacity: 0.8; }
+.eng-progress-tag { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; font-size: 11px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.14)); }
+.eng-progress-tag-soft { opacity: 0.75; }
+.eng-progress-error { flex-shrink: 0; font-size: 11px; }
 .eng-progress-bar { height: 100%; border-radius: 999px; background: var(--dsw-alias-brand-primary, currentColor); transition: width 180ms ease; }
 .eng-modal-warn { margin: 12px 0 14px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
@@ -944,20 +958,27 @@ window.__ModuleLoader__.load({
         const batch = sourcePath.trim() === '' && contentsDraft.length > 1 ? contentsDraft : null
         try {
           if (batch !== null) {
-            const agg = { suite: true, count: 0, items: [] }
-            // 逐个导入：每装好一个就把进度条往前推一格，弹窗只留进度条
-            for (let index = 0; index < batch.length; index += 1) {
-              setProgress({ total: batch.length, done: index, current: nameOfSkill(batch[index]) })
-              try {
-                const one = await request('/skills/import', { method: 'POST', body: { content: batch[index], categories, notes } })
-                agg.count += Number(one.count) || 1
-                agg.items.push(...(one.items || []))
-              } catch (caught) {
-                agg.items.push({ action: 'failed', name: nameOfSkill(batch[index]), error: caught.message || String(caught) })
-              }
-              setProgress({ total: batch.length, done: index + 1, current: index + 1 < batch.length ? nameOfSkill(batch[index + 1]) : "" })
+          const agg = { suite: true, count: 0, items: [] }
+          const rows = batch.map((text) => ({ name: nameOfSkill(text), state: "waiting", category: "", tags: [], error: "" }))
+          // 逐个导入：进度条前进一格，同时把该技能的分类结果写进下面的列表
+          for (let index = 0; index < batch.length; index += 1) {
+            rows[index].state = "running"
+            setProgress({ total: batch.length, done: index, current: rows[index].name, rows: rows.map((row) => ({ ...row })) })
+            try {
+              const one = await request('/skills/import', { method: 'POST', body: { content: batch[index], categories, notes } })
+              const item = (one.items || [])[0] || {}
+              rows[index].state = "done"
+              rows[index].category = String(item.category || "")
+              rows[index].tags = Array.isArray(item.tags) ? item.tags.slice(0, 3) : []
+              agg.count += Number(one.count) || 1
+              agg.items.push(...(one.items || []))
+            } catch (caught) {
+              rows[index].state = "failed"
+              rows[index].error = caught.message || String(caught)
+              agg.items.push({ action: 'failed', name: rows[index].name, error: rows[index].error })
             }
-            setProgress(null)
+            setProgress({ total: batch.length, done: index + 1, current: index + 1 < batch.length ? rows[index + 1].name : "", rows: rows.map((row) => ({ ...row })) })
+          }            setProgress(null)
             setResult(agg)
             props.onImported(agg)
             return
@@ -975,15 +996,23 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 批量导入时：不再显示表单，整块换成进度条
+      // 批量导入时：表单换成「进度条 + 每个技能的实时状态 / 分类结果」
       if (progress !== null) {
         const percent = Math.round((progress.done / Math.max(1, progress.total)) * 100)
+        const stateText = (row) => row.state === 'done' ? '已导入' : row.state === 'failed' ? '失败' : row.state === 'running' ? '导入中…' : '等待'
         return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '正在导入技能' },
           h('div', { className: 'eng-modal' },
             h('h3', { className: 'eng-modal-title' }, '正在导入技能'),
             h('div', { className: 'eng-progress-text' }, progress.current === '' ? `已完成 ${progress.done}/${progress.total}` : `正在导入 ${Math.min(progress.done + 1, progress.total)}/${progress.total}：${progress.current}`),
             h('div', { className: 'eng-progress-track' }, h('div', { className: 'eng-progress-bar', style: { width: `${percent}%` } })),
-            h('div', { className: 'eng-muted', style: { marginTop: 8, fontSize: 12 } }, `${percent}% · 每装好一个技能，进度条就前进一格；全部完成后自动关闭`)))
+            h('div', { className: 'eng-progress-meta' }, `${percent}% · 每个技能依次做一次临时会话分类，结果显示在下面`),
+            h('div', { className: 'eng-progress-list' }, (progress.rows || []).map((row, index) => h('div', { className: 'eng-progress-item', 'data-state': row.state, key: `${index}-${row.name}` },
+              h('span', { className: 'eng-progress-dot' }),
+              h('span', { className: 'eng-progress-name', title: row.name }, row.name),
+              h('span', { className: 'eng-progress-state' }, stateText(row)),
+              row.state === 'done' && row.category !== '' ? h('span', { className: 'eng-progress-tag' }, row.category) : null,
+              row.state === 'done' && row.tags.length > 0 ? h('span', { className: 'eng-progress-tag eng-progress-tag-soft' }, row.tags.join(' / ')) : null,
+              row.state === 'failed' ? h('span', { className: 'eng-progress-error', title: row.error }, '失败') : null)))))
       }
       return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加技能' },
         h('div', { className: 'eng-modal' },
