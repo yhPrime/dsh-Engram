@@ -231,6 +231,7 @@ export function defaultMeta(id) {
     // 新技能一开始排到最前：刚加进来的技能先让用户看见、能被触发，
     // 之后靠实际使用（feedback/uses）把顺序调回正常。
     order: 90,
+    files: [],
     pendingCommit: false,
   }
 }
@@ -887,7 +888,8 @@ function gitRun(cwd, args) {
   return execFileSync('git', ['-C', cwd, ...args], {
     encoding: 'utf8',
     stdio: 'ignore',
-    timeout: 15000,
+    // 技能树可以上万文件：git add/commit 会超过 15s，超时被杀会留下 index.lock 并让后续提交永久失败。
+    timeout: 180000,
     windowsHide: true,
   })
 }
@@ -897,7 +899,7 @@ function gitCapture(cwd, args) {
     return String(execFileSync('git', ['-C', cwd, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 15000,
+      timeout: 180000,
       windowsHide: true,
     }) || '')
   } catch {
@@ -970,6 +972,13 @@ function sleepSync(ms) {
 }
 
 export function commitSkills(dataDir, message) {
+  // 上一次被超时杀掉的 git 会留下 index.lock：超过 60s 的视为残留，清掉再提交，否则永久卡死。
+  try {
+    const lock = path.join(skillsRootOf(dataDir), '.git', 'index.lock')
+    if (fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs > 60000) fs.unlinkSync(lock)
+  } catch {
+    // 清锁失败不阻断：让 git 自己报错
+  }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       ensureSkillsRepo(dataDir)
@@ -1396,6 +1405,27 @@ export function applySkillObstacle(dataDir, slug, options = {}) {
   }
   const locked = withSkillLock(dataDir, assertSafeRelPath(String(slug)), () => applySkillObstacleUnlocked(dataDir, slug, options), options)
   return locked.busy === true ? { action: 'busy', slug } : locked.value
+}
+
+/**
+ * 把「裸 slug」解析成真实技能 id（0.13.0）：套件里的技能 id 是 `套件/子技能`，
+ * 用户/模型常只写子技能名。精确匹配优先；唯一后缀匹配自动补全；歧义或不存在要报错，
+ * 绝不静默成功（以前 feedback 裸 slug 返回成功但账本没写）。
+ */
+export function resolveSkillId(dataDir, raw) {
+  const wanted = String(raw || '').trim().replace(/^skill:/, '').replace(/\\/g, '/')
+  if (wanted === '') throw new Error('技能 id 不能为空（形如 skill:<套件/技能名>）')
+  const skills = listSkills(dataDir, { onlyLocal: true })
+  const wantedLower = wanted.toLowerCase()
+  const exact = skills.find((item) => String(item.slug || '').toLowerCase() === wantedLower)
+  if (exact !== undefined) return String(exact.slug)
+  const suffix = skills.filter((item) => String(item.slug || '').toLowerCase().endsWith(`/${wantedLower}`))
+  if (suffix.length === 1) return String(suffix[0].slug)
+  if (suffix.length > 1) {
+    throw new Error(`技能 id 有歧义：${wanted}；候选：${suffix.map((item) => item.slug).join('、')}`)
+  }
+  const available = skills.slice(0, 8).map((item) => item.slug)
+  throw new Error(`没有这个技能：${wanted}${available.length > 0 ? `；可用 id：${available.join('、')}` : '（技能库为空）'}`)
 }
 
 /** 用后结果：成功 = helped + 每个活跃签名记 clean；失败 = hurt。 */

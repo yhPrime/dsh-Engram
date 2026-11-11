@@ -1479,7 +1479,8 @@ export function resolveVerdicts(store, list = [], options = {}) {
  * 不这么降级的话，模型会看到一排 `rank_score: 0` 却以为那是排序结果。
  */
 export function rankExperiences(store, intent, limit = 8, options = {}) {
-  const experiences = visibleExperiences(store, options)
+  // 待判定超时转为 skipped 的条不再参与召回：它们从未被判过，拿它们当候选会误导。
+  const experiences = visibleExperiences(store, options).filter((item) => item.verdict !== 'skipped')
   const routingMode = ['off', 'shadow', 'on'].includes(String(options.routing || '').toLowerCase())
     ? String(options.routing).toLowerCase()
     : 'off'
@@ -1634,31 +1635,10 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     ))
   }
 
-  let note
-  // 相关性下限（0.13.0，行为复核发现）：候选全都不像时，不能还给一排「按优势排序」的瞎推荐。
-  const topSimilarity = candidates.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
-  // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
-  weak = candidates.length > 0 && topSimilarity < 0.4
-  if (neighbors.length === 0) {
-    note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
-  } else if (weak) {
-    note = `没有足够相关的历史经验（最高相似度 ${round4(topSimilarity)}）；先按常规做，做完记一条，别硬套下面的候选。`
-  } else if (degenerate) {
-    note = `无成败对照（advantage 极差 ${spread}），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。`
-  } else {
-    note = `按「相似度×0.6 + Â×0.4」排序（Â=Q̂−V̂，乘置信度；advantage 极差 ${spread}）。`
-  }
-  // 全族都是负回报时，排序仍会给出一个「最不坏」的——必须明说别照做，否则模型会把失败做法当推荐。
-  const allNegative = candidates.length > 0 && candidates.every((item) => item.evidence.every((evidence) => (Number(evidence.G) || 0) < 0))
-  const warning = allNegative
-    ? '候选全是负回报：没有可推荐的做法，别照着做；建议换个做法并在做完后记录结果。'
-    : null
-
   // 相关性与优势混排（0.13.0，行为模拟发现）：只按 Â 排会被成熟条占满，新记的条永远排不上来；
   // 改为 `0.6×相似度 + 0.4×rank_score`，让「像不像当前任务」成为主序，Â 做次序。必须排在截断之前。
   // 给了情境线索时不混排：情境优先是另一条独立的排序（见上），混排会把它的优先权盖掉。
-  // 0.13 重建：排序混排默认关闭（先保持 0.12 的 Â 排序手感），按需打开。
-  if (options.rankBlend === true && !degenerate && queryContext.length === 0) {
+  if (options.rankBlend !== false && !degenerate && queryContext.length === 0) {
     const blend = (item) => 0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0)
     candidates.sort((left, right) => (
       blend(right) - blend(left)
@@ -1678,6 +1658,27 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       .sort((left, right) => (Number(right.mean_similarity) || 0) - (Number(left.mean_similarity) || 0))[0]
     if (negativeCandidate !== undefined) truncated[truncated.length - 1] = negativeCandidate
   }
+
+  // 相关性下限（0.13.0）：用**实际展示的条**算（复核发现：用全量会把没展示的高分条算进来，weak 漏报）。
+  // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
+  const shownSimilarity = truncated.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
+  const topSimilarity = shownSimilarity
+  weak = truncated.length > 0 && shownSimilarity < 0.4
+  let note
+  if (neighbors.length === 0) {
+    note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
+  } else if (weak) {
+    note = `没有足够相关的历史经验（最高相似度 ${round4(shownSimilarity)}）；先按常规做，做完记一条，别硬套下面的候选。`
+  } else if (degenerate) {
+    note = `无成败对照（advantage 极差 ${spread}），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。`
+  } else {
+    note = `按「相似度×0.6 + Â×0.4」排序（Â=Q̂−V̂，乘置信度；advantage 极差 ${spread}）。`
+  }
+  // 全族都是负回报时，排序仍会给出一个「最不坏」的——必须明说别照做，否则模型会把失败做法当推荐。
+  const allNegative = candidates.length > 0 && candidates.every((item) => item.evidence.every((evidence) => (Number(evidence.G) || 0) < 0))
+  const warning = allNegative
+    ? '候选全是负回报：没有可推荐的做法，别照着做；建议换个做法并在做完后记录结果。'
+    : null
 
   // 最近做过的事（0.13.0，行为模拟发现）：用户说「刚才那条/这个装饰」时，候选里常被成熟条挤满；
   // 单列一段「最近相关」（按时间倒序、相似度 ≥0.25），保证当轮那条一定看得见，不挤占候选名额。

@@ -32,7 +32,7 @@ import { measure, slimRecall, slimReceipt } from './token-budget.js'
 import { pendingBrief } from './brief.js'
 import { routeCluster } from './cluster.js'
 import { resolveEngramDataDir } from './settings.js'
-import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug } from './skills.js'
+import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId } from './skills.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
@@ -298,8 +298,9 @@ export function buildTools(defineTool, config = {}) {
       if (picked !== null) {
         const hit = picked.hit
         const mode = picked.trial ? 'skill-trial' : 'skill'
+        // detail：按调用方 limit 返回（默认瘦身档只给 2 条）；技能正文另算。
         const candidates = args.detail === true || config.slimRecall === false
-          ? (result.candidates || []).slice(0, 3)
+          ? (result.candidates || []).slice(0, recallLimit)
           : (slimRecall(result, { limit: 2, detail: false }).candidates || [])
         // 技能命中不代表经验候选相关：候选最高相似度 <0.4 时同样标 weak，别让 note 反称「可参考」。
         const maxSimilarity = candidates.reduce((max, candidate) => Math.max(
@@ -314,7 +315,12 @@ export function buildTools(defineTool, config = {}) {
             id: hit.skill.slug,
             name: hit.skill.name,
             description: hit.skill.description,
-            body: hit.skill.body,
+            body: (() => {
+              // 正文可能几万字（实测某技能 28k）：回执里截到 12k 并标注，完整正文用 readSkill 读。
+              const raw = String(hit.skill.body || '')
+              return raw.length > 12000 ? `${raw.slice(0, 12000)}\n…（正文过长已截断，共 ${raw.length} 字符；完整内容用 readSkill 读）` : raw
+            })(),
+            ...(String(hit.skill.body || '').length > 12000 ? { bodyTruncated: true, bodyChars: String(hit.skill.body).length } : {}),
             context: hit.skill.meta.context,
             files: (hit.skill.meta.files || []).map((item) => item.path),
             confidence: { ...hit.skill.meta.confidence, reason: confidenceReason(hit.skill.meta) },
@@ -326,7 +332,7 @@ export function buildTools(defineTool, config = {}) {
             },
           },
           candidates,
-          brief: result.brief,
+          ...(weakCandidates || !result.brief ? {} : { brief: result.brief }),
           cluster: result.route && result.route.fallback === false ? result.route.name : undefined,
           pendingSkills: pendingSkills,
           pending: pending.length > 0 ? pending : undefined,
@@ -412,8 +418,8 @@ export function buildTools(defineTool, config = {}) {
       const dataDir = dataDirOf()
       // 技能反馈：id 形如 skill:<slug> 时改技能账本，而不是经验条。
       if (String(args.id || '').startsWith('skill:')) {
-        const slug = String(args.id).slice('skill:'.length).trim()
-        if (slug === '') throw new Error('skill id 不能为空：应形如 skill:<slug>')
+        // 裸 slug 可能省略套件前缀：解析成真实 id；找不到/有歧义要明确报错（以前静默成功但账本不写）。
+        const slug = resolveSkillId(dataDir, String(args.id).slice('skill:'.length))
         if (args.result === 'neutral') {
           return { action: 'skill-neutral', id: args.id, slug, result: 'neutral', hint: 'neutral 不改技能 confidence（没有证据说明更好或更差）。' }
         }
@@ -425,6 +431,7 @@ export function buildTools(defineTool, config = {}) {
           slug,
           result: args.result,
           confident: out.confident,
+          commit: out.commit === true,
           hint: args.result === 'hurt'
             ? 'hurt 会拉低 helped 比例：跌出阈值后召回不再只返回技能，具体经验重新可见。'
             : 'helped 累积到 ≥3 次且比例 ≥0.8 后，该技能才会被高确定召回。',
@@ -483,7 +490,7 @@ export function buildTools(defineTool, config = {}) {
         intent,
         context: args.context,
         minSamples: args.minSamples,
-        name: args.type,
+        name: args.skillName !== undefined ? args.skillName : args.type,
       })
       if (draft === null) {
         return { action: 'skipped', reason: '同族样本不足或无正负对照（需要 ≥3 条，其中 ≥2 正 ≥1 负；全成功/全失败不沉淀）' }
@@ -522,8 +529,7 @@ export function buildTools(defineTool, config = {}) {
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
       const dataDir = dataDirOf()
-      const slug = String(args.slug || '').trim()
-      if (slug === '') throw new Error('slug 必填')
+      const slug = resolveSkillId(dataDir, args.slug)
       let merged = null
       if (typeof args.body === 'string' && args.body.trim() !== '') {
         const current = readSkillBySlug(dataDir, slug)
@@ -547,6 +553,7 @@ export function buildTools(defineTool, config = {}) {
         slug,
         files: skill === null ? [] : (skill.meta.files || []).map((item) => item.path),
         bodyUpdated: merged !== null,
+        commit: attached !== null && attached.commit === true,
       }
     },
   })
