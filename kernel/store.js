@@ -234,6 +234,16 @@ export function resolveToolDataDir(config = {}) {
   return dataDirFromProviderState(config) || resolveDataDir(config)
 }
 
+/** 同步睡眠（不忙等，锁/重试用）。 */
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  } catch {
+    const until = Date.now() + ms
+    while (Date.now() < until) { /* 退化为忙等 */ }
+  }
+}
+
 export function storeFile(dataDir) {
   return path.join(dataDir, FILE_NAME)
 }
@@ -241,8 +251,31 @@ export function storeFile(dataDir) {
 export function readStore(dataDir) {
   const file = storeFile(dataDir)
   let store
+  let raw = null
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch (error) {
+    // 并发写/读者占用会造成瞬时读失败：重试；仍读不出就抛错。
+    // 绝不静默返回空库——空快照被未加锁的读改写路径写回，会把整库清空。
+    if (error && error.code === 'ENOENT') {
+      raw = null
+    } else {
+      for (let attempt = 0; attempt < 10 && raw === null; attempt += 1) {
+        sleepSync(20)
+        try {
+          raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+        } catch {
+          // 继续重试
+        }
+      }
+      if (raw === null) {
+        throw new Error(`经验库读取失败（文件可能正被写入）：${error && error.message ? error.message : error}`)
+      }
+    }
+  }
+  if (raw === null) {
+    store = { version: 1, types: [{ ...SYSTEM_TYPE }], experiences: [] }
+  } else {
     const types = (Array.isArray(raw.types) && raw.types.length > 0 ? raw.types : [{ ...SYSTEM_TYPE }]).map((type) => (type && type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
     const experiences = Array.isArray(raw.experiences) ? raw.experiences.filter((item) => item && typeof item === 'object') : []
     // 旧数据迁移：GOutcome 缺失时按 outcome 基准补上；有反馈日志就以日志重放为准，
@@ -275,8 +308,6 @@ export function readStore(dataDir) {
       }
     }
     store = { version: Number(raw.version) || 1, types, experiences }
-  } catch {
-    store = { version: 1, types: [{ ...SYSTEM_TYPE }], experiences: [] }
   }
   // 簇是派生视图：每次读都从 types + 可见经验重算，不落盘（writeStore 只写固定字段）。
   ensureClusters(store)
@@ -289,7 +320,7 @@ export function readStore(dataDir) {
  * 超过 STALE_LOCK_MS 的锁视为残留，强制清掉，避免崩溃后永久锁死。
  */
 const heldLocks = new Set()
-const STALE_LOCK_MS = 10000
+const STALE_LOCK_MS = 60000
 
 export function withStoreLock(dataDir, fn) {
   const key = path.resolve(String(dataDir || ''))
@@ -297,7 +328,7 @@ export function withStoreLock(dataDir, fn) {
   const lockDir = `${storeFile(key)}.lock`
   // 数据目录可能还不存在（首次记录）：先建父目录，否则 mkdir 锁目录会 ENOENT。
   fs.mkdirSync(path.dirname(lockDir), { recursive: true })
-  const deadline = Date.now() + 2000
+  const deadline = Date.now() + 10000
   let acquired = false
   while (!acquired) {
     try {
@@ -315,8 +346,7 @@ export function withStoreLock(dataDir, fn) {
         continue
       }
       if (Date.now() > deadline) throw new Error(`经验库正被另一个进程写入（锁 ${lockDir}），稍后重试`)
-      const until = Date.now() + 20
-      while (Date.now() < until) { /* 短暂自旋，避免引入异步 */ }
+      sleepSync(20)
     }
   }
   heldLocks.add(key)
@@ -347,26 +377,24 @@ export function writeStore(dataDir, store, options = {}) {
   }
   try {
     fs.writeFileSync(temp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
-    // Windows 上 rename 覆盖会被并发读者打断（EPERM）：重试几次，仍失败就退化为覆盖写。
+    // Windows 上 rename 覆盖会被并发读者打断（EPERM/EBUSY）：重试；仍失败就抛错。
+    // 绝不退化成 copyFile/直接覆盖——那会让读者读到半截/空库，进而可能把整库写空。
     let renamed = false
-    for (let attempt = 0; attempt < 5 && !renamed; attempt += 1) {
+    let lastError = null
+    for (let attempt = 0; attempt < 20 && !renamed; attempt += 1) {
       try {
         fs.renameSync(temp, file)
         renamed = true
       } catch (error) {
-        if (error && error.code === 'EPERM' && attempt < 4) {
-          const until = Date.now() + 30
-          while (Date.now() < until) { /* 等读者松手 */ }
+        lastError = error
+        if (error && (error.code === 'EPERM' || error.code === 'EBUSY' || error.code === 'EACCES')) {
+          sleepSync(25)
           continue
         }
-        if (error && error.code === 'EPERM') {
-          fs.copyFileSync(temp, file)
-          renamed = true
-        } else {
-          throw error
-        }
+        throw error
       }
     }
+    if (!renamed) throw new Error(`经验库写入被占用（rename 重试 20 次仍失败）：${lastError && lastError.message ? lastError.message : String(lastError)}`)
   } finally {
     try {
       fs.unlinkSync(temp)
