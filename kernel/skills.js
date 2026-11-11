@@ -940,7 +940,10 @@ export function matchSkill(skills, intent, options = {}) {
     // 一有反馈（uses>0）就回落，排序随实际使用回归正常。
     const freshBoost = (Number((skill.meta.confidence || {}).uses) || 0) === 0 ? 0.06 : 0
     const score = similarity + contextScore * 0.1 + freshBoost
-    candidates.push({ skill, score, size: text.length })
+    // 命中词：把「query 的哪些词在这个技能里找到了」一起带出去，
+    // 让模型能自查相关性（命中词跟任务明显无关 = 错配，应该换 intent 重试）。
+    const matchedTerms = units.filter((unit) => text.includes(unit)).slice(0, 8)
+    candidates.push({ skill, score, size: text.length, matchedTerms })
   }
   if (candidates.length === 0) return null
   candidates.sort((left, right) => right.score - left.score)

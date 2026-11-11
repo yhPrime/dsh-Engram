@@ -109,6 +109,15 @@ await check('技能命中时经验候选并列返回（不再被技能模式吞�
   assert.ok(result.candidates.length > 0, '技能模式把经验候选吞掉了')
 })
 
+await check('技能返回带自查依据：matchedTerms + selfCheck（错配能在第一步被挡掉）', async () => {
+  const engine = engineModule.createEngine({ dataDir, env: process.env })
+  const result = await engine.recall({ intent: '理顺 PPTX 课件右下角页码' })
+  assert.ok(result.skill, '没命中技能')
+  assert.ok(Array.isArray(result.skill.match.matchedTerms), 'matchedTerms 不是数组')
+  assert.ok(result.skill.match.matchedTerms.length > 0, 'matchedTerms 为空，模型没法自查')
+  assert.ok(typeof result.skill.match.selfCheck === 'string' && result.skill.match.selfCheck.includes('错配'), '缺少自查指引')
+  assert.ok(String(result.note || '').includes('matchedTerms'), 'note 没提醒自查')
+})
 await check('新技能默认排在高位（order 90），后续靠使用回归', () => {
   const created = skills.createSkill(dataDir, { slug: 'fresh-order', name: '新技能排序', description: '刚加进来的技能' })
   const meta = JSON.parse(fs.readFileSync(path.join(created.dir, 'skill.json'), 'utf8'))
