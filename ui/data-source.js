@@ -434,6 +434,11 @@ export function skillRowOf(input = {}) {
   const state = skillStatusOf({ helped, hurt, openObstacles })
   return {
     id: String(input.id || ''),
+    path: String(input.path || input.id || ''),
+    depth: Math.max(0, Math.trunc(Number(input.depth) || 0)),
+    parentPath: String(input.parentPath || ''),
+    rootName: String(input.rootName || ''),
+    childCount: Math.max(0, Math.trunc(Number(input.childCount) || 0)),
     name: String(input.name || input.id || '未命名技能'),
     description: String(input.description || ''),
     body: String(input.body || ''),
@@ -464,7 +469,7 @@ export function skillRowOf(input = {}) {
     globalPath: String(input.globalPath || ''),
     lastUsedAt: String(input.lastUsedAt || ''),
     updatedAt: String(input.updatedAt || ''),
-    path: String(input.path || ''),
+    dir: String(input.dir || ''),
   }
 }
 
