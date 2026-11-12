@@ -211,6 +211,32 @@ check('回归 B3：tool/call 未落盘时写行仍归属最近会话，不是孤
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+check('回归 H4：三工作区并行，工具面各自按 config.cwd 归属（API 路径不串会话）', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-h4-data-'))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-h4-sess-'))
+  const works = ['work-a', 'work-b', 'work-c'].map((name) => path.join(root, name))
+  const sessionIds = []
+  works.forEach((work, index) => {
+    const id = `session-h4-${index}`
+    sessionIds.push(id)
+    const sessionDir = path.join(root, `ws-${index}`, id)
+    fs.mkdirSync(sessionDir, { recursive: true })
+    const file = path.join(sessionDir, 'session.v4.jsonl')
+    fs.writeFileSync(file, `${JSON.stringify({ type: 'session', version: 4, cwd: work, origin: 'local' })}\n`)
+    fs.utimesSync(file, new Date(Date.now() - index * 1000), new Date(Date.now() - index * 1000))
+  })
+  const defineTool = (definition) => definition
+  works.forEach((work, index) => {
+    const tools = buildTools(defineTool, { dataDir, sessionsRoot: root, cwd: work })
+    const record = tools.find((tool) => tool.name === 'exp_record')
+    const out = record.execute({ intent: `H4 意图 ${index}`, action: `H4 做法 ${index}`, outcome: 'success' })
+    const row = readStore(dataDir).experiences.find((item) => item.id === out.id)
+    assert.equal(row.sessionId, sessionIds[index], `${work} 应归属 ${sessionIds[index]}`)
+  })
+  fs.rmSync(dataDir, { recursive: true, force: true })
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 check('回归 B4：pending 上限按会话各自 ≤2，不推进别的会话的提醒计数', () => {
   const store = newStore()
   // 关掉近似合并，保证三条真是三条（默认阈值会把 a1/a2/a3 并成一条）。
@@ -309,10 +335,10 @@ check('回归：工具路径认不出会话时 recent 为空（fail-closed），
       { ...base, id: 'ex_b', intent: 'B 的任务', action: 'B 做法', sessionId: 'sess-B' },
     ],
   }
-  const leaked = rankExperiences(store, '随便什么', 3, { recent: true, recentFailClosed: true, sessionId: '' })
-  assert.deepEqual(leaked.recent, [], '认不出会话时不得带出别的会话记录')
-  const ops = rankExperiences(store, '随便什么', 3, { recent: true, sessionId: '' })
-  assert.ok((ops.recent || []).length > 0, 'UI/运维路径保留全量')
+  const leaked = rankExperiences(store, '随便什么', 3, { recent: true, sessionId: '' })
+  assert.deepEqual(leaked.recent, [], '认不出会话时最近记录默认 fail-closed（审计 E2）')
+  const ops = rankExperiences(store, '随便什么', 3, { recent: true, recentAllSessions: true, sessionId: '' })
+  assert.ok((ops.recent || []).length > 0, '显式 recentAllSessions=true 的 UI/运维路径保留全量')
 })
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
