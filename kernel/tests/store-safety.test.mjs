@@ -1,11 +1,3 @@
-/**
- * 数据安全回归（0.13.0，2026-11-11 复核发现后补）：
- *  - 库文件损坏时必须抛错，绝不静默返回空库（空快照被写回会清空整库）；
- *  - 文件不存在时仍按空库处理（首次运行）；
- *  - 写盘不留 .tmp / .lock 残留；锁异常时也会释放。
- *
- * Run: node tests/store-safety.test.mjs
- */
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -86,6 +78,44 @@ check('锁：被占用时给出明确错误而不是静默失败', () => {
   }
 })
 
+check('experiences 非数组：抛结构损坏，不返回空库', () => {
+  const dir = fresh()
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(storeFile(dir), JSON.stringify({ version: 1, types: [{ id: 'ty_a', name: '甲' }], experiences: { bad: true } }), 'utf8')
+  assert.throws(() => readStore(dir), /结构损坏/)
+})
+
+check('types 非数组：抛结构损坏', () => {
+  const dir = fresh()
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(storeFile(dir), JSON.stringify({ version: 1, types: 'oops', experiences: [] }), 'utf8')
+  assert.throws(() => readStore(dir), /结构损坏/)
+})
+
+check('types 含 null：过滤掉，不崩', () => {
+  const dir = fresh()
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(storeFile(dir), JSON.stringify({ version: 1, types: [null, { id: 'ty_a', name: '甲' }], experiences: [] }), 'utf8')
+  const store = readStore(dir)
+  assert.ok(store.types.every((type) => type && typeof type.id === 'string'))
+})
+
+check('typeId 悬空：读时归未分类', () => {
+  const dir = fresh()
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(storeFile(dir), JSON.stringify({ version: 1, types: [], experiences: [{ id: 'ex_a', intent: 'x', action: 'y', outcome: 'success', typeId: 'ty_ghost', typeName: '幽灵' }] }), 'utf8')
+  const store = readStore(dir)
+  assert.equal(store.experiences[0].typeId, 'ty_other')
+})
+
+/**
+ * 数据安全回归（0.13.0，2026-11-11 复核发现后补）：
+ *  - 库文件损坏时必须抛错，绝不静默返回空库（空快照被写回会清空整库）；
+ *  - 文件不存在时仍按空库处理（首次运行）；
+ *  - 写盘不留 .tmp / .lock 残留；锁异常时也会释放。
+ *
+ * Run: node tests/store-safety.test.mjs
+ */
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

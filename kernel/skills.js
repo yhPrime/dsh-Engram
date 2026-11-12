@@ -967,7 +967,8 @@ function sleepSync(ms) {
 }
 
 export function commitSkills(dataDir, message) {
-  // 上一次被超时杀掉的 git 会留下 index.lock：超过 60s 的视为残留，清掉再提交，否则永久卡死。
+  // 上一次被超时杀掉的 git 会留下 index.lock：超过 10 分钟（> 300s git 超时）的视为残留，清掉再提交。
+  // 阈值必须大于 git 超时，否则长提交（13k 文件实测 86–132s）会被后来者误删活锁。
   // 仓库根在 dataDir/.git（ensureSkillsRepo 在 dataDir 初始化），不是 dataDir/skills/.git。
   try {
     const lock = path.join(String(dataDir || ''), '.git', 'index.lock')

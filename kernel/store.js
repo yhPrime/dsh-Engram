@@ -276,8 +276,29 @@ export function readStore(dataDir) {
   if (raw === null) {
     store = { version: 1, types: [{ ...SYSTEM_TYPE }], experiences: [] }
   } else {
-    const types = (Array.isArray(raw.types) && raw.types.length > 0 ? raw.types : [{ ...SYSTEM_TYPE }]).map((type) => (type && type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
-    const experiences = Array.isArray(raw.experiences) ? raw.experiences.filter((item) => item && typeof item === 'object') : []
+    // 结构损坏不能静默降级成空库：空快照被下一次写回会覆盖原数据（对抗测试实测丢 2 条）。
+    if (raw.experiences !== undefined && raw.experiences !== null && !Array.isArray(raw.experiences)) {
+      throw new Error(`经验库结构损坏：experiences 应为数组，实际是 ${typeof raw.experiences}`)
+    }
+    if (raw.types !== undefined && raw.types !== null && !Array.isArray(raw.types)) {
+      throw new Error(`经验库结构损坏：types 应为数组，实际是 ${typeof raw.types}`)
+    }
+    const rawTypes = Array.isArray(raw.types)
+      ? raw.types.filter((type) => type && typeof type === 'object' && !Array.isArray(type) && typeof type.id === 'string' && type.id !== '')
+      : []
+    const types = (rawTypes.length > 0 ? rawTypes : [{ ...SYSTEM_TYPE }]).map((type) => (type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
+    if (!types.some((type) => type.id === SYSTEM_TYPE.id)) types.push({ ...SYSTEM_TYPE })
+    const experiences = Array.isArray(raw.experiences)
+      ? raw.experiences.filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+      : []
+    // typeId 悬空（types 丢失/被删）：读时归「未分类」，别让计数/召回读到幽灵类型。
+    const typeIds = new Set(types.map((type) => type.id))
+    for (const item of experiences) {
+      if (!typeIds.has(item.typeId)) {
+        item.typeId = SYSTEM_TYPE.id
+        item.typeName = SYSTEM_TYPE.name
+      }
+    }
     // 旧数据迁移：GOutcome 缺失时按 outcome 基准补上；有反馈日志就以日志重放为准，
     // 让「G 与 feedback 计数」读到的是同一份真相（日志封顶 20 条）。
     for (const item of experiences) {
