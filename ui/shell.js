@@ -296,6 +296,15 @@ export function buildState(source) {
   const storage = read.storage !== null && typeof read.storage === 'object' ? read.storage : null
   const skills = safeSkills(source)
   const bytes = Number(read.bytes) || (storage === null ? 0 : Number(storage.totalBytes) || 0)
+  let cold = null
+  if (source !== null && source !== undefined && typeof source.cold === 'function') {
+    try {
+      cold = source.cold()
+    } catch (error) {
+      // 冷档读坏不能让概览整页打不开：保留明确错误给界面显示。
+      cold = { years: [], total: 0, samples: [], error: String((error && error.message) || error) }
+    }
+  }
   const base = {
     app: APP_NAME,
     version: pluginVersion(),
@@ -307,6 +316,7 @@ export function buildState(source) {
     updatedAt: read.updatedAt === null || read.updatedAt === undefined ? '' : String(read.updatedAt),
     notice: String(read.notice || ''),
     ...(storage !== null ? { storage } : {}),
+    ...(cold !== null ? { cold } : {}),
     feedbackEta: FEEDBACK_ETA,
     skillSummary: skillSummaryOf(skills),
     usage: usageSummary(safeUsage(source, 500)),

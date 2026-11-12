@@ -137,7 +137,7 @@ window.__ModuleLoader__.load({
 .eng-tip:hover, .eng-tip:focus-visible { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); outline: none; }
 /* 悬浮说明挂在 <body> 上（position: fixed）：宽度按视口上限收，左右上下再夹回视口内，
    不会被面板的 overflow 容器裁掉半截，也不会把长句子排出屏幕。 */
-.eng-tip-layer { position: fixed; z-index: 2147483000; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 16px)); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); background: var(--dsw-alias-bg-layer-2, #ffffff); color: var(--dsw-alias-label-primary, #1f2329); font: 11px/1.55 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0,0,0,.2); pointer-events: none; }
+.eng-tip-layer { position: fixed; z-index: 2147483000; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); background: var(--dsw-alias-bg-layer-2, #ffffff); color: var(--dsw-alias-label-primary, #1f2329); font: 11px/1.55 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0,0,0,.2); pointer-events: none; }
 .eng-subnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 .eng-subnav-item { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
@@ -608,17 +608,57 @@ window.__ModuleLoader__.load({
       const totals = state.totals || {}
       const usage = state.usage || {}
       const summary = state.skillSummary || {}
+      const storage = state.storage !== null && typeof state.storage === 'object' ? state.storage : null
+      const cold = state.cold !== null && typeof state.cold === 'object' ? state.cold : { years: [], total: 0, samples: [] }
+      // 有冷档时默认展开（示例数据/真触发安全阀后用户一眼能看到）；无冷档保持折叠。
+      const [coldOpen, setColdOpen] = useState(Number(cold.total) > 0)
+      const legacy = storage !== null && storage.legacy !== null && typeof storage.legacy === 'object' ? storage.legacy : { exists: false, bytes: 0 }
       const kpis = [
         ['可见经验', totals.visible, '条'],
         ['固化技能', totals.skills, '个'],
         ['今日调用', usage.today, '次'],
         ['库大小', fmtBytes(state.bytes), ''],
       ]
+      const storageCell = (label, main, sub) => h('div', { key: label, style: { minWidth: 0 } },
+        h('div', { className: 'eng-kpi-label' }, label),
+        h('div', { style: { marginTop: 4, fontSize: 14, fontWeight: 600, lineHeight: 1.4 } }, main),
+        sub ? h('div', { className: 'eng-muted', style: { marginTop: 2, fontSize: 11 } }, sub) : null)
       return h('div', { className: 'eng-fill' },
         h('div', { className: 'eng-scroll' },
         h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
           h('span', { className: 'eng-kpi-label' }, label),
           h('span', { className: 'eng-kpi-value' }, value === undefined ? '—' : String(value), h('span', { className: 'eng-kpi-unit' }, unit))))),
+        h('div', { className: 'eng-card eng-section', style: { padding: 15 } },
+          h('h3', { className: 'eng-section-title', style: { marginBottom: 10 } }, '存储结构'),
+          storage === null
+            ? h('div', { className: 'eng-muted' }, '暂无存储信息')
+            : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 } },
+              storageCell('manifest', fmtBytes(storage.manifestBytes), '分片索引'),
+              storageCell('分片', `${storage.bucketFiles || 0} 个`, fmtBytes(storage.bucketBytes)),
+              storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'),
+              storageCell('legacy', legacy.exists ? fmtBytes(legacy.bytes) : '无', legacy.exists ? '可删' : '已无旧库')),
+          storage !== null ? h('div', { className: 'eng-muted', style: { marginTop: 10, fontSize: 11 } },
+            `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件`,
+            legacy.exists ? '；legacy 为迁移前快照，仅用于回滚（可删）' : '') : null,
+          h('div', { style: { marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-l1)' } },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }, onClick: () => setColdOpen((open) => !open) },
+              h('span', { style: { fontWeight: 600 } }, '冷档'),
+              h('span', { className: 'eng-muted' }, cold.error ? '读取失败' : (Number(cold.total) > 0 ? `${cold.total} 条 · ${coldOpen ? '收起' : '展开'}` : '暂无冷档'))),
+            cold.error
+              ? h(Banner, { bad: true }, `冷档读取失败：${cold.error}`)
+              : (Number(cold.total) || 0) === 0
+                ? h('div', { className: 'eng-muted', style: { marginTop: 8 } }, '暂无冷档（容量安全阀未触发）')
+                : coldOpen
+                  ? h('div', { style: { marginTop: 8 } },
+                    (cold.years || []).map((year) => h('div', { key: String(year.year), className: 'eng-muted', style: { marginTop: 4 } },
+                      `${year.year} 年 · ${year.count} 条 · ${fmtBytes(year.bytes)}`)),
+                    (cold.samples || []).length === 0
+                      ? null
+                      : h('div', { style: { marginTop: 6 } }, cold.samples.slice(0, 50).map((row) => h('div', { key: row.id, style: { padding: '4px 0', fontSize: 12 } },
+                        h('span', { className: 'eng-mono', style: { marginRight: 8 } }, `${row.id}\u00a0\u00a0`),
+                        h('span', null, row.intent || '（无意图）'),
+                        h('span', { className: 'eng-muted', style: { marginLeft: 8 } }, `${row.typeName || '未分类'} · ${fmtTime(row.lastSeenAt)}`)))))
+                  : null)),
         h('div', { className: 'eng-cols eng-section' },
           h('div', { className: 'eng-card' },
             h('div', { style: { padding: '13px 15px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },

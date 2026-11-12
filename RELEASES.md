@@ -35,15 +35,11 @@
 
 ## 当前发布
 
-- **v0.14.3（选目录探针）**
-  - `GET /exp-ui/api/pick-directory?probe=1` 只读探针：回答这个宿主能不能弹系统选目录窗口（`available` / `kind` / 原因），不弹窗；点「选择文件夹…」失败时先看它
-- **v0.14.2（存储位置改成「选择文件夹…」）**
-  - 设置页「存储位置」原来是一个文本框 + 「切换」按钮，要自己粘贴 `.exp` 的绝对路径；现在主按钮是「选择文件夹…」，点了弹宿主自己的系统选目录窗口（Windows 上是 `IFileOpenDialog`，与「选工作区目录」同一个窗口），选完直接生效
-  - 新路由 `POST /exp-ui/api/pick-directory`：走宿主 `ctx.directoryPicker` 的 `native` 能力；取消返回 `canceled:true`；宿主只有 `browse` 能力（远程浏览器等）或根本没有这个服务时如实报 `picker-unavailable`，界面退回手填路径，不假装弹过窗口
-  - 选到父级目录而里面有 `.exp` 经验库时顺手用 `.exp`（提示「用的是该文件夹下的 .exp」）；选中空目录会明说「等于从这里新建一份空库」
-  - 输入框保留：仍可粘贴路径后回车保存，用来兜底
-  - 请求悬挂期间用 `res` 的 `close` + `writableEnded` 中止对话框（不能用 `req` 的 `close`：Node 16 起请求体收完就发）
-  - 回归用例：`ui/tests/shell.test.mjs` 新增 4 项（native 返回 / 取消与空值 / 无服务与 browse 能力 / 父级 `.exp` 解析 + `resolvePickedDirectory` 单测）
+- **v0.14.4（存储结构可见）**
+  - 概览新增「存储结构」块：`manifest` / `分片`（个数 + 字节）/ `冷档` / `legacy` 四格 + 「总计 X KB · N 个文件」；legacy 标注「迁移前快照，仅用于回滚（可删）」
+  - 概览新增「冷档」只读列表：年档/条数/大小 + 前 50 条摘要（id/意图/类型/最后使用）；无冷档显示「暂无冷档（容量安全阀未触发）」，冷档文件缺失显示读取失败而不是静默当空
+  - 新增 `engine.coldList()`（只读，不迁移不改 manifest）；`/state` 挂 `cold`
+  - `npm test` 72 步 487 断言全绿
 - **v0.14.1（设置页提示不再被裁）**
   - 设置项「?」的说明气泡改挂到 `<body>` 上、`position: fixed` 定位：宽度 `min(340px, 100vw - 16px)`，左右夹回视口、上方放不下就翻到下方
   - 以前是 `.eng-tip` 里的绝对定位子元素，面板一窄或一滚动就被 overflow 容器裁掉半截（只露中间几行）

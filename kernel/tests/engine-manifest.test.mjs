@@ -17,6 +17,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { createEngine } from '../engine.js'
+import { readManifest } from '../store.js'
 
 const shard = await import('../shard-store.js')
 
@@ -203,6 +204,66 @@ check('storageUsage 已落地时：field 形状与 engine 归一化一致', () =
   assert.equal(snap.storage.totalBytes, usage.totalBytes)
   assert.equal(snap.storage.legacy.exists, true)
   assert.equal(snap.storage.legacy.bytes, usage.legacy.bytes)
+})
+
+check('coldList：无冷档返回空结构（安全阀常态，不报错）', () => {
+  const dataDir = newDir()
+  const engine = createEngine({ dataDir })
+  engine.record({ intent: '给冷档测试写一条热档', action: '普通记录', outcome: 'success', type: '代码 / 插件' })
+  assert.deepEqual(engine.coldList(), { years: [], total: 0, samples: [] })
+  assert.deepEqual(engine.coldList({ limit: 0 }), { years: [], total: 0, samples: [] })
+})
+
+/** 在已迁移的分片库上手工登记一份冷档（模拟容量安全阀触发后的形态）。 */
+function writeColdFixture(dataDir, rows) {
+  const coldDir = shard.coldPath(dataDir)
+  fs.mkdirSync(coldDir, { recursive: true })
+  const file = 'cold/2026-a.jsonl'
+  fs.writeFileSync(path.join(dataDir, file), rows.map((row) => JSON.stringify(row)).join('\n') + '\n', 'utf8')
+  const manifest = readManifest(dataDir)
+  manifest.cold = { years: [{ year: 2026, files: [{ file, count: rows.length, bytes: fs.statSync(path.join(dataDir, file)).size }] }] }
+  shard.writeManifest(dataDir, manifest)
+  return manifest
+}
+
+check('coldList：有冷档返回年档/条数/大小 + 前 N 条摘要（只读）', () => {
+  const dataDir = newDir()
+  const engine = createEngine({ dataDir })
+  engine.record({ intent: '热档一条', action: '普通记录', outcome: 'success', type: '代码 / 插件' })
+  const coldRows = [
+    { id: 'ex_cold_1', intent: '旧任务一：给课件插页', typeName: 'PPT / 课件', lastSeenAt: '2026-01-08T09:30:00.000Z' },
+    { id: 'ex_cold_2', intent: '旧任务二：整理文档', typeName: '文档 / 教案', lastSeenAt: '2026-01-05T14:10:00.000Z' },
+  ]
+  writeColdFixture(dataDir, coldRows)
+  const all = engine.coldList()
+  assert.equal(all.years.length, 1)
+  assert.equal(all.years[0].year, 2026)
+  assert.equal(all.years[0].count, 2)
+  assert.ok(all.years[0].bytes > 0)
+  assert.equal(all.years[0].files[0].file, 'cold/2026-a.jsonl')
+  assert.equal(all.total, 2)
+  assert.deepEqual(all.samples, coldRows.map((row) => ({
+    id: row.id,
+    intent: row.intent,
+    typeName: row.typeName,
+    lastSeenAt: row.lastSeenAt,
+  })))
+  const limited = engine.coldList({ limit: 1 })
+  assert.equal(limited.samples.length, 1)
+  assert.equal(limited.samples[0].id, 'ex_cold_1')
+  // 只读：冷档文件与 manifest 的 cold 登记不应被改写。
+  assert.equal(fs.readFileSync(path.join(dataDir, 'cold/2026-a.jsonl'), 'utf8').trim().split('\n').length, 2)
+  assert.equal(readManifest(dataDir).cold.years[0].files[0].count, 2)
+})
+
+check('coldList：冷档登记存在但文件缺失 → 明确报错（不静默当没有）', () => {
+  const dataDir = newDir()
+  const engine = createEngine({ dataDir })
+  engine.record({ intent: '热档一条', action: '普通记录', outcome: 'success', type: '代码 / 插件' })
+  const manifest = readManifest(dataDir)
+  manifest.cold = { years: [{ year: 2026, files: [{ file: 'cold/2026-a.jsonl', count: 1, bytes: 10 }] }] }
+  shard.writeManifest(dataDir, manifest)
+  assert.throws(() => engine.coldList(), /分片丢失|分片损坏/)
 })
 
 console.log('')

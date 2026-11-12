@@ -525,6 +525,20 @@ export function createMockSource() {
   const usage = createMockUsage()
   const skills = createMockSkills()
   const bootAt = new Date().toISOString()
+  // 冷档示例（0.14.1）：安全阀在真实库通常不触发；示例数据造 2 条，证明有数据时能渲染。
+  const cold = {
+    years: [{
+      year: 2026,
+      files: [{ file: 'cold/2026-a.jsonl', count: 2, bytes: 96 * 1024 }],
+      count: 2,
+      bytes: 96 * 1024,
+    }],
+    total: 2,
+    samples: [
+      { id: 'ex_mock_cold_1', intent: '给研学课 PPT 插一页过渡页（旧版）', typeName: 'PPT / 课件', lastSeenAt: '2026-01-08T09:30:00.000Z' },
+      { id: 'ex_mock_cold_2', intent: '整理经验库文档的存储章节（旧版）', typeName: '文档 / 教案', lastSeenAt: '2026-01-05T14:10:00.000Z' },
+    ],
+  }
   return {
     id: 'mock',
     mode: 'mock',
@@ -532,15 +546,33 @@ export function createMockSource() {
     readOnly: false,
     notice: '当前是示例数据（exp-ui 内置）：可以放心点，反馈只改这份假数据，不会写入真实经验库。',
     read() {
+      const bucketBytes = Buffer.byteLength(JSON.stringify(store), 'utf8')
+      const manifestBytes = 46 * 1024
+      const legacyBytes = 300 * 1024
+      const coldBytes = 96 * 1024
       return {
         store,
         dataDir: '（exp-ui 内置示例数据）',
         file: '',
         exists: true,
-        bytes: Buffer.byteLength(JSON.stringify(store), 'utf8'),
+        bytes: manifestBytes + bucketBytes + coldBytes + legacyBytes,
         updatedAt: bootAt,
         notice: this.notice,
+        storage: {
+          manifestBytes,
+          bucketBytes,
+          bucketFiles: 12,
+          coldBytes,
+          coldFiles: 1,
+          legacy: { exists: true, bytes: legacyBytes },
+          fileCount: 1 + 12 + 1 + 1,
+          totalBytes: manifestBytes + bucketBytes + coldBytes + legacyBytes,
+          updatedAt: bootAt,
+        },
       }
+    },
+    cold() {
+      return cold
     },
     usageRows(limit) {
       const size = Math.max(1, Math.min(500, Math.trunc(Number(limit) || 100)))

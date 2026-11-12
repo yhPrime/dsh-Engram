@@ -260,6 +260,46 @@ export function createEngine(options = {}) {
       }
     },
     /**
+     * 冷档只读列表（0.14.1）：年档/文件/条数/大小 + 前 N 条摘要（id/意图/类型/最后使用）。
+     * 只读：不迁移、不改 manifest；没有冷档返回空结构（安全阀常态）；冷档文件缺失时
+     * `readColdRecords` 会明确报错（拒绝把「丢了」显示成「没有」）。
+     */
+    coldList: (options = {}) => {
+      const requested = Number(options && options.limit)
+      const limit = Math.max(0, Math.min(200, Number.isFinite(requested) ? Math.trunc(requested) : 50))
+      const manifest = readManifest(dataDir)
+      const cold = manifest !== null && manifest.cold !== null && typeof manifest.cold === 'object' ? manifest.cold : null
+      const years = []
+      for (const entry of Array.isArray(cold && cold.years) ? cold.years : []) {
+        const files = (Array.isArray(entry && entry.files) ? entry.files : [])
+          .map((file) => ({
+            file: String((file && file.file) || ''),
+            count: Number(file && file.count) || 0,
+            bytes: Number(file && file.bytes) || 0,
+          }))
+          .filter((file) => file.file !== '')
+        if (files.length === 0) continue
+        years.push({
+          year: Number(entry && entry.year) || 0,
+          files,
+          count: files.reduce((sum, file) => sum + file.count, 0),
+          bytes: files.reduce((sum, file) => sum + file.bytes, 0),
+        })
+      }
+      if (years.length === 0) return { years: [], total: 0, samples: [] }
+      const rows = shardStore.readColdRecords(dataDir, manifest)
+      return {
+        years,
+        total: rows.length,
+        samples: rows.slice(0, limit).map((row) => ({
+          id: String(row.id || ''),
+          intent: String(row.intent || ''),
+          typeName: String(row.typeName || '未分类'),
+          lastSeenAt: String(row.lastSeenAt || row.ts || ''),
+        })),
+      }
+    },
+    /**
      * 页面级热档读：全部分片 + 旧单文件（不读冷档，冷档按 §4.5 默认不参与）。
      * 给 /experiences 列表、/experience 详情、/graph 用；页面级操作，调用方自己决定缓存。
      *

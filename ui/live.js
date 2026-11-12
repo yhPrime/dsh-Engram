@@ -261,6 +261,19 @@ export function createLiveSource(config = {}) {
       }
     },
 
+    /**
+     * 冷档只读列表（0.14.1）：走 engine.coldList，不加载热档。
+     * 没有冷档返回空结构；冷档文件缺失时返回 error 让界面显示明确提示（不整页崩）。
+     */
+    cold(limit = 50) {
+      if (engine === null) return { years: [], total: 0, samples: [] }
+      try {
+        return engine.coldList({ limit })
+      } catch (error) {
+        return { years: [], total: 0, samples: [], error: String((error && error.message) || error) }
+      }
+    },
+
     usageRows(limit) {
       const size = Math.max(1, Math.min(500, Math.trunc(Number(limit) || 100)))
       if (dataDir === '') return []
