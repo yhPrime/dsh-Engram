@@ -11,6 +11,8 @@ import path from 'node:path'
 import { pendingBrief } from '../brief.js'
 import { findActiveSession } from '../session.js'
 import { pendingTasks, rankExperiences, resolveVerdicts, upsertExperience } from '../store.js'
+import { readStore } from '../store.js'
+import { buildTools } from '../tools.js'
 
 let passed = 0
 let failed = 0
@@ -137,7 +139,7 @@ check('findActiveSession：按 cwd 过滤，别的窗口后写不夺身份', () 
     const dir = path.join(root, ws, id)
     fs.mkdirSync(dir, { recursive: true })
     const file = path.join(dir, 'session.v4.jsonl')
-    fs.writeFileSync(file, `${JSON.stringify({ type: 'session', data: { cwd } })}\n`)
+    fs.writeFileSync(file, `${JSON.stringify({ type: 'session', version: 4, cwd })}\n`)
     fs.utimesSync(file, mtime, mtime)
   }
   const old = new Date(Date.now() - 60000)
@@ -152,7 +154,7 @@ check('findActiveSession：裸 UUID 子会话目录也能识别', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-sub-'))
   const dir = path.join(root, 'ws', '55764309-e6eb-4934-87f3-cf515d1f1cdb')
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'session.v4.jsonl'), `${JSON.stringify({ type: 'session', data: { cwd: path.join(root, 'work-a') } })}\n`)
+  fs.writeFileSync(path.join(dir, 'session.v4.jsonl'), `${JSON.stringify({ type: 'session', version: 4, cwd: path.join(root, 'work-a'), origin: 'subagent' })}\n`)
   assert.equal(findActiveSession({ sessionsRoot: root, cwd: path.join(root, 'work-a') }).sessionId, '55764309-e6eb-4934-87f3-cf515d1f1cdb')
 })
 
@@ -162,7 +164,7 @@ check('findActiveSession：优先含本次 exp_recall intent 的会话', () => {
     const dir = path.join(root, 'ws', id)
     fs.mkdirSync(dir, { recursive: true })
     const file = path.join(dir, 'session.v4.jsonl')
-    fs.writeFileSync(file, [`${JSON.stringify({ type: 'session', data: { cwd: path.join(root, 'work-a') } })}`, ...lines.map((line) => JSON.stringify(line))].join('\n') + '\n')
+    fs.writeFileSync(file, [`${JSON.stringify({ type: 'session', version: 4, cwd: path.join(root, 'work-a') })}`, ...lines.map((line) => JSON.stringify(line))].join('\n') + '\n')
     fs.utimesSync(file, mtime, mtime)
   }
   mk('session-other', [], new Date())
@@ -182,8 +184,48 @@ check('recent 按会话过滤：不把别的会话的最近记录带出来', () 
       { ...base, id: 'ex_b', intent: 'B 的任务', action: 'B 做法', sessionId: 'sess-B' },
     ],
   }
-  const result = rankExperiences(store, '随便什么', 3, { sessionId: 'sess-B' })
+  const result = rankExperiences(store, '随便什么', 3, { recent: true, sessionId: 'sess-B' })
   assert.ok((result.recent || []).every((item) => item.id === 'ex_b'), JSON.stringify(result.recent))
+})
+
+// —— task-7 回归：真实宿主时序（tool/call 约 5s 才落盘）——
+check('回归 B3：tool/call 未落盘时写行仍归属最近会话，不是孤儿 pending', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-b3-data-'))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-b3-sess-'))
+  const work = path.join(root, 'work')
+  const dir = path.join(root, 'ws', 'session-b3')
+  fs.mkdirSync(dir, { recursive: true })
+  // 真实 v4 形状：首事件顶层 cwd；刻意没有任何 exp_record tool/call（模拟刷盘滞后）。
+  fs.writeFileSync(path.join(dir, 'session.v4.jsonl'), `${JSON.stringify({ type: 'session', version: 4, cwd: work, origin: 'local' })}\n`)
+  const defineTool = (definition) => definition
+  const tools = buildTools(defineTool, { dataDir, sessionsRoot: root, cwd: work })
+  const record = tools.find((tool) => tool.name === 'exp_record')
+  const out = record.execute({ intent: '给研学课 PPT 插一页过渡页', action: '套模板' })
+  const row = readStore(dataDir).experiences.find((item) => item.id === out.id)
+  assert.equal(row.sessionId, 'session-b3', 'binding 为 null 时也要写 fallback sessionId')
+  // 下一轮同一会话能看到这条 pending（不是孤儿）。
+  const recall = tools.find((tool) => tool.name === 'exp_recall')
+  const recalled = recall.execute({ intent: '给研学课 PPT 插一页过渡页' })
+  assert.ok((recalled.pending || []).some((item) => item.id === out.id), JSON.stringify(recalled.pending))
+  fs.rmSync(dataDir, { recursive: true, force: true })
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+check('回归：工具路径认不出会话时 recent 为空（fail-closed），默认路径保留全量', () => {
+  const now = new Date().toISOString()
+  const base = { outcome: 'success', G: 1, GOutcome: 1, verdict: 'decided', typeId: 'ty_other', typeName: '未分类', ts: now, lastSeenAt: now }
+  const store = {
+    version: 1,
+    types: [{ id: 'ty_other', name: '未分类' }],
+    experiences: [
+      { ...base, id: 'ex_a', intent: 'A 的任务', action: 'A 做法', sessionId: 'sess-A' },
+      { ...base, id: 'ex_b', intent: 'B 的任务', action: 'B 做法', sessionId: 'sess-B' },
+    ],
+  }
+  const leaked = rankExperiences(store, '随便什么', 3, { recent: true, recentFailClosed: true, sessionId: '' })
+  assert.deepEqual(leaked.recent, [], '认不出会话时不得带出别的会话记录')
+  const ops = rankExperiences(store, '随便什么', 3, { recent: true, sessionId: '' })
+  assert.ok((ops.recent || []).length > 0, 'UI/运维路径保留全量')
 })
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)

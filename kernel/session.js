@@ -72,8 +72,13 @@ export function readSessionEvents(file) {
 /** 会话所属工作区（首事件的 cwd）；没有就返回 ''。 */
 export function sessionCwd(events) {
   for (const event of Array.isArray(events) ? events : []) {
-    if (event && event.type === 'session' && event.data && typeof event.data.cwd === 'string') return event.data.cwd
-    if (event && event.type !== 'session') break
+    if (!event) continue
+    if (event.type !== 'session') break
+    // 真实 DSH v4 会话首事件把 cwd 放在**顶层**（`{type:"session",cwd}`）；
+    // 旧夹具/旧版本放在 `data.cwd`，两者都兼容（真实库 352/352 顶层 cwd 实测）。
+    if (typeof event.cwd === 'string' && event.cwd !== '') return event.cwd
+    if (event.data && typeof event.data.cwd === 'string' && event.data.cwd !== '') return event.data.cwd
+    return ''
   }
   return ''
 }
@@ -172,7 +177,10 @@ export function firstUserMessageAfterTurn(events, turn) {
   for (let index = anchor + 1; index < list.length; index += 1) {
     const event = list[index]
     if (!event || event.type !== 'user/message') continue
-    const text = textOf(event.data && event.data.message && event.data.message.content)
+    // 真实 DSH v4 用户消息是 `data.content`（实测）；`data.message.content` 是旧夹具形状，保留兼容。
+    const data = event.data || {}
+    const content = Array.isArray(data.content) ? data.content : (data.message && data.message.content)
+    const text = textOf(content)
     if (text !== '' && !/^Time sampled while preparing/u.test(text)) return text
   }
   return ''
@@ -234,8 +242,14 @@ export function findRecordBinding(input = {}, options = {}) {
   const intent = String(input.intent || '').trim()
   const action = String(input.action || '').trim()
   const limit = Math.max(1, Math.trunc(Number(options.scan) || 3))
+  // 会话归属（0.13.0）：给了 cwd 就只在本工作区的会话里找。
+  // 必须在 slice(0, limit) **之前**过滤，否则别的工作区后写的同参记录会把本工作区的绑走。
+  const cwd = String(options.cwd || '').trim()
+  const target = cwd === '' ? '' : path.resolve(cwd)
+  let files = listSessionFiles(options)
+  if (target !== '') files = files.filter((item) => cachedCwd(item.file) === target)
   const matches = []
-  for (const item of listSessionFiles(options).slice(0, limit)) {
+  for (const item of files.slice(0, limit)) {
     const events = readSessionEvents(item.file)
     if (events.length === 0) continue
     let matched = null

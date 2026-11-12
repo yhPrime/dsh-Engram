@@ -41,24 +41,26 @@ const sessionId = 'session-abc'
 const dir = path.join(sessionsRoot, '--C-Users-test-ws--', sessionId)
 fs.mkdirSync(dir, { recursive: true })
 
+// 事件形状按真实 DSH v4 会话文件（复制自 ~/.dsh/sessions 只读探针）：
+// 首事件 `type:"session"` 把 cwd 放顶层；用户消息是 `data.content`。
 const events = [
-  { type: 'session', data: { cwd } },
-  { type: 'turn/start', data: { turn: 1 } },
-  { type: 'user/message', data: { message: { content: [{ type: 'text', text: '给阅卷系统加导出' }] } } },
-  { type: 'tool/call', data: { turn: 1, name: 'exp_record', arguments: JSON.stringify({ intent: '给阅卷系统加导出', action: '先做 CSV' }) } },
-  { type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: '做好了，文件在 out.csv' }] } } },
-  { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
-  { type: 'user/message', data: { message: { content: [{ type: 'text', text: '导出没有页码，改一下' }] } } },
-  { type: 'turn/start', data: { turn: 2 } },
-  { type: 'tool/call', data: { turn: 2, name: 'read', arguments: JSON.stringify({ file_path: 'a.md' }) } },
-  { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } },
+  { type: 'session', version: 4, id: sessionId, createdAt: Date.now(), cwd, isSeeded: false, origin: 'local' },
+  { type: 'turn/start', seq: 1, time: Date.now(), data: { turn: 1 } },
+  { type: 'user/message', seq: 2, time: Date.now(), data: { content: [{ type: 'text', text: '给阅卷系统加导出' }], source: { kind: 'user' }, role: 'user', id: 'msg-1' } },
+  { type: 'tool/call', seq: 3, time: Date.now(), data: { turn: 1, step: 1, callId: 'call-1', name: 'exp_record', arguments: JSON.stringify({ intent: '给阅卷系统加导出', action: '先做 CSV' }) } },
+  { type: 'assistant/message', seq: 4, time: Date.now(), data: { turn: 1, message: { content: [{ type: 'text', text: '做好了，文件在 out.csv' }] } } },
+  { type: 'turn/end', seq: 5, time: Date.now(), data: { turn: 1, reason: { kind: 'completed' } } },
+  { type: 'user/message', seq: 6, time: Date.now(), data: { content: [{ type: 'text', text: '导出没有页码，改一下' }], source: { kind: 'user' }, role: 'user', id: 'msg-2' } },
+  { type: 'turn/start', seq: 7, time: Date.now(), data: { turn: 2 } },
+  { type: 'tool/call', seq: 8, time: Date.now(), data: { turn: 2, step: 1, callId: 'call-2', name: 'read', arguments: JSON.stringify({ file_path: 'a.md' }) } },
+  { type: 'turn/end', seq: 9, time: Date.now(), data: { turn: 2, reason: { kind: 'completed' } } },
 ]
 fs.writeFileSync(path.join(dir, 'session.v4.jsonl'), `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8')
 
 // 另一个工作区的会话，用来验证 cwd 过滤。
 const otherDir = path.join(sessionsRoot, '--C-Users-other--', 'session-other')
 fs.mkdirSync(otherDir, { recursive: true })
-fs.writeFileSync(path.join(otherDir, 'session.v4.jsonl'), `${JSON.stringify({ type: 'session', data: { cwd: otherCwd } })}\n`, 'utf8')
+fs.writeFileSync(path.join(otherDir, 'session.v4.jsonl'), `${JSON.stringify({ type: 'session', version: 4, id: 'session-other', createdAt: Date.now(), cwd: otherCwd, origin: 'local' })}\n`, 'utf8')
 
 const options = { sessionsRoot }
 
@@ -108,9 +110,55 @@ check('userMessageForRecord：按 sessionId + turn 取原话', () => {
 check('跳过 DSH 注入的 Time sampled 噪声行', () => {
   const noisy = [
     { type: 'assistant/message', data: { turn: 3, message: { content: [{ type: 'text', text: 'ok' }] } } },
-    { type: 'user/message', data: { message: { content: [{ type: 'text', text: 'Time sampled while preparing turn 3, step 1: ...' }] } } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: 'Time sampled while preparing turn 3, step 1: ...' }] } },
   ]
   assert.equal(firstUserMessageAfterTurn(noisy, 3), '')
+})
+
+// —— task-7 回归：真实 DSH v4 会话形状（B1/B6）——
+check('回归 B1：sessionCwd 读首事件顶层 cwd（真实 v4 形状）', () => {
+  assert.equal(sessionCwd([{ type: 'session', version: 4, cwd: 'C:\\work\\a' }]), 'C:\\work\\a')
+  // 旧夹具/旧版本 data.cwd 仍兼容
+  assert.equal(sessionCwd([{ type: 'session', data: { cwd: 'C:\\work\\b' } }]), 'C:\\work\\b')
+})
+
+check('回归 B6：用户原话读 data.content（真实形状），data.message.content 兼容', () => {
+  const realShaped = [
+    { type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'ok' }] } } },
+    { type: 'user/message', data: { content: [{ type: 'text', text: '真实形状的用户原话' }], source: { kind: 'user' }, role: 'user', id: 'm1' } },
+  ]
+  assert.equal(firstUserMessageAfterTurn(realShaped, 1), '真实形状的用户原话')
+  const legacy = [
+    { type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'ok' }] } } },
+    { type: 'user/message', data: { message: { content: [{ type: 'text', text: '旧夹具原话' }] } } },
+  ]
+  assert.equal(firstUserMessageAfterTurn(legacy, 1), '旧夹具原话')
+})
+
+check('回归 B2：findRecordBinding 按 cwd 过滤，别的工作区后写不夺绑定', () => {
+  // 同 intent/action 的 A、B 两个工作区会话，B 的 mtime 比 A 新 10s（> 5s 歧义阈值）。
+  const leakRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-bind-'))
+  const cwdA = path.join(leakRoot, 'work-a')
+  const cwdB = path.join(leakRoot, 'work-b')
+  const mkSession = (ws, id, workCwd, mtime) => {
+    const sessionDir = path.join(leakRoot, ws, id)
+    fs.mkdirSync(sessionDir, { recursive: true })
+    const file = path.join(sessionDir, 'session.v4.jsonl')
+    const sessionEvents = [
+      { type: 'session', version: 4, id, cwd: workCwd, origin: 'local' },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '插一页过渡页' }], role: 'user' } },
+      { type: 'tool/call', data: { turn: 2, name: 'exp_record', arguments: JSON.stringify({ intent: '插一页过渡页', action: '套模板' }) } },
+    ]
+    fs.writeFileSync(file, `${sessionEvents.map((event) => JSON.stringify(event)).join('\n')}\n`)
+    fs.utimesSync(file, mtime, mtime)
+  }
+  mkSession('ws-a', 'session-A', cwdA, new Date(Date.now() - 60000))
+  mkSession('ws-b', 'session-B', cwdB, new Date(Date.now() - 50000))
+  const bindingA = findRecordBinding({ intent: '插一页过渡页', action: '套模板' }, { sessionsRoot: leakRoot, cwd: cwdA })
+  assert.equal(bindingA && bindingA.sessionId, 'session-A', 'A 工作区只能绑 A 的会话')
+  const bindingB = findRecordBinding({ intent: '插一页过渡页', action: '套模板' }, { sessionsRoot: leakRoot, cwd: cwdB })
+  assert.equal(bindingB && bindingB.sessionId, 'session-B', 'B 工作区只能绑 B 的会话')
+  fs.rmSync(leakRoot, { recursive: true, force: true })
 })
 
 console.log('')

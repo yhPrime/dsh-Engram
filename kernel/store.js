@@ -1776,6 +1776,9 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     // 「最近做过的」不设相似度门槛：真实对话里相邻轮意图相似度常低到 0.0–0.2，
     // 设门槛会让刚记的条下一轮消失（真实使用模拟 6/7 已判定轮不可见）。相似度照给，由模型判断。
     const sessionId = options.sessionId === undefined ? '' : String(options.sessionId || '')
+    // 工具路径认不出会话时宁可不给：否则会把别的会话的最近 intent/action 带出来（跨会话泄漏）。
+    // UI/运维路径不传这个开关，保留全量视图。
+    if (options.recentFailClosed === true && sessionId === '') return []
     return [...experiences]
       .map((row) => ({ row, similarity: similarityV2(query, stateOf(row.intent, row.action)) }))
       .filter((item) => item.row.verdict !== 'skipped' && (sessionId === '' || item.row.sessionId === sessionId))

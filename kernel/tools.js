@@ -128,7 +128,7 @@ export function buildTools(defineTool, config = {}) {
       let binding = null
       if (config.autoBind !== false) {
         try {
-          binding = findRecordBinding({ intent: args.intent, action: args.action }, { sessionsRoot: config.sessionsRoot })
+          binding = findRecordBinding({ intent: args.intent, action: args.action }, { sessionsRoot: config.sessionsRoot, cwd: config.cwd || process.cwd() })
         } catch {
           binding = null
         }
@@ -156,7 +156,9 @@ export function buildTools(defineTool, config = {}) {
         action: args.action,
         outcome: args.outcome,
         verdict: (args.outcome === undefined || args.outcome === null || String(args.outcome).trim() === '') ? 'pending' : 'decided',
-        sessionId: binding === null ? undefined : binding.sessionId,
+        // 用上面算好的 sessionId：binding 为 null 时退回「最近写入会话」，
+        // 否则 tool/call 尚未落盘（宿主约 5s 才刷盘）会让本行 sessionId=undefined，成为谁也算不到的孤儿 pending。
+        sessionId,
         turn: binding === null ? undefined : binding.turn,
         cwd: (typeof args.cwd === 'string' && args.cwd.trim() !== '') ? args.cwd.trim() : (binding === null ? undefined : binding.cwd),
         artifacts: args.artifacts,
@@ -334,7 +336,9 @@ export function buildTools(defineTool, config = {}) {
         clusterId = type.id
       }
       const recallLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || Number(config.recallLimitDefault) || 3)))
-      const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false, sessionId: sessionId || '' })
+      // autoBind=false 是显式「不绑会话」模式（headless/脚本/运维）：保留全量 recent。
+      // 默认模式下认不出会话就 fail-closed，绝不把别的会话的最近记录带出来。
+      const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false, recentFailClosed: config.autoBind !== false, sessionId: sessionId || '' })
       // 相似度低于 0.20 且判 weak：不展示噪声候选（无关任务时避免「1 条沾边候选」被当推荐）。
       if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
       result.pendingSkills = pendingSkills
