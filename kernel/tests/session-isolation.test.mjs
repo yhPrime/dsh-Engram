@@ -211,6 +211,93 @@ check('回归 B3：tool/call 未落盘时写行仍归属最近会话，不是孤
   fs.rmSync(root, { recursive: true, force: true })
 })
 
+check('回归 B4：pending 上限按会话各自 ≤2，不推进别的会话的提醒计数', () => {
+  const store = newStore()
+  // 关掉近似合并，保证三条真是三条（默认阈值会把 a1/a2/a3 并成一条）。
+  const noMerge = { mergeThreshold: 2, replaceThreshold: 2 }
+  const a1 = upsertExperience(store, { intent: 'A1', action: 'a1', sessionId: 'sess-A', verdict: 'pending' }, noMerge).experience
+  const a2 = upsertExperience(store, { intent: 'A2', action: 'a2', sessionId: 'sess-A', verdict: 'pending' }, noMerge).experience
+  const a3 = upsertExperience(store, { intent: 'A3', action: 'a3', sessionId: 'sess-A', verdict: 'pending' }, noMerge).experience
+  const b1 = upsertExperience(store, { intent: 'B1', action: 'b1', sessionId: 'sess-B', verdict: 'pending' }, noMerge).experience
+  const own = pendingTasks(store, 2, { sessionId: 'sess-A' })
+  assert.equal(own.rows.length, 2, '本会话最多 2 条')
+  const aRows = store.experiences.filter((item) => item.sessionId === 'sess-A')
+  assert.equal(aRows.filter((item) => Number(item.pendingReminders) > 0).length, 2, '只有展示的 2 条推进提醒')
+  assert.equal(Number(store.experiences.find((item) => item.id === b1.id).pendingReminders) || 0, 0, '别的会话不能被推进')
+  assert.ok(a1.id && a2.id && a3.id, '三条都在')
+})
+
+check('回归 BUG-5：recent 的 intent/action 按码点截断，不劈 emoji', () => {
+  const now = new Date().toISOString()
+  const base = { outcome: 'success', G: 1, GOutcome: 1, verdict: 'decided', typeId: 'ty_other', typeName: '未分类', ts: now, lastSeenAt: now }
+  const store = {
+    version: 1,
+    types: [{ id: 'ty_other', name: '未分类' }],
+    experiences: [{
+      ...base,
+      id: 'ex_emoji_recent',
+      intent: `插页${'😀'.repeat(40)}`,
+      action: `套模板${'🎉'.repeat(50)}`,
+      sessionId: 'sess-A',
+    }],
+  }
+  const result = rankExperiences(store, '插页', 3, { recent: true, sessionId: 'sess-A' })
+  const entry = (result.recent || [])[0]
+  assert.ok(entry !== undefined, JSON.stringify(result.recent))
+  for (const text of [entry.intent, entry.action]) {
+    assert.doesNotMatch(text, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+  }
+})
+
+check('回归 B7：宿主 exec.agent 提供 cwd/sessionId，不靠 config.cwd 也能归属本会话', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-b7-data-'))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-b7-sess-'))
+  const workA = path.join(root, 'work-a')
+  const workB = path.join(root, 'work-b')
+  const mk = (ws, id, workCwd, mtime) => {
+    const sessionDir = path.join(root, ws, id)
+    fs.mkdirSync(sessionDir, { recursive: true })
+    const file = path.join(sessionDir, 'session.v4.jsonl')
+    fs.writeFileSync(file, `${JSON.stringify({ type: 'session', version: 4, cwd: workCwd, origin: 'local' })}\n`)
+    fs.utimesSync(file, mtime, mtime)
+  }
+  mk('ws-a', 'session-A', workA, new Date(Date.now() - 60000))
+  mk('ws-b', 'session-B', workB, new Date())
+  const defineTool = (definition) => definition
+  // 刻意不传 config.cwd / sessionsRoot：只能靠宿主执行上下文。
+  const tools = buildTools(defineTool, { dataDir })
+  const record = tools.find((tool) => tool.name === 'exp_record')
+  const execA = { agent: { id: 'session-A', session: { id: 'session-A', header: { cwd: workA } } } }
+  const out = record.execute({ intent: '给研学课 PPT 插一页过渡页', action: '套模板', outcome: 'success' }, execA)
+  const row = readStore(dataDir).experiences.find((item) => item.id === out.id)
+  assert.equal(row.sessionId, 'session-A', '必须用宿主给的 sessionId，不能绑到后写的 B')
+  assert.equal(row.cwd, workA, '必须用宿主给的 cwd')
+  fs.rmSync(dataDir, { recursive: true, force: true })
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
+check('回归 B5：flush 窗口内子会话不顶替父会话（优先 exp_* intent 匹配，tie 优先非 subagent）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-b5-sess-'))
+  const work = path.join(root, 'work')
+  const intent = '给研学课 PPT 插一页过渡页'
+  const call = { type: 'tool/call', data: { turn: 2, name: 'exp_recall', arguments: JSON.stringify({ intent }) } }
+  const mk = (id, origin, mtime) => {
+    const sessionDir = path.join(root, 'ws', id)
+    fs.mkdirSync(sessionDir, { recursive: true })
+    const file = path.join(sessionDir, 'session.v4.jsonl')
+    fs.writeFileSync(file, [
+      JSON.stringify({ type: 'session', version: 4, cwd: work, origin }),
+      JSON.stringify(call),
+    ].join('\n') + '\n')
+    fs.utimesSync(file, mtime, mtime)
+  }
+  mk('session-parent', 'local', new Date(Date.now() - 60000))
+  mk('11111111-2222-4333-8444-555555555555', 'subagent', new Date())
+  const active = findActiveSession({ sessionsRoot: root, cwd: work, tool: 'exp_record', intent })
+  assert.equal(active.sessionId, 'session-parent', '父会话应保持身份，不能被后写的子会话顶替')
+  fs.rmSync(root, { recursive: true, force: true })
+})
+
 check('回归：工具路径认不出会话时 recent 为空（fail-closed），默认路径保留全量', () => {
   const now = new Date().toISOString()
   const base = { outcome: 'success', G: 1, GOutcome: 1, verdict: 'decided', typeId: 'ty_other', typeName: '未分类', ts: now, lastSeenAt: now }

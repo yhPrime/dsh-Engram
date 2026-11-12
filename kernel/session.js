@@ -136,17 +136,6 @@ export function listSessionFiles(options = {}) {
   return out
 }
 
-/** 某个工作区最近的会话（cwd 精确匹配；给不出 cwd 时返回 null）。 */
-export function newestSessionForCwd(cwd, options = {}) {
-  const target = path.resolve(String(cwd || ''))
-  if (String(cwd || '') === '') return null
-  const limit = Math.max(1, Math.trunc(Number(options.scan) || 12))
-  for (const item of listSessionFiles(options).slice(0, limit)) {
-    if (cachedCwd(item.file) === target) return item
-  }
-  return null
-}
-
 function textOf(content) {
   if (!Array.isArray(content)) return ''
   return content
@@ -218,21 +207,32 @@ export function findActiveSession(options = {}) {
   if (target !== '') candidates = candidates.filter((item) => cachedCwd(item.file) === target)
   if (candidates.length === 0) return null
   // 并行窗口/父子会话同时写时，优先「最近一次 exp_* tool/call 与本次 intent 一致」的会话。
+  // 不能只看文件 mtime：父会话的 tool/call 还没刷盘（宿主约 5s）时，后写的子会话会顶替父身份；
+  // fork 会把父历史复制进子会话（同一 event.time），此时优先非 subagent 的父会话。
   const tool = String(options.tool || '').trim()
   const intent = String(options.intent || '').trim()
   if (tool !== '' && intent !== '') {
-    const hit = candidates.find((item) => {
+    const eventTime = (event, index) => (Number.isFinite(Number(event.time)) ? Number(event.time) : index)
+    let best = null
+    for (const item of candidates) {
       const events = readSessionEvents(item.file)
+      const isSubagent = Boolean(events[0] && events[0].origin === 'subagent')
       for (let index = events.length - 1; index >= 0; index -= 1) {
         const event = events[index]
         if (!event || event.type !== 'tool/call' || !event.data) continue
-        if (String(event.data.name || '') !== tool) continue
+        const name = String(event.data.name || '')
+        // 任意 exp_* 且 intent 匹配都算：同一会话上一轮做过 exp_recall，也是它属于本任务的强证据。
+        if (name !== tool && !name.startsWith('exp_')) continue
         const args = parseArguments(event.data.arguments)
-        if (String(args.intent || '').trim() === intent) return true
+        if (String(args.intent || '').trim() !== intent) continue
+        const time = eventTime(event, index)
+        if (best === null || time > best.time || (time === best.time && best.isSubagent && !isSubagent)) {
+          best = { item, time, isSubagent }
+        }
+        break
       }
-      return false
-    })
-    if (hit !== undefined) return { sessionId: hit.sessionId, file: hit.file, cwd: cachedCwd(hit.file) }
+    }
+    if (best !== null) return { sessionId: best.item.sessionId, file: best.item.file, cwd: cachedCwd(best.item.file) }
   }
   const [item] = candidates
   return { sessionId: item.sessionId, file: item.file, cwd: cachedCwd(item.file) }
@@ -241,7 +241,7 @@ export function findActiveSession(options = {}) {
 export function findRecordBinding(input = {}, options = {}) {
   const intent = String(input.intent || '').trim()
   const action = String(input.action || '').trim()
-  const limit = Math.max(1, Math.trunc(Number(options.scan) || 3))
+  const limit = Math.max(1, Math.trunc(Number(options.scan) || 8))
   // 会话归属（0.13.0）：给了 cwd 就只在本工作区的会话里找。
   // 必须在 slice(0, limit) **之前**过滤，否则别的工作区后写的同参记录会把本工作区的绑走。
   const cwd = String(options.cwd || '').trim()

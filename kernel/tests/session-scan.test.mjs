@@ -161,6 +161,26 @@ check('回归 B2：findRecordBinding 按 cwd 过滤，别的工作区后写不�
   fs.rmSync(leakRoot, { recursive: true, force: true })
 })
 
+check('回归 OBS-1：findRecordBinding 默认扫描窗口 ≥8，5 个会话外的记录也能绑到', () => {
+  const wideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-scan8-'))
+  const work = path.join(wideRoot, 'work')
+  const mk = (id, withCall, mtime) => {
+    const sessionDir = path.join(wideRoot, 'ws', id)
+    fs.mkdirSync(sessionDir, { recursive: true })
+    const file = path.join(sessionDir, 'session.v4.jsonl')
+    const lines = [JSON.stringify({ type: 'session', version: 4, cwd: work, origin: 'local' })]
+    if (withCall) lines.push(JSON.stringify({ type: 'tool/call', data: { turn: 1, name: 'exp_record', arguments: JSON.stringify({ intent: '深扫描意图', action: '深扫描做法' }) } }))
+    fs.writeFileSync(file, lines.join('\n') + '\n')
+    fs.utimesSync(file, mtime, mtime)
+  }
+  for (let index = 0; index < 4; index += 1) mk(`session-new-${index}`, false, new Date(Date.now() - index * 1000))
+  mk('session-match', true, new Date(Date.now() - 60000))
+  const binding = findRecordBinding({ intent: '深扫描意图', action: '深扫描做法' }, { sessionsRoot: wideRoot, cwd: work })
+  assert.ok(binding !== null, '默认窗口应扫到第 5 个会话')
+  assert.equal(binding.sessionId, 'session-match')
+  fs.rmSync(wideRoot, { recursive: true, force: true })
+})
+
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

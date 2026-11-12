@@ -116,6 +116,15 @@ check('diffText：纯新增/删除能算出来', () => {
   assert.equal(removed.removed, 1)
 })
 
+check('回归 BUG-5：diffText 样例行按码点截断，不劈 emoji', () => {
+  const result = diffText(`${'😀'.repeat(40)}\n`, `${'🎉'.repeat(40)}\n`)
+  for (const sample of result.samples) {
+    for (const text of [sample.from, sample.to]) {
+      assert.doesNotMatch(text, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+    }
+  }
+})
+
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

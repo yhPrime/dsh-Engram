@@ -61,6 +61,13 @@ export const FEEDBACK_ETA = 0.35
 /** 每条经验保留的反馈日志条数（审计用；超出丢最旧）。 */
 export const FEEDBACK_LOG_LIMIT = 20
 
+/** 按码点截断（不劈 emoji 代理对）：超长时留一个省略号，结果仍在 max 内。 */
+function cutCodePoint(text, max) {
+  const value = String(text || '')
+  if (value.length <= max) return value
+  return `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
+}
+
 /** DSH 家目录：宿主会注入 DSH_HOME；没有时退回 ~/.dsh。换机器不用改任何配置。 */
 function dshHome() {
   const fromEnv = String(process.env.DSH_HOME || '').trim()
@@ -1128,15 +1135,23 @@ export function upsertExperience(store, input, options = {}) {
     pushHistory(experience, { type: 'created', supersedes: replaceTarget.id })
   }
   store.experiences.push(experience)
-  // pending 上限：库里最多同时挂 2 条，超了把最旧的转 skipped（回执层之前只是显示上限）。
+  // pending 上限（task-7 B4）：按**会话各自**最多挂 2 条，超了把该会话最旧的转 skipped。
+  // 以前是全局 2 条——第三个窗口记账会把第一个窗口的 pending 顶成 skipped（跨窗口互相踩）。
   if (wantPending) {
-    const waiting = store.experiences
-      .filter((item) => item && !item.deleted_at && !item.superseded_by && !item.retired_at && item.verdict === 'pending')
-      .sort((left, right) => String(left.registeredAt || left.ts || '').localeCompare(String(right.registeredAt || right.ts || '')))
-    for (const extra of waiting.slice(0, Math.max(0, waiting.length - 2))) {
-      extra.verdict = 'skipped'
-      extra.verdictAt = now
-      extra.decidedBy = 'auto-cap'
+    const groups = new Map()
+    for (const item of store.experiences) {
+      if (!item || item.deleted_at || item.superseded_by || item.retired_at || item.verdict !== 'pending') continue
+      const key = typeof item.sessionId === 'string' ? item.sessionId : ''
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(item)
+    }
+    for (const waiting of groups.values()) {
+      waiting.sort((left, right) => String(left.registeredAt || left.ts || '').localeCompare(String(right.registeredAt || right.ts || '')))
+      for (const extra of waiting.slice(0, Math.max(0, waiting.length - 2))) {
+        extra.verdict = 'skipped'
+        extra.verdictAt = now
+        extra.decidedBy = 'auto-cap'
+      }
     }
   }
   const retiredIds = retireNegatives(experience.id)
@@ -1464,6 +1479,8 @@ export function pendingTasks(store, limit = 2, options = {}) {
   const max = Math.max(1, Math.min(5, Math.trunc(Number(limit) || 2)))
   const ttl = Math.max(1, Math.trunc(Number(options.pendingTtl) || 3))
   const now = new Date().toISOString()
+  // 会话归属（0.13.0）：pendingRows 先按 sessionId 过滤再截断，所以上限是「每个会话各自 ≤2」；
+  // 会话未知时（autoBind=false 的脚本/运维路径）退化为全局队列，这是显式选择不绑会话的语义。
   const rows = []
   const skipped = []
   for (const item of pendingRows(store, max + 1, { sessionId: options.sessionId, strict: options.strict })) {
@@ -1786,8 +1803,9 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       .slice(0, 2)
       .map((item) => ({
         id: item.row.id,
-        intent: String(item.row.intent || '').slice(0, 60),
-        action: String(item.row.action || '').slice(0, 80),
+        // 按码点截断：UTF-16 slice 会把 emoji 劈成孤立代理项，回执 JSON 直接出坏字符。
+        intent: cutCodePoint(String(item.row.intent || ''), 60),
+        action: cutCodePoint(String(item.row.action || ''), 80),
         outcome: item.row.outcome,
         G: item.row.G,
         similarity: round4(item.similarity),

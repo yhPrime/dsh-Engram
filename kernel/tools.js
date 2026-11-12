@@ -44,6 +44,27 @@ function renderJson(_args, value) {
 }
 
 /**
+ * 宿主真实执行上下文（task-7 B7）：dsh-tools 以 `tool.execute(args, exec)` 调用工具，
+ * `exec.agent` 是发起调用的 Agent——`agent.id` 就是 session id，工作区在
+ * `agent.session.header.cwd`（真实 v4 会话首事件同源）。这样不依赖 config.cwd 注入，
+ * 也不靠文件 mtime 猜身份。拿不到（headless/脚本直调）返回空，调用方退回扫描会话文件。
+ */
+function hostSessionOf(exec) {
+  try {
+    const agent = exec && exec.agent
+    if (!agent) return { sessionId: '', cwd: '' }
+    const session = agent.session || null
+    const sessionId = typeof agent.id === 'string' && agent.id !== ''
+      ? agent.id
+      : (session && typeof session.id === 'string' ? session.id : '')
+    const cwd = session && session.header && typeof session.header.cwd === 'string' ? session.header.cwd : ''
+    return { sessionId, cwd }
+  } catch {
+    return { sessionId: '', cwd: '' }
+  }
+}
+
+/**
  * @param {Function} defineTool - `@deepseek-ai/dsh-tools` 的 defineTool
  * @param {{dataDir?: string, mergeThreshold?: number, replaceThreshold?: number}} config
  */
@@ -109,10 +130,12 @@ export function buildTools(defineTool, config = {}) {
       blockedByList: { type: 'array', description: '可选：一次撞到多个障碍时传数组，各签名分别计数（与 blockedBy 二选一）。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
-    execute(args = {}) {
+    execute(args = {}, exec) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
+      const host = hostSessionOf(exec)
+      const hostCwd = host.cwd !== '' ? host.cwd : (config.cwd || process.cwd())
       // 没给类型时按簇路由自动归族（config.routing='off' 或 autoAssign=false 可关）；落不进任何簇就保持「未分类」。
       const autoAssign = config.autoAssign !== false && config.routing !== 'off'
       let typeName = args.typeName !== undefined ? args.typeName : args.type
@@ -128,17 +151,22 @@ export function buildTools(defineTool, config = {}) {
       let binding = null
       if (config.autoBind !== false) {
         try {
-          binding = findRecordBinding({ intent: args.intent, action: args.action }, { sessionsRoot: config.sessionsRoot, cwd: config.cwd || process.cwd() })
+          binding = findRecordBinding({ intent: args.intent, action: args.action }, { sessionsRoot: config.sessionsRoot, cwd: hostCwd })
+          // 宿主给出确切会话时，绑定必须属于同一会话；否则宁可不用（别把别的窗口的 turn 挂上来）。
+          if (binding !== null && host.sessionId !== '' && binding.sessionId !== host.sessionId) binding = null
         } catch {
           binding = null
         }
       }
-      // 认不出唯一 turn 时至少用「最近写入的会话」兜底，保证 pending/回填有归属；
+      // 认不出唯一 turn 时至少要有会话归属，保证 pending/回填有主：
+      // 宿主给了确切 agent/session id 就直接用；否则退回「本工作区最近写入的会话」。
       // 一个会话都读不到 → undefined，后续 strict 路径不显示 pending、回填一律拒绝。
       let activeSession = null
       if (config.autoBind !== false) {
         try {
-          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: config.cwd || process.cwd(), tool: 'exp_record', intent: args.intent })
+          activeSession = host.sessionId !== ''
+            ? { sessionId: host.sessionId, file: '', cwd: host.cwd }
+            : findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: hostCwd, tool: 'exp_record', intent: args.intent })
         } catch {
           activeSession = null
         }
@@ -160,7 +188,7 @@ export function buildTools(defineTool, config = {}) {
         // 否则 tool/call 尚未落盘（宿主约 5s 才刷盘）会让本行 sessionId=undefined，成为谁也算不到的孤儿 pending。
         sessionId,
         turn: binding === null ? undefined : binding.turn,
-        cwd: (typeof args.cwd === 'string' && args.cwd.trim() !== '') ? args.cwd.trim() : (binding === null ? undefined : binding.cwd),
+        cwd: (typeof args.cwd === 'string' && args.cwd.trim() !== '') ? args.cwd.trim() : (binding === null ? (host.cwd !== '' ? host.cwd : undefined) : binding.cwd),
         artifacts: args.artifacts,
         dimensions: args.dimensions,
         type: typeName,
@@ -295,16 +323,20 @@ export function buildTools(defineTool, config = {}) {
       verdicts: { type: 'array', description: '可选：顺手回填回执里的 pending，[{id,outcome,dimensions?}]。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
-    execute(args = {}) {
+    execute(args = {}, exec) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
+      const host = hostSessionOf(exec)
+      const hostCwd = host.cwd !== '' ? host.cwd : (config.cwd || process.cwd())
       // 召回也要拿到当前会话：pending 只发本会话的，回填也只能结自己的账。
-      // 召回用「最近写入的会话」认身份：按意图去猜会把 B 的召回认成 A 的会话，泄漏 A 的 pending。
+      // 宿主给了确切 agent/session id 就直接用；否则退回本工作区最近写入的会话。
       let activeSession = null
       if (config.autoBind !== false) {
         try {
-          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: config.cwd || process.cwd(), tool: 'exp_recall', intent: args.intent })
+          activeSession = host.sessionId !== ''
+            ? { sessionId: host.sessionId, file: '', cwd: host.cwd }
+            : findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: hostCwd, tool: 'exp_recall', intent: args.intent })
         } catch {
           activeSession = null
         }
@@ -674,11 +706,13 @@ export function buildTools(defineTool, config = {}) {
 
   // 失败调用也要留痕：否则「调用次数」的分母只含成功调用，使用率会被高估。
   // 成功行由各工具自己写（带业务字段）；这里只兜异常。
+  // 注意：必须把宿主执行上下文 exec 原样透传（tool.execute(args, exec)），
+  // 否则 exp_record/exp_recall 拿不到 agent.session.header.cwd 与 agent.id（B7）。
   const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool].map((tool) => ({
     ...tool,
-    execute(args = {}) {
+    execute(args = {}, exec) {
       try {
-        return tool.execute(args)
+        return tool.execute(args, exec)
       } catch (error) {
         logUsage(dataDirOf(), {
           tool: tool.name,

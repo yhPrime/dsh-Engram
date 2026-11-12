@@ -18,6 +18,13 @@ function extOf(file) {
   return path.extname(String(file || '')).toLowerCase().replace(/^\./, '')
 }
 
+/** 按码点截断（不劈 emoji 代理对）：超长时留省一格放省略号。 */
+function cutCodePoint(text, max) {
+  const value = String(text || '')
+  if (value.length <= max) return value
+  return `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
+}
+
 function gitShow(cwd, relPath) {
   // 沙箱里把 git 输出接到 pipe 会 EPERM：写到临时文件再读（stdio 用 fd，不走管道）。
   const tmp = path.join(os.tmpdir(), `engram-gitshow-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`)
@@ -60,7 +67,7 @@ export function diffText(before, after) {
   for (let index = 0; index < limit; index += 1) {
     if (oldLines[index] === newLines[index]) continue
     changed += 1
-    if (samples.length < 2) samples.push({ line: index + 1, from: oldLines[index].slice(0, 40), to: newLines[index].slice(0, 40) })
+    if (samples.length < 2) samples.push({ line: index + 1, from: cutCodePoint(oldLines[index], 40), to: cutCodePoint(newLines[index], 40) })
   }
   const added = Math.max(0, newLines.length - oldLines.length)
   const removed = Math.max(0, oldLines.length - newLines.length)
@@ -109,5 +116,5 @@ export function summarizeUserEdits({ cwd, artifacts }) {
   if (files.length === 0) return { summary: '', files: [] }
   const parts = files.map((file) => `${path.basename(file.artifact)}：${file.summary || '有改动'}`)
   const summary = parts.join('；')
-  return { summary: summary.length <= 80 ? summary : `${summary.slice(0, 79)}…`, files }
+  return { summary: cutCodePoint(summary, 80), files }
 }
