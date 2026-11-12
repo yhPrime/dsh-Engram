@@ -19,6 +19,7 @@ export const SKILLS_DIRNAME = 'skills'
 export const SCRIPTS_DIRNAME = 'scripts'
 const MAX_ATTACH_FILE_BYTES = 2 * 1024 * 1024
 const MAX_ATTACH_TOTAL_BYTES = 8 * 1024 * 1024
+const MAX_ATTACH_COUNT = 200
 export const SKILL_FILENAME = 'SKILL.md'
 export const META_FILENAME = 'skill.json'
 export const EXCEPTION_LIMIT = 5
@@ -246,8 +247,10 @@ function normalizeMeta(raw, id) {
   meta.notes = Array.isArray(raw && raw.notes) ? raw.notes.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()).slice(0, 50) : []
   meta.triggers = Array.isArray(raw && raw.triggers) ? raw.triggers : []
   meta.context = Array.isArray(raw && raw.context) ? raw.context : []
+  // 附件登记不在读取时截断：截断会让第 41 个附件「文件在、登记表里没有」，下次 attach 就丢。
+  // 数量上限放在 attach 时明确拒绝（见 MAX_ATTACH_COUNT），而不是静默丢弃。
   meta.files = Array.isArray(raw && raw.files)
-    ? raw.files.filter((item) => item && typeof item.path === 'string').slice(0, 40)
+    ? raw.files.filter((item) => item && typeof item.path === 'string')
     : []
   return meta
 }
@@ -486,6 +489,7 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
     if (!stat.isFile()) throw new Error(`附件不是文件：${raw}`)
     if (stat.size > MAX_ATTACH_FILE_BYTES) throw new Error(`单个附件不能超过 2MB：${raw}`)
     if (total + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(total)}）`)
+    if (files.length >= MAX_ATTACH_COUNT) throw new Error(`附件数量不能超过 ${MAX_ATTACH_COUNT} 个（当前 ${files.length}）`)
     fs.mkdirSync(scriptsDir, { recursive: true })
     const name = safeAttachName(resolved)
     const target = path.join(scriptsDir, name)

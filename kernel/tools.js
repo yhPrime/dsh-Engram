@@ -358,6 +358,8 @@ export function buildTools(defineTool, config = {}) {
             },
           },
           candidates,
+          // 技能命中也要带「最近做过」：否则上一轮刚记的教训在下次碰巧命中技能时完全看不到。
+          recent: Array.isArray(result.recent) ? result.recent.slice(0, 2) : [],
           ...(weakCandidates || !result.brief ? {} : { brief: result.brief }),
           cluster: result.route && result.route.fallback === false ? result.route.name : undefined,
           pendingSkills: pendingSkills,

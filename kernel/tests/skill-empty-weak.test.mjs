@@ -52,6 +52,13 @@ check('exp_record 的裸 slug skillId 也解析并落账（真实使用模拟发
   const after = readSkillBySlug(dir, 'sonner-toast').meta.confidence.uses
   assert.equal(after, before + 1)
 })
+check('技能命中分支也带 recent（复验发现）', () => {
+  const archived = call('exp_record', { intent: '给研学课 PPT 插页', action: '先套模板', outcome: 'success', typeName: 'PPT / 课件' })
+  const recalled = call('exp_recall', { intent: 'Sonner toast 通知组件样式定制' })
+  assert.ok(recalled.skill, `应命中技能，实际 mode=${recalled.mode}`)
+  assert.ok(Array.isArray(recalled.recent))
+  assert.ok(recalled.recent.some((item) => item.id === archived.id), JSON.stringify(recalled.recent))
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)
