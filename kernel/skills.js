@@ -335,7 +335,15 @@ export function readSkill(dir, id = path.basename(dir)) {
   const { fields, body } = parseFrontmatter(fs.readFileSync(skillFile, 'utf8'))
   let rel = String(id || path.basename(dir)).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   if (rel === '') rel = path.basename(dir)
-  const meta = normalizeMeta(readJsonFile(path.join(dir, META_FILENAME)), rel)
+  const metaPath = path.join(dir, META_FILENAME)
+  const metaRaw = readJsonFile(metaPath)
+  const meta = normalizeMeta(metaRaw, rel)
+  // skill.json 存在但读不出来：不能静默当默认账本（confidence/obstacles/files 会像丢了一样）。
+  // 读路径仍然返回技能（正文可用），但打上标记，validateAllSkills / 界面能看到「账本损坏」。
+  if (fs.existsSync(metaPath) && metaRaw === null) {
+    meta.corrupt = true
+    meta.metaError = `技能账本损坏：${META_FILENAME}（无法解析，已按默认值显示；修复后可恢复计数）`
+  }
   // 磁盘路径是唯一事实源：账本里的旧 id 不拦路，读出来按当前位置纠正（写回发生在下次落盘）。
   meta.id = rel
   const parts = rel.split('/')
@@ -488,23 +496,25 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
     }
     if (!stat.isFile()) throw new Error(`附件不是文件：${raw}`)
     if (stat.size > MAX_ATTACH_FILE_BYTES) throw new Error(`单个附件不能超过 2MB：${raw}`)
-    if (total + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(total)}）`)
-    if (files.length >= MAX_ATTACH_COUNT) throw new Error(`附件数量不能超过 ${MAX_ATTACH_COUNT} 个（当前 ${files.length}）`)
-    fs.mkdirSync(scriptsDir, { recursive: true })
     const name = safeAttachName(resolved)
+    const rel = `${SCRIPTS_DIRNAME}/${name}`
+    const index = files.findIndex((item) => item.path === rel)
+    const oldBytes = index >= 0 ? Number(files[index].bytes) || 0 : 0
+    // 同名附件是替换不是新增：预算要减去旧的一份，否则 3×1.5MB 同名文件会误撞 8MB 上限。
+    if (total - oldBytes + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(total - oldBytes)}）`)
+    if (index < 0 && files.length >= MAX_ATTACH_COUNT) throw new Error(`附件数量不能超过 ${MAX_ATTACH_COUNT} 个（当前 ${files.length}）`)
+    fs.mkdirSync(scriptsDir, { recursive: true })
     const target = path.join(scriptsDir, name)
     fs.copyFileSync(resolved, target)
-    const rel = `${SCRIPTS_DIRNAME}/${name}`
     const entry = {
       path: rel,
       bytes: stat.size,
       sha256: createHash('sha256').update(fs.readFileSync(target)).digest('hex'),
       addedAt: new Date().toISOString(),
     }
-    const index = files.findIndex((item) => item.path === rel)
     if (index >= 0) files[index] = entry
     else files.push(entry)
-    total += stat.size
+    total += stat.size - oldBytes
     added.push(entry)
   }
   skill.meta.files = files
@@ -529,6 +539,22 @@ export function globalRegistrationOf(skill) {
 }
 
 /**
+ * 只删链接本体，绝不递归：Windows 上 rm(recursive) 会顺着 junction 进去，
+ * 把经验库里的源目录一起删光（实测过）。junction 只能 rmdir，symlink 用 unlink。
+ */
+function removeLinkOnly(target) {
+  for (const attempt of [() => fs.rmdirSync(target), () => fs.unlinkSync(target)]) {
+    try {
+      attempt()
+      return true
+    } catch {
+      // 换下一种
+    }
+  }
+  return false
+}
+
+/**
  * 把一个技能链接进 DSH 的 skills 目录（用户手动点的动作，不是自动行为）。
  *
  * - 优先建 junction（Windows 上不需要管理员权限，且两边是同一份文件，改一处同步）；
@@ -545,17 +571,20 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
   fs.mkdirSync(root, { recursive: true })
   const target = path.join(root, leaf)
   let mode = 'junction'
-  let link = null
-  try {
-    link = fs.readlinkSync(target)
-  } catch {
-    link = null
+  // 幂等：账本记着就是这个目标、文件也还在 → 直接返回成功（别因 readlink 判不出 junction 就报占用）。
+  const registered = globalRegistrationOf(skill)
+  if (registered !== null && path.resolve(registered.path) === path.resolve(target) && fs.existsSync(target)) {
+    return { slug: id, id, leaf, targetDir: target, mode: registered.mode || 'junction', registered: true }
   }
-  if (link !== null) {
-    const resolved = path.resolve(root, link)
-    if (resolved !== path.resolve(skill.dir)) throw new Error(`目标已被占用：${target}（指向 ${resolved}）`)
-  } else if (fs.existsSync(target)) {
-    throw new Error(`目标已被占用：${target}（不是经验库的链接，删掉或改名后再试）`)
+  if (fs.existsSync(target)) {
+    // 已存在但账本没记（或记的是别处）：只有 realpath 指向同一技能才认领，否则绝不覆盖。
+    let same = false
+    try {
+      same = path.resolve(fs.realpathSync(target)) === path.resolve(fs.realpathSync(skill.dir))
+    } catch {
+      same = false
+    }
+    if (!same) throw new Error(`目标已被占用：${target}（不是经验库的链接，删掉或改名后再试）`)
   } else {
     try {
       fs.symlinkSync(skill.dir, target, 'junction')
@@ -579,38 +608,23 @@ export function unregisterSkillFromDsh(dataDir, slug) {
   const id = skill.id
   const leaf = id.split('/').pop()
   const registered = globalRegistrationOf(skill)
-  const target = registered !== null ? registered.path : path.join(dshGlobalSkillsRoot(), leaf)
-  const expected = path.join(path.dirname(target), leaf)
+  // 没登记过 = 幂等成功；但绝不猜默认路径、不动任何文件。
+  if (registered === null) {
+    return { slug: id, id, leaf, targetDir: path.join(dshGlobalSkillsRoot(), leaf), removed: false, registered: false }
+  }
+  const target = registered.path
   let removed = false
-  if (path.resolve(target) === path.resolve(expected)) {
-    let isLink = false
-    try {
-      // Windows 的 junction 在 lstat 里被报成「目录 + 重解析点」，isSymbolicLink() 是 false，
-      // 只认它就会永远删不掉链接——表现就是点了「取消注册」毫无反应。
-      // readlinkSync 对 symlink 和 junction 都能读出目标，用它判更可靠。
-      isLink = fs.lstatSync(target).isSymbolicLink() || fs.readlinkSync(target) !== ''
-    } catch {
-      isLink = false
-    }
-    if (isLink) {
-      // 关键：**绝不能**对链接用递归删除。Windows 上 fs.rm(recursive) 会先顺着 junction
-      // 进去把目标目录（也就是经验库里的技能）里的文件删光，再删掉链接本身——
-      // 实测这一下直接把 `.exp/skills/<slug>/SKILL.md` 和 scripts/ 删了。
-      // 删链接只能用 unlink（symlink）或 rmdir（junction），两者都不跟进去。
-      try {
-        try {
-          fs.unlinkSync(target)
-        } catch {
-          fs.rmdirSync(target)
-        }
-        removed = true
-      } catch {
-        removed = false
-      }
-    } else if (fs.existsSync(target) && registered !== null && registered.mode === 'copy') {
-      // 只有确认是我们自己复制的那份才删，避免误删用户手放的技能
-      fs.rmSync(target, { recursive: true, force: true })
-      removed = true
+  if (!fs.existsSync(target)) {
+    removed = true
+  } else if (registered.mode === 'copy') {
+    // 只有确认是我们自己复制的那份才删，避免误删用户手放的技能。
+    fs.rmSync(target, { recursive: true, force: true })
+    removed = true
+  } else {
+    // 链接/junction：只删本体（递归会顺着 junction 删掉经验库源目录）。删不掉就报错并保留登记。
+    removed = removeLinkOnly(target)
+    if (!removed) {
+      throw new Error(`无法删除全局链接：${target}（登记已保留，可稍后重试或手动删除）`)
     }
   }
   delete skill.meta.globalRegistered
@@ -1175,7 +1189,11 @@ export function validateSkill(skill) {
 /** 扫描全部技能并返回有问题的条目。 */
 export function validateAllSkills(dataDir) {
   return listSkills(dataDir)
-    .map((skill) => ({ slug: skill.slug, problems: validateSkill(skill) }))
+    .map((skill) => {
+      const problems = validateSkill(skill)
+      if (skill.meta && skill.meta.corrupt === true) problems.push(String(skill.meta.metaError || '技能账本损坏'))
+      return { slug: skill.slug, problems }
+    })
     .filter((item) => item.problems.length > 0)
 }
 

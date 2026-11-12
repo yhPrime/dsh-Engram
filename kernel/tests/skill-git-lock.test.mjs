@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { attachSkillFiles, commitSkills, createSkill, ensureSkillsRepo, readSkillBySlug, updateSkillMeta } from '../skills.js'
+import { attachSkillFiles, commitSkills, createSkill, ensureSkillsRepo, readSkillBySlug, updateSkillMeta, validateAllSkills } from '../skills.js'
 
 let passed = 0
 let failed = 0
@@ -127,6 +127,15 @@ check('附件列表不在读取时截断（第 41 条必须可见）', () => {
   meta.files = Array.from({ length: 45 }, (_, index) => ({ path: `scripts/f${index}.txt`, bytes: 1, sha256: 'x', addedAt: new Date().toISOString() }))
   fs.writeFileSync(metaFile, JSON.stringify(meta), 'utf8')
   assert.equal(readSkillBySlug(dir, 'many-files').meta.files.length, 45)
+})
+check('skill.json 损坏：标记 corrupt 且 validateAllSkills 报出', () => {
+  const dir = fresh()
+  const skill = createSkill(dir, { slug: 'corrupt-meta', name: 'corrupt-meta', description: '坏账本', body: '# t' })
+  fs.writeFileSync(path.join(skill.dir, 'skill.json'), '{ broken json', 'utf8')
+  const read = readSkillBySlug(dir, 'corrupt-meta')
+  assert.equal(read.meta.corrupt, true)
+  const problems = validateAllSkills(dir)
+  assert.ok(problems.some((item) => item.slug === 'corrupt-meta' && item.problems.some((text) => text.includes('账本损坏'))))
 })
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)

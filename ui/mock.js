@@ -557,7 +557,16 @@ export function createMockSource() {
     },
 
     verdicts(list) {
-      return (Array.isArray(list) ? list : []).map((item) => ({ id: String((item && item.id) || ''), ok: true, outcome: String((item && item.outcome) || 'success') }))
+      // 逐条校验，和 live 同口径：未知 id / 非法 outcome 都 ok:false，不能一律 ok:true。
+      const allowed = ['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted']
+      return (Array.isArray(list) ? list : []).map((item) => {
+        const id = String((item && item.id) || '').trim()
+        const outcome = String((item && item.outcome) || '').trim().toLowerCase()
+        if (id === '') return { id, ok: false, error: 'id 必填' }
+        if (!store.experiences.some((row) => row.id === id)) return { id, ok: false, error: '没有这条经验' }
+        if (!allowed.includes(outcome)) return { id, ok: false, error: `outcome 不合法：${outcome || '(空)'}` }
+        return { id, ok: true, outcome }
+      })
     },
 
     usageSummary() {
@@ -582,7 +591,14 @@ export function createMockSource() {
     },
 
     record(input = {}) {
-      const outcome = String(input.outcome || 'success')
+      // 示例数据也走真实校验：演示里「随便输点什么都能成功」会把界面契约带偏。
+      if (String(input.intent || '').trim() === '' || String(input.action || '').trim() === '') {
+        throw new Error('intent 与 action 必填')
+      }
+      const outcome = String(input.outcome || 'success').trim().toLowerCase()
+      if (!['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'].includes(outcome)) {
+        throw new Error(`outcome 只能是 accepted / success / partial / unknown / failed / corrected / aborted，收到：${input.outcome}`)
+      }
       const at = new Date().toISOString()
       const id = `ex_mock_${Date.now().toString(36)}`
       const G = scoreOf(outcome)

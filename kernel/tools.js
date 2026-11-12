@@ -124,10 +124,6 @@ export function buildTools(defineTool, config = {}) {
           routedCluster = { clusterId: route.clusterId, name: route.name, score: route.score }
         }
       }
-      // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。
-      const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
-        ? resolveVerdicts(store, args.verdicts)
-        : []
       // 绑定会话 turn：读最近会话里的 tool/call，把本条记录挂到它所在的回合（只读，失败就跳过）。
       let binding = null
       if (config.autoBind !== false) {
@@ -137,8 +133,14 @@ export function buildTools(defineTool, config = {}) {
           binding = null
         }
       }
+      const sessionId = binding === null ? undefined : binding.sessionId
+      // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。
+      // 只允许回填本会话自己的待判定（以前 B 会话能改 A 会话的行）。
+      const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
+        ? resolveVerdicts(store, args.verdicts, { sessionId })
+        : []
       // 待判定队列在写入本条之前取：刚记的这条不算「提醒过一次」，下一轮才出现。
-      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl })
+      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId })
       const result = upsertExperience(store, {
         intent: args.intent,
         action: args.action,
@@ -196,7 +198,11 @@ export function buildTools(defineTool, config = {}) {
           } else if (blocked.length === 1) {
             skillResult = applySkillObstacle(dataDir, slug, { blockedBy: blocked[0], label: args.note, intent: args.intent })
           } else {
-            skillResult = applySkillOutcome(dataDir, slug, Number(result.experience.G) < 0 ? 'hurt' : 'helped', { intent: args.intent })
+            // 未判定（pending）的技能使用不记 helped：G=0 只是「还没结论」，记成功会虚抬置信度。
+            const skillVerdict = result.experience.verdict === 'pending'
+              ? 'neutral'
+              : (Number(result.experience.G) < 0 ? 'hurt' : 'helped')
+            skillResult = applySkillOutcome(dataDir, slug, skillVerdict, { intent: args.intent })
           }
           const warning = skillResult.action === 'multi'
             ? (skillResult.results.find((item) => typeof item.warning === 'string') || {}).warning
@@ -281,9 +287,19 @@ export function buildTools(defineTool, config = {}) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
+      // 召回也要拿到当前会话：pending 只发本会话的，回填也只能结自己的账。
+      let binding = null
+      if (config.autoBind !== false) {
+        try {
+          binding = findRecordBinding({ intent: args.intent }, { sessionsRoot: config.sessionsRoot })
+        } catch {
+          binding = null
+        }
+      }
+      const sessionId = binding === null ? undefined : binding.sessionId
       // 回填（0.13.0）：召回时顺手把上一条 pending 结掉，模型不必为判定新开一次调用。
       const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
-        ? resolveVerdicts(store, args.verdicts)
+        ? resolveVerdicts(store, args.verdicts, { sessionId })
         : []
       // 技能优先：高确定技能命中时只返回技能本身，不再列具体经验。
       // 只拿还没全局注册的技能：注册过的交给 DSH 当普通技能用，经验库不再排序它
@@ -312,7 +328,7 @@ export function buildTools(defineTool, config = {}) {
       if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
       result.pendingSkills = pendingSkills
       // 待判定：随回执带出（≤2 条）。
-      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl })
+      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId })
       if (verdictResults.some((item) => item.ok) || pendingOut.rows.length > 0 || pendingOut.skipped.length > 0) writeStore(dataDir, store)
       const pending = config.pendingReceipt === false
         ? []

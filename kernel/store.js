@@ -383,6 +383,24 @@ export function withStoreLock(dataDir, fn) {
   }
 }
 
+/** 清掉崩溃留下的 exp-lib.json.*.tmp（>10 分钟），否则每次崩溃都留一个库大小的垃圾。 */
+function cleanupStaleTempFiles(dir, base) {
+  try {
+    const now = Date.now()
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.startsWith(`${base}.`) || !name.endsWith('.tmp')) continue
+      const full = path.join(dir, name)
+      try {
+        if (now - fs.statSync(full).mtimeMs > 600000) fs.unlinkSync(full)
+      } catch {
+        // 正被别的进程使用
+      }
+    }
+  } catch {
+    // 目录不可读就跳过
+  }
+}
+
 export function writeStore(dataDir, store, options = {}) {
   if (options.locked !== true && !heldLocks.has(path.resolve(String(dataDir || '')))) {
     return withStoreLock(dataDir, () => writeStore(dataDir, store, { ...options, locked: true }))
@@ -416,6 +434,7 @@ export function writeStore(dataDir, store, options = {}) {
       }
     }
     if (!renamed) throw new Error(`经验库写入被占用（rename 重试 20 次仍失败）：${lastError && lastError.message ? lastError.message : String(lastError)}`)
+    cleanupStaleTempFiles(path.dirname(file), path.basename(file))
   } finally {
     try {
       fs.unlinkSync(temp)
@@ -670,6 +689,14 @@ function round4(value) {
   return Math.round(Number(value) * 1e4) / 1e4
 }
 
+/** 新鲜度（0.5–1）：旧条不压新条，但也不直接淘汰；90 天衰减到 2/3。 */
+function freshnessOfRow(row) {
+  const time = Date.parse(String((row && (row.lastSeenAt || row.ts || row.registeredAt)) || ''))
+  if (!Number.isFinite(time)) return 1
+  const days = Math.max(0, (Date.now() - time) / 86400000)
+  return 1 / (1 + days / 90)
+}
+
 /** 召回展示用的 note 上限：只截展示、不删数据；保首尾，长路径/命令不至于被切在开头。 */
 export const RECALL_NOTE_LIMIT = 300
 
@@ -814,8 +841,15 @@ export function upsertExperience(store, input, options = {}) {
   const cleanIntent = sanitizeField(input.intent)
   const cleanAction = sanitizeField(input.action)
   const cleanNote = sanitizeField(rawNote)
-  const intent = cleanIntent.text
-  const action = cleanAction.text
+  // 写侧上限（对抗测试发现）：10 万字符 note / 1 万字符 intent 会整段落库、把库撑大。
+  // 读侧本来只展示 300 字，写侧也按码点截断（不劈 emoji）。
+  const cutField = (text, max) => {
+    const value = String(text || '')
+    return value.length <= max ? value : `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
+  }
+  const intent = cutField(cleanIntent.text, 500)
+  const action = cutField(cleanAction.text, 2000)
+  cleanNote.text = cutField(cleanNote.text, 2000)
   if (intent === '' || action === '') throw new Error('intent 与 action 必填')
   const mergeThreshold = Number.isFinite(Number(options.mergeThreshold)) ? Number(options.mergeThreshold) : DEFAULT_MERGE_THRESHOLD
   const replaceThreshold = Number.isFinite(Number(options.replaceThreshold)) ? Number(options.replaceThreshold) : DEFAULT_REPLACE_THRESHOLD
@@ -1406,10 +1440,13 @@ export function visibleExperiences(store, options = {}) {
 }
 
 /** 待判定队列（只读，不改状态）：最近 limit 条 verdict=pending。 */
-export function pendingRows(store, limit = 2) {
+export function pendingRows(store, limit = 2, options = {}) {
   const max = Math.max(1, Math.min(5, Math.trunc(Number(limit) || 2)))
+  // 会话归属（0.13.0）：带 sessionId 时只返回本会话的待判定，别把别的会话的原始意图带出来。
+  const sessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : ''
   return (Array.isArray(store.experiences) ? store.experiences : [])
     .filter((item) => item && !item.deleted_at && !item.superseded_by && !item.retired_at && item.verdict === 'pending')
+    .filter((item) => sessionId === '' || item.sessionId === sessionId)
     .sort((left, right) => String(right.registeredAt || right.ts || '').localeCompare(String(left.registeredAt || left.ts || '')))
     .slice(0, max)
 }
@@ -1425,7 +1462,7 @@ export function pendingTasks(store, limit = 2, options = {}) {
   const now = new Date().toISOString()
   const rows = []
   const skipped = []
-  for (const item of pendingRows(store, max + 1)) {
+  for (const item of pendingRows(store, max + 1, { sessionId: options.sessionId })) {
     const reminders = (Number(item.pendingReminders) || 0) + 1
     if (reminders > ttl) {
       item.verdict = 'skipped'
@@ -1448,7 +1485,18 @@ export function pendingTasks(store, limit = 2, options = {}) {
  * @returns {Array<{id: string, ok: boolean, error?: string, outcome?: string, G?: number, dimensions?: string[]}>}
  */
 export function resolveVerdicts(store, list = [], options = {}) {
-  const entries = Array.isArray(list) ? list : []
+  // 同一 id 在列表里出现多次只处理一次（后者会覆盖前者；一次回执里重复回填没意义）。
+  const seen = new Set()
+  const entries = []
+  for (const raw of Array.isArray(list) ? list : []) {
+    const key = String((raw && raw.id) || '').trim()
+    if (key !== '') {
+      if (seen.has(key)) continue
+      seen.add(key)
+    }
+    entries.push(raw)
+  }
+  const sessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : ''
   const now = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()
   const results = []
   for (const raw of entries) {
@@ -1464,6 +1512,10 @@ export function resolveVerdicts(store, list = [], options = {}) {
     }
     if (row.deleted_at) {
       results.push({ id, ok: false, error: '这条已删除' })
+      continue
+    }
+    if (sessionId !== '' && row.sessionId !== sessionId) {
+      results.push({ id, ok: false, error: '不属于当前会话，不能回填' })
       continue
     }
     const outcome = String((raw && raw.outcome) || '').trim()
@@ -1561,6 +1613,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       rank_score: candidate.rank_score,
       support: candidate.support,
       mean_similarity: candidate.mean_similarity,
+      freshness: row === null ? 1 : freshnessOfRow(row),
       typeName: row ? row.typeName : '未分类',
       evidence: candidate.evidence.map((evidence) => {
         const experience = byId.get(evidence.id)
@@ -1661,7 +1714,8 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 改为 `0.6×相似度 + 0.4×rank_score`，让「像不像当前任务」成为主序，Â 做次序。必须排在截断之前。
   // 给了情境线索时不混排：情境优先是另一条独立的排序（见上），混排会把它的优先权盖掉。
   if (options.rankBlend !== false && !degenerate && queryContext.length === 0) {
-    const blend = (item) => 0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0)
+    const blend = (item) => (0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0))
+      * (0.5 + 0.5 * (Number.isFinite(Number(item.freshness)) ? Number(item.freshness) : 1))
     candidates.sort((left, right) => (
       blend(right) - blend(left)
       || right.support - left.support

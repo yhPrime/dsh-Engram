@@ -210,10 +210,22 @@ function safeUsage(source, limit) {
 }
 
 /** 安全取固化技能：读不到 / 读坏都当空。 */
+function readOf(source) {
+  if (!source || typeof source.read !== 'function') return {}
+  try {
+    return source.read() || {}
+  } catch {
+    return {}
+  }
+}
+
 function safeSkills(source) {
   try {
-    const rows = source.skills()
-    return Array.isArray(rows) ? rows : []
+    const rows = source && typeof source.skills === 'function' ? source.skills() : []
+    // 行数据畸形（null/缺 slug）不能把整个技能页打崩：过滤掉，页面照常渲染。
+    return Array.isArray(rows)
+      ? rows.filter((row) => row && typeof row === 'object' && (typeof row.slug === 'string' || typeof row.id === 'string'))
+      : []
   } catch {
     return []
   }
@@ -230,7 +242,7 @@ function skillSummaryOf(rows) {
 
 /** 概览（`/state` 的 data）。 */
 export function buildState(source) {
-  const read = source.read() || {}
+  const read = readOf(source)
   const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
   const experiences = Array.isArray(store.experiences) ? store.experiences : []
   const types = typesOf(store)
@@ -266,7 +278,7 @@ export function buildState(source) {
 
 /** `/experiences` 的 data。 */
 export function buildExperiences(source, params) {
-  const read = source.read() || {}
+  const read = readOf(source)
   const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
   const query = String(params.get('query') || '').trim()
   const meta = {
@@ -286,7 +298,7 @@ export function buildExperiences(source, params) {
 
 /** `/experience` 的 data；找不到返回 null。 */
 export function buildExperience(source, id) {
-  const read = source.read() || {}
+  const read = readOf(source)
   const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
   return detailOf(store, id)
 }
@@ -298,18 +310,18 @@ export function buildFeedback(source, id, result) {
 
 /** `/pending` 的 data：待判定队列（最多 5 条）。 */
 export function buildPending(source) {
-  return typeof source.pending === 'function' ? source.pending(5) : []
+  return source && typeof source.pending === 'function' ? source.pending(5) : []
 }
 
 /** `/verdicts` 的 data：把回填交给 source（逐条返回 ok/失败原因）。 */
 export function buildVerdicts(source, list) {
-  if (typeof source.verdicts !== 'function') throw new Error('当前数据源不支持判定回填')
+  if (!source || typeof source.verdicts !== 'function') throw new Error('当前数据源不支持判定回填')
   return source.verdicts(Array.isArray(list) ? list : [])
 }
 
 /** `/usage-summary` 的 data：调用次数与回执字符数汇总（token 账）。 */
 export function buildUsageSummary(source) {
-  return typeof source.usageSummary === 'function'
+  return source && typeof source.usageSummary === 'function'
     ? source.usageSummary()
     : { calls: 0, chars: 0, avgChars: 0, byTool: {} }
 }
@@ -359,7 +371,7 @@ function decorateSkillRows(tree, rows) {
 
 /** `/skills` 的 data：固化技能列表 + 状态分布 + 目录树。 */
 export function buildSkills(source) {
-  const read = source.read() || {}
+  const read = readOf(source)
   const rows = safeSkills(source)
   const tree = buildSkillTree(rows)
   tree.sort((left, right) => treeOrderOf(right) - treeOrderOf(left) || left.name.localeCompare(right.name, 'zh'))
@@ -378,6 +390,7 @@ export function buildSkills(source) {
  * live 交给 kernel engine；mock 能做记录与简化召回，其余明确「示例模式不支持」。
  */
 export function buildRecall(source, body = {}) {
+  if (!source || typeof source.recall !== 'function') throw new Error('当前数据源不支持检索')
   const intent = String(body.intent || '').trim()
   if (intent === '') throw codedError('intent-required', '缺少 intent')
   const limit = Math.max(1, Math.min(50, Math.trunc(Number(body.limit) || 8)))
@@ -388,7 +401,7 @@ export function buildRecall(source, body = {}) {
 }
 
 export function buildRecord(source, body = {}) {
-  if (typeof source.record !== 'function') throw codedError('read-only', '当前数据源不支持写入经验')
+  if (!source || typeof source.record !== 'function') throw codedError('read-only', '当前数据源不支持写入经验')
   return source.record(body)
 }
 
@@ -408,7 +421,7 @@ export function buildConsolidate(source, body = {}) {
  */
 export async function buildImportSkill(source, body = {}, deps = {}) {
   if (source.mode !== 'live') throw codedError('unsupported', '示例数据不支持导入技能')
-  const read = source.read() || {}
+  const read = readOf(source)
   const dataDir = String(read.dataDir || '')
   if (dataDir === '') throw codedError('no-data-dir', '没有数据目录，无法写入技能')
   const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
@@ -452,12 +465,12 @@ export function buildTypeOp(source, body = {}) {
 }
 
 export function buildValidate(source) {
-  if (typeof source.validate !== 'function') return { problems: [] }
+  if (!source || typeof source.validate !== 'function') return { problems: [] }
   return { problems: source.validate() }
 }
 
 export function buildSettings(source) {
-  const read = source.read() || {}
+  const read = readOf(source)
   const extra = typeof source.settings === 'function' ? source.settings() : {}
   return {
     source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
@@ -473,7 +486,7 @@ export function buildSettings(source) {
 
 /** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
 export function buildGraph(source) {
-  const read = source.read() || {}
+  const read = readOf(source)
   const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
   const rows = visibleOf(store).map(rowOf)
   const types = typesOf(store)

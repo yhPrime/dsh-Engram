@@ -116,6 +116,17 @@ check('typeId 悬空：读时归未分类', () => {
  *
  * Run: node tests/store-safety.test.mjs
  */
+check('崩溃残留 tmp：写入后清理掉旧的临时文件', () => {
+  const dir = fresh()
+  fs.mkdirSync(dir, { recursive: true })
+  writeStore(dir, { types: [], experiences: [] })
+  const tmp = path.join(dir, 'exp-lib.json.999.1.tmp')
+  fs.writeFileSync(tmp, '{"half":', 'utf8')
+  const old = new Date(Date.now() - 11 * 60 * 1000)
+  fs.utimesSync(tmp, old, old)
+  writeStore(dir, { types: [], experiences: [] })
+  assert.equal(fs.existsSync(tmp), false, '旧 tmp 应被清掉')
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

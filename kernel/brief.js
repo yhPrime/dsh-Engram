@@ -10,7 +10,8 @@ export const MAX_BRIEF_CHARS = 80
 function cut(text, max) {
   const value = String(text === undefined || text === null ? '' : text).replace(/\s+/gu, ' ').trim()
   if (value === '') return ''
-  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`
+  // 按码点截断：直接 slice 会把 emoji 的代理对劈成孤立半截（实测输出 \ud83d）。
+  return value.length <= max ? value : `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
 }
 
 /**
@@ -25,5 +26,5 @@ export function pendingBrief(experience = {}, options = {}) {
   let text = intent === '' ? '上一轮任务' : `上一轮：${intent}`
   if (quote !== '') text += ` → 用户：${quote}`
   if (edit !== '') text += ` → 手改：${edit}`
-  return text.length <= MAX_BRIEF_CHARS ? text : `${text.slice(0, MAX_BRIEF_CHARS - 1)}…`
+  return text.length <= MAX_BRIEF_CHARS ? text : `${Array.from(text).slice(0, MAX_BRIEF_CHARS - 1).join('')}…`
 }
