@@ -20,11 +20,13 @@ import fs from 'node:fs'
 import {
   DEGENERATE_ADV_SPREAD,
   rankExperiences,
+  readManifest,
   readStore,
   resolveToolDataDir,
   storeFile,
   visibleExperiences,
 } from '../store.js'
+import { legacyPath } from '../shard-store.js'
 import { RECALL_MIN_SIMILARITY, similarityV2, stateOf } from '../retrieval.js'
 import { listSkills, validateAllSkills } from '../skills.js'
 import { resolveEngramDataDir } from '../settings.js'
@@ -47,35 +49,78 @@ export const AUDIT_INTENTS = [
 
 const RESIDUE_RE = /<\/?\s*note\s*>|<\s*parameter\b/i
 
-/** 迁移留痕：对比文件里的 G 与 readStore 迁移后的 G（只读，不落盘）。 */
+/**
+ * 迁移留痕：对比「落盘的旧快照」与「readStore 迁移/归一化后的 G」（只读，不落盘）。
+ *
+ * 0.14.0 起存储是分片布局：迁移会把 `exp-lib.json` 改名成 `exp-lib.legacy.json`，
+ * 所以旧文件优先顺序是：现存的 `exp-lib.json`（未迁移）→ `exp-lib.legacy.json`（已迁移的快照）。
+ * 两者都没有而 manifest 在：说明是分片库但 legacy 被删了，无法对比——明确说明，不静默当「无差异」。
+ * @returns {{available: boolean, source?: 'single-file'|'legacy', reason?: string, migrated: number, maxDelta: number, examples: string[]}}
+ */
 export function migrationReport(store, dataDir) {
+  const singleFile = storeFile(dataDir)
+  const legacyFile = legacyPath(dataDir)
+  let manifest = null
   try {
-    const raw = JSON.parse(fs.readFileSync(storeFile(dataDir), 'utf8'))
-    const rawById = new Map((Array.isArray(raw.experiences) ? raw.experiences : []).map((item) => [item.id, item]))
-    let migrated = 0
-    let maxDelta = 0
-    const examples = []
-    for (const row of store.experiences) {
-      const before = rawById.get(row.id)
-      if (before === undefined) continue
-      const oldG = Number(before.G)
-      const newG = Number(row.G)
-      if (!Number.isFinite(oldG) || !Number.isFinite(newG) || Math.abs(oldG - newG) < 1e-9) continue
-      migrated += 1
-      const delta = Math.abs(oldG - newG)
-      if (delta > maxDelta) maxDelta = delta
-      if (examples.length < 3) examples.push(`${String(row.id).slice(0, 8)} ${oldG.toFixed(2)}→${newG.toFixed(2)}`)
-    }
-    return { available: true, migrated, maxDelta, examples }
+    manifest = readManifest(dataDir)
   } catch {
-    return { available: false, migrated: 0, maxDelta: 0, examples: [] }
+    manifest = null
   }
+  let raw = null
+  let source = ''
+  try {
+    if (fs.existsSync(singleFile)) {
+      raw = JSON.parse(fs.readFileSync(singleFile, 'utf8'))
+      source = 'single-file'
+    } else if (fs.existsSync(legacyFile)) {
+      raw = JSON.parse(fs.readFileSync(legacyFile, 'utf8'))
+      source = 'legacy'
+    } else if (manifest !== null) {
+      return {
+        available: false,
+        reason: '已迁移到分片，但 exp-lib.legacy.json 快照不存在（无法做迁移留痕对比）',
+        migrated: 0,
+        maxDelta: 0,
+        examples: [],
+      }
+    } else {
+      return { available: false, reason: '没有可对照的旧库文件（首跑/空库）', migrated: 0, maxDelta: 0, examples: [] }
+    }
+  } catch (error) {
+    return {
+      available: false,
+      reason: `旧库快照读不了：${error && error.message ? error.message : error}`,
+      migrated: 0,
+      maxDelta: 0,
+      examples: [],
+    }
+  }
+  const rawById = new Map((Array.isArray(raw.experiences) ? raw.experiences : []).map((item) => [item.id, item]))
+  let migrated = 0
+  let maxDelta = 0
+  const examples = []
+  for (const row of store.experiences) {
+    const before = rawById.get(row.id)
+    if (before === undefined) continue
+    const oldG = Number(before.G)
+    const newG = Number(row.G)
+    if (!Number.isFinite(oldG) || !Number.isFinite(newG) || Math.abs(oldG - newG) < 1e-9) continue
+    migrated += 1
+    const delta = Math.abs(oldG - newG)
+    if (delta > maxDelta) maxDelta = delta
+    if (examples.length < 3) examples.push(`${String(row.id).slice(0, 8)} ${oldG.toFixed(2)}→${newG.toFixed(2)}`)
+  }
+  return { available: true, source, migrated, maxDelta, examples }
 }
 
 function main() {
   const dataDir = path.resolve(process.argv[2] || resolveEngramDataDir({}))
   const store = readStore(dataDir)
-  const active = visibleExperiences(store)
+  // 分片布局的读回顺序是「按桶分组」，单文件是按文件顺序：诊断输出不能因此漂移。
+  // 统一按 id 排序，保证同一份数据在两种布局下输出逐行可比（相似度是有方向的，顺序会改结果）。
+  const active = visibleExperiences(store).sort((left, right) => String(left.id).localeCompare(String(right.id)))
+  // 召回也用同一顺序的 experiences：分片布局下 store.experiences 的顺序不同，平手时 top1 会漂。
+  const recallStore = { ...store, experiences: [...store.experiences].sort((left, right) => String(left.id).localeCompare(String(right.id))) }
   const fails = []
   const warns = []
 
@@ -134,9 +179,13 @@ function main() {
   }
 
   const migration = migrationReport(store, dataDir)
-  if (migration.available === false) console.log('  迁移留痕：无文件可比（首跑）')
-  else if (migration.migrated > 0) console.log(`  迁移留痕：${migration.migrated} 行 G 被读时重算（最大 Δ${migration.maxDelta.toFixed(2)}）｜${migration.examples.join('；')}`)
-  else console.log('  迁移留痕：无（文件与读后一致）')
+  if (migration.available === false) {
+    console.log(`  迁移留痕：不可用（${migration.reason}）`)
+  } else {
+    const label = migration.source === 'legacy' ? 'legacy 快照' : 'exp-lib.json'
+    if (migration.migrated > 0) console.log(`  迁移留痕（对照 ${label}）：${migration.migrated} 行 G 被读时重算（最大 Δ${migration.maxDelta.toFixed(2)}）｜${migration.examples.join('；')}`)
+    else console.log(`  迁移留痕（对照 ${label}）：无（文件与读后一致）`)
+  }
 
   /* ---- 3. 对照覆盖 ---- */
   let contrastPairs = 0
@@ -167,7 +216,7 @@ function main() {
   console.log('\n[固定意图集召回]')
   let recalled = 0
   for (const intent of AUDIT_INTENTS) {
-    const ranked = rankExperiences(store, intent, 5)
+    const ranked = rankExperiences(recallStore, intent, 5)
     const top = ranked.candidates[0]
     const hit = ranked.neighbor_count > 0
     if (hit) recalled += 1

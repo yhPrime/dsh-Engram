@@ -28,14 +28,6 @@ export function resolveLiveDataDir(config = {}) {
 }
 
 /** 容错：文件里的对象只取需要的字段，缺什么补什么。 */
-function normalizeStore(parsed) {
-  const raw = parsed !== null && typeof parsed === 'object' ? parsed : {}
-  return {
-    version: Number(raw.version) || 1,
-    types: Array.isArray(raw.types) ? raw.types.filter((item) => item && typeof item === 'object') : [],
-    experiences: Array.isArray(raw.experiences) ? raw.experiences.filter((item) => item && typeof item === 'object') : [],
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /* 固化技能：<dataDir>/skills/<slug>/（SKILL.md + skill.json）                   */
@@ -199,7 +191,7 @@ function skillRowFromEngine(skill) {
  */
 export function createLiveSource(config = {}) {
   const dataDir = resolveLiveDataDir(config)
-  const file = dataDir === '' ? '' : path.join(dataDir, 'exp-lib.json')
+  const file = dataDir === '' ? '' : path.join(dataDir, 'manifest.json')
   const engine = dataDir === '' ? null : createEngine({ dataDir })
 
   return {
@@ -208,24 +200,30 @@ export function createLiveSource(config = {}) {
     label: '真实数据',
     readOnly: false,
 
+    /**
+     * 轻量读（P3-A）：只拿 manifest + 存储用量，不加载全量经验。
+     * 概览页（/state）与设置页用它；需要行的页面调 `hot()`。
+     */
     read() {
       if (file === '') {
         return {
-          store: emptyStore(),
+          manifest: null,
+          storage: null,
           dataDir: '',
           file: '',
           exists: false,
           bytes: 0,
-          updatedAt: '',
+          updatedAt: null,
           notice: 'exp-ui 还没接入真实经验库：config.dataDir 未设置，当前按空库显示。',
         }
       }
       try {
         const snapshot = engine.snapshot()
         return {
-          store: normalizeStore(snapshot.store),
+          manifest: snapshot.manifest || null,
+          storage: snapshot.storage || null,
           dataDir,
-          file,
+          file: snapshot.file || file,
           exists: snapshot.exists,
           bytes: snapshot.bytes,
           updatedAt: snapshot.updatedAt,
@@ -236,16 +234,30 @@ export function createLiveSource(config = {}) {
       } catch (error) {
         const missing = Boolean(error && error.code === 'ENOENT')
         return {
-          store: emptyStore(),
+          manifest: null,
+          storage: null,
           dataDir,
           file,
           exists: false,
           bytes: 0,
-          updatedAt: '',
+          updatedAt: null,
           notice: missing
             ? `没有找到经验库文件：${file}（先跑一次 exp_record，或确认 dataDir 配置）`
             : `经验库文件读不了：${String((error && error.message) || error)}；已按空库显示。`,
         }
+      }
+    },
+
+    /**
+     * 页面级热档读（P3-A）：经验列表/详情/关系图用。仍是一次全量热档读（≤ HOT_MAX_BYTES），
+     * 只是不再和 /state 绑在一起；P3-B 再按类型分片下推。
+     */
+    hot() {
+      if (engine === null) return { store: emptyStore() }
+      try {
+        return { store: engine.readHot() }
+      } catch {
+        return { store: emptyStore() }
       }
     },
 

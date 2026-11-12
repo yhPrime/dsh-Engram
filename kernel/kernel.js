@@ -135,15 +135,54 @@ export function cjkBigrams(text) {
  * @param {string} [actionHint] - Optional procedure hint.
  * @returns {{tokens: string[], cgrams: string[], artifacts: string[], actions: string[]}} State.
  */
+/**
+ * `abstractState` 的结果缓存（task-9 追加优化，2026-11-12）。
+ *
+ * 为什么需要：`upsertExperience` 的「近似替换」会对目标类型的每条记录重算
+ * `abstractState(item.intent)`（意图不可变），10x 库单条记录光这一项就要 ~20ms。
+ * `abstractState` 是纯函数，按 `${intent}\0${actionHint}` 做有界 LRU 即可；
+ * **返回对象约定只读**（缓存内共享，调用方不得就地修改）。
+ */
+const ABSTRACT_STATE_CACHE_LIMIT = 2000
+const abstractStateCache = new Map()
+let abstractStateHits = 0
+let abstractStateMisses = 0
+
 export function abstractState(intent, actionHint = '') {
+  const key = `${intent === undefined || intent === null ? '' : intent}\u0000${actionHint === undefined || actionHint === null ? '' : actionHint}`
+  const cached = abstractStateCache.get(key)
+  if (cached !== undefined) {
+    abstractStateHits += 1
+    abstractStateCache.delete(key)
+    abstractStateCache.set(key, cached)
+    return cached
+  }
+  abstractStateMisses += 1
   const text = `${intent || ''} ${actionHint || ''}`
   const lowered = text.toLowerCase()
-  return {
+  const state = {
     tokens: [...new Set(tokenize(text))].sort(),
     cgrams: cjkBigrams(lowered),
     artifacts: ARTIFACT_HINTS.filter((hint) => lowered.includes(hint)).sort(),
     actions: ACTION_HINTS.filter((hint) => lowered.includes(hint)).sort(),
   }
+  abstractStateCache.set(key, state)
+  while (abstractStateCache.size > ABSTRACT_STATE_CACHE_LIMIT) {
+    const oldest = abstractStateCache.keys().next().value
+    abstractStateCache.delete(oldest)
+  }
+  return state
+}
+
+/** 缓存命中统计（测试 / 交付测量用）。 */
+export function abstractStateCacheStats() {
+  return { hits: abstractStateHits, misses: abstractStateMisses, size: abstractStateCache.size }
+}
+
+export function clearAbstractStateCache() {
+  abstractStateCache.clear()
+  abstractStateHits = 0
+  abstractStateMisses = 0
 }
 
 /** Flatten a state into prefixed sets; mirrors `_state_signature`. */

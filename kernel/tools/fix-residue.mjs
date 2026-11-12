@@ -4,8 +4,12 @@
  *
  *   node tools/fix-residue.mjs [dataDir] [--write]
  *
- * 默认 **dry-run**，只打印将要改什么；加 `--write` 才落盘，且先备份
- * `<dataDir>/exp-lib.json.bak-<时间戳>`，写后复查残渣数量。
+ * 默认 **dry-run**，只打印将要改什么；加 `--write` 才落盘，且先备份：
+ *  - 单文件布局：`<dataDir>/exp-lib.json.bak-<时间戳>`（旧行为）；
+ *  - 分片布局（0.14.0+）：`<dataDir>/.locks/fix-residue-<时间戳>.bak/`（manifest + buckets，不复制冷档）。
+ * 写盘统一走 `writeStore`（分片布局由存储层决定落哪些文件），**不自己拼 exp-lib.json 路径**。
+ * 注意：未迁移的老库在 `--write` 时会顺带迁移到分片布局（与 exp_record 同一条写路径）；
+ * 备份仍是迁移前的 exp-lib.json.bak，回滚用得上。
  *
  * 只做两件事：剥 `</note>` 这类标签、在 `<parameter …>` 处截断；**不改** outcome / G / 类型 /
  * hits，也不删条目。清洗规则与 exp_record 写入时用的是同一个 `sanitizeField`，不会引入第二套口径。
@@ -14,6 +18,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import {
+  readManifest,
   readStore,
   resolveToolDataDir,
   sanitizeField,
@@ -21,6 +26,7 @@ import {
   visibleExperiences,
   writeStore,
 } from '../store.js'
+import { bucketsPath, manifestPath } from '../shard-store.js'
 
 /** 与 audit.mjs 同一口径：note 标签或工具参数残渣。 */
 export const RESIDUE_RE = /<\/?\s*note\s*>|<\s*parameter\b/i
@@ -58,6 +64,35 @@ export function fixResidue(store) {
   return { changed, skipped }
 }
 
+/**
+ * 备份「热档」：单文件布局复制 exp-lib.json；分片布局复制 manifest + buckets。
+ * 冷档不参与残渣修复，不需要备份（也不该在这一步放大磁盘）。
+ * @returns {{mode: string, path: string}}
+ */
+function backupHotStorage(dataDir) {
+  const singleFile = storeFile(dataDir)
+  let manifest = null
+  try {
+    manifest = readManifest(dataDir)
+  } catch {
+    manifest = null
+  }
+  if (manifest === null && fs.existsSync(singleFile)) {
+    const backup = `${singleFile}.bak-${Date.now()}`
+    fs.copyFileSync(singleFile, backup)
+    return { mode: '单文件', path: backup }
+  }
+  if (manifest !== null) {
+    const backupDir = path.join(dataDir, '.locks', `fix-residue-${Date.now()}.bak`)
+    fs.mkdirSync(backupDir, { recursive: true })
+    fs.copyFileSync(manifestPath(dataDir), path.join(backupDir, 'manifest.json'))
+    const buckets = bucketsPath(dataDir)
+    if (fs.existsSync(buckets)) fs.cpSync(buckets, path.join(backupDir, 'buckets'), { recursive: true })
+    return { mode: '分片', path: backupDir }
+  }
+  return { mode: '空库', path: '' }
+}
+
 function main() {
   const argv = process.argv.slice(2)
   const write = argv.includes('--write')
@@ -76,16 +111,15 @@ function main() {
   for (const item of skipped) console.log(`  ! ${item.id}：${item.reason}（跳过）`)
 
   if (!write) {
-    console.log('\n这是 dry-run；确认无误后加 --write 落盘（会先备份到 exp-lib.json.bak-<时间戳>）。')
+    console.log('\n这是 dry-run；确认无误后加 --write 落盘（单文件库会先备份到 exp-lib.json.bak-<时间戳>，并在写回时迁到分片；分片库备份到 .locks/fix-residue-<时间戳>.bak/）。')
     return
   }
 
-  const file = storeFile(dataDir)
-  const backup = `${file}.bak-${Date.now()}`
-  fs.copyFileSync(file, backup)
+  const backup = backupHotStorage(dataDir)
   writeStore(dataDir, store)
   const left = visibleExperiences(readStore(dataDir)).filter(hasResidue)
-  console.log(`\n已写回：${changed.length} 条；备份 ${backup}；复查剩余残渣 ${left.length} 条。`)
+  const backupText = backup.path === '' ? '（无，空库）' : `${backup.path}（${backup.mode}）`
+  console.log(`\n已写回：${changed.length} 条；备份 ${backupText}；复查剩余残渣 ${left.length} 条。`)
   if (left.length > 0) process.exitCode = 1
 }
 

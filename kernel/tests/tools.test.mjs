@@ -8,7 +8,8 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { buildTools } from '../tools.js'
-import { readStore, storeFile } from '../store.js'
+import { readStore } from '../store.js'
+import { manifestPath } from '../shard-store.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-tools-'))
 const defineTool = (definition) => definition
@@ -39,13 +40,13 @@ await check('两个工具都注册，参数 schema 完整', () => {
   assert.equal(typeof recall.execute, 'function')
 })
 
-await check('exp_record：首次写入 added，落盘到 exp-lib.json', () => {
+await check('exp_record：首次写入 added，落盘到分片 + manifest', () => {
   const out = record.execute({ intent: '制作研学课六页PPT', action: '先定主题色再排版', outcome: 'success', type: 'PPT / 课件', note: '红色党政风' })
   assert.equal(out.action, 'added')
   assert.equal(out.hits, 1)
   assert.equal(out.typeName, 'PPT / 课件')
   assert.equal(out.count, 1)
-  assert.ok(fs.existsSync(storeFile(dir)))
+  assert.ok(fs.existsSync(manifestPath(dir)), '0.14.0 起落盘入口是 manifest.json')
 })
 
 await check('exp_record：重复写入就地更新 hits', () => {

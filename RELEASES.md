@@ -35,6 +35,13 @@
 
 ## 当前发布
 
+- **v0.14.0（存储分片）**
+  - 真库从单个 `exp-lib.json` 改为 `manifest.json` + `buckets/<typeId>.<0|1>.jsonl` + `cold/<year>-<a|b|…>.jsonl`；迁移保留 `exp-lib.legacy.json` 回滚
+  - 迁移幂等：实测真库 128 条 **101 ms**，逐字段等价、提示段逐字符相同
+  - `exp_record` 走定向写：只读 2/14 分片、写 1 分片 + manifest；10x 库单条 **11–19 ms**（原 315 ms）
+  - 提示段缓存只认 manifest 指纹（暖 **0.12 ms**）；`readStore({cache:true})` 缓存读 **0.54 ms**
+  - 容量降为安全阀：单桶 2 MiB / 热档 32 MiB / `N_MAX` 20000；冷档默认不召回、`cold:true` 可查
+  - 故障注入 9 类全过（半写/被杀/分片损坏/并发/超大行/空库/非法 UTF-8/冷档缺失/磁盘满）；`npm test` 72 步 484 断言全绿
 - **v0.11.0（单插件）**
   - 合并为一个插件：`dsh-engram` 一个包、一个 cordis 入口（裸包名），工具面与控制台 API 在同一个 `apply` 里
   - 客户端入口 `client.js` 移到包根；`exports` 补 `./package.json`（DSH 客户端加载器要解析包清单）

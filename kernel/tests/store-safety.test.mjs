@@ -66,15 +66,49 @@ check('锁：同进程重入不互锁（writeStore 在锁内被调用）', () =>
   assert.equal(value, 'inner')
 })
 
-check('锁：被占用时给出明确错误而不是静默失败', () => {
+check('锁：真残留（pid 不存在 / 心跳过期）→ ≤200ms 清理并成功', () => {
+  const timeIt = (fn) => {
+    const t0 = process.hrtime.bigint()
+    const value = fn()
+    return [Number(process.hrtime.bigint() - t0) / 1e6, value]
+  }
+  // 死 pid + 心跳过期
+  const deadDir = fresh()
+  fs.mkdirSync(deadDir, { recursive: true })
+  const deadLock = `${storeFile(deadDir)}.lock`
+  fs.mkdirSync(deadLock)
+  fs.writeFileSync(path.join(deadLock, 'pid'), '999999', 'utf8')
+  fs.writeFileSync(path.join(deadLock, 'heartbeat'), JSON.stringify({ pid: 999999, at: Date.now() - 60000 }), 'utf8')
+  const [deadMs, deadValue] = timeIt(() => withStoreLock(deadDir, () => 42))
+  assert.equal(deadValue, 42)
+  assert.ok(deadMs <= 200, `死 pid 残留锁应在 200ms 内清理，实际 ${deadMs.toFixed(1)}ms`)
+  assert.equal(fs.existsSync(deadLock), false, '残留锁目录应被清掉')
+  // 活 pid 但心跳过期（持锁进程卡死/被杀）→ 同样判残留
+  const staleDir = fresh()
+  fs.mkdirSync(staleDir, { recursive: true })
+  const staleLock = `${storeFile(staleDir)}.lock`
+  fs.mkdirSync(staleLock)
+  fs.writeFileSync(path.join(staleLock, 'pid'), String(process.pid), 'utf8')
+  fs.writeFileSync(path.join(staleLock, 'heartbeat'), JSON.stringify({ pid: process.pid, at: Date.now() - 60000 }), 'utf8')
+  const [staleMs, staleValue] = timeIt(() => withStoreLock(staleDir, () => 7))
+  assert.equal(staleValue, 7)
+  assert.ok(staleMs <= 200, `心跳过期锁应在 200ms 内清理，实际 ${staleMs.toFixed(1)}ms`)
+})
+
+check('锁：真占用（活进程 + 新鲜心跳）→ 明确错误且不抢锁', () => {
   const dir = fresh()
   fs.mkdirSync(dir, { recursive: true })
   const lockDir = `${storeFile(dir)}.lock`
   fs.mkdirSync(lockDir)
+  // 伪造「另一个活进程正持锁」：pid 是当前进程（判活成功），心跳新鲜。
+  fs.writeFileSync(path.join(lockDir, 'pid'), String(process.pid), 'utf8')
+  fs.writeFileSync(path.join(lockDir, 'heartbeat'), JSON.stringify({ pid: process.pid, at: Date.now() }), 'utf8')
   try {
-    assert.throws(() => withStoreLock(dir, () => 'never'), /正被另一个进程写入/)
+    // 等 300ms 就抛错（真占用最多等 10s）；关键是**不能**被误判成残留而抢锁。
+    assert.throws(() => withStoreLock(dir, () => 'never', { waitMs: 300 }), /正被另一个进程写入/)
+    assert.equal(fs.existsSync(lockDir), true, '活进程的锁不能被抢走/删掉')
   } finally {
-    fs.rmdirSync(lockDir)
+    fs.rmSync(lockDir, { recursive: true, force: true })
   }
 })
 

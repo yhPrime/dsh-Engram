@@ -23,7 +23,9 @@ import {
   rowOf,
   visibleOf,
   statsOf,
+  statsOfManifest,
   typesOf,
+  typesOfManifest,
   usageSummary,
 } from './data-source.js'
 import fs from 'node:fs'
@@ -224,6 +226,24 @@ function readOf(source) {
   }
 }
 
+/**
+ * 取整库行（页面级）：live 的 read() 只给 manifest/storage（P3-A），行走 `hot()`；
+ * mock / 老数据源仍在 read().store 里，保持兼容。
+ */
+function storeOf(source) {
+  const read = readOf(source)
+  if (read.store && typeof read.store === 'object') return read.store
+  if (source && typeof source.hot === 'function') {
+    try {
+      const hot = source.hot()
+      if (hot && hot.store && typeof hot.store === 'object') return hot.store
+    } catch {
+      return emptyStore()
+    }
+  }
+  return emptyStore()
+}
+
 function safeSkills(source) {
   try {
     const rows = source && typeof source.skills === 'function' ? source.skills() : []
@@ -245,16 +265,38 @@ function skillSummaryOf(rows) {
   return summary
 }
 
-/** 概览（`/state` 的 data）。 */
+/** 从 manifest 的桶/簇/统计算 `/state` 的 totals（G6；字段名兼容几种写法）。 */
+function totalsOfManifest(manifest, types, skills) {
+  const stats = manifest && manifest.stats !== null && typeof manifest.stats === 'object' ? manifest.stats : {}
+  const buckets = Array.isArray(manifest && manifest.buckets) ? manifest.buckets : []
+  const all = buckets.reduce((sum, bucket) => sum + (Number(bucket && bucket.count) || 0), 0)
+  const visible = types.reduce((sum, type) => sum + (Number(type.count) || 0), 0)
+  const numberOr = (keys, fallback) => {
+    for (const key of keys) {
+      const value = Number(stats[key])
+      if (Number.isFinite(value)) return value
+    }
+    return fallback
+  }
+  return {
+    all: numberOr(['all', 'total'], all),
+    visible: numberOr(['visible'], visible),
+    deleted: numberOr(['deleted', 'deletedInsights'], 0),
+    superseded: numberOr(['superseded', 'supersededInsights'], 0),
+    retired: numberOr(['retired', 'retiredInsights'], 0),
+    types: types.length,
+    skills: skills.length,
+  }
+}
+
+/** 概览（`/state` 的 data）：有 manifest.stats 时只读 manifest（P3-A），否则退回全量行。 */
 export function buildState(source) {
   const read = readOf(source)
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-  const experiences = Array.isArray(store.experiences) ? store.experiences : []
-  const types = typesOf(store)
-  const stats = statsOf(store)
+  const manifest = read.manifest !== null && typeof read.manifest === 'object' ? read.manifest : null
+  const storage = read.storage !== null && typeof read.storage === 'object' ? read.storage : null
   const skills = safeSkills(source)
-  const bytes = Number(read.bytes) || 0
-  return {
+  const bytes = Number(read.bytes) || (storage === null ? 0 : Number(storage.totalBytes) || 0)
+  const base = {
     app: APP_NAME,
     version: pluginVersion(),
     source: metaOf(source),
@@ -262,9 +304,29 @@ export function buildState(source) {
     file: String(read.file || ''),
     exists: Boolean(read.exists),
     bytes,
-    updatedAt: String(read.updatedAt || ''),
+    updatedAt: read.updatedAt === null || read.updatedAt === undefined ? '' : String(read.updatedAt),
     notice: String(read.notice || ''),
+    ...(storage !== null ? { storage } : {}),
     feedbackEta: FEEDBACK_ETA,
+    skillSummary: skillSummaryOf(skills),
+    usage: usageSummary(safeUsage(source, 500)),
+  }
+  if (manifest !== null && manifest.stats !== null && typeof manifest.stats === 'object') {
+    const types = typesOfManifest(manifest)
+    return {
+      ...base,
+      totals: totalsOfManifest(manifest, types, skills),
+      stats: statsOfManifest(manifest, bytes),
+      types,
+    }
+  }
+  // 没有 manifest / G6 未落地 / mock：退回全量行，行为与 0.13.0 一致（不静默改语义）。
+  const store = storeOf(source)
+  const experiences = Array.isArray(store.experiences) ? store.experiences : []
+  const types = typesOf(store)
+  const stats = statsOf(store)
+  return {
+    ...base,
     totals: {
       all: experiences.length,
       visible: stats.totalInsights,
@@ -274,17 +336,24 @@ export function buildState(source) {
       types: types.length,
       skills: skills.length,
     },
-    skillSummary: skillSummaryOf(skills),
     stats: { ...stats, dbSizeBytes: bytes },
     types,
-    usage: usageSummary(safeUsage(source, 500)),
   }
+}
+
+/** 类型目录：有 manifest 时只读 manifest（P3-A），否则退回整库行。 */
+function typeListOf(source, read = readOf(source)) {
+  if (read && read.manifest !== null && typeof read.manifest === 'object') {
+    const types = typesOfManifest(read.manifest)
+    if (types.length > 0) return types
+  }
+  return typesOf(storeOf(source))
 }
 
 /** `/experiences` 的 data。 */
 export function buildExperiences(source, params) {
   const read = readOf(source)
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
+  const store = storeOf(source)
   const query = String((params && typeof params.get === 'function' ? params.get('query') : '') || '').trim()
   const meta = {
     source: metaOf(source),
@@ -303,8 +372,7 @@ export function buildExperiences(source, params) {
 
 /** `/experience` 的 data；找不到返回 null。 */
 export function buildExperience(source, id) {
-  const read = readOf(source)
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
+  const store = storeOf(source)
   return detailOf(store, id)
 }
 
@@ -401,8 +469,7 @@ export function buildRecall(source, body = {}) {
   const limit = Math.max(1, Math.min(50, Math.trunc(Number(body.limit) || 8)))
   const context = Array.isArray(body.context) ? body.context.map(String) : []
   if (typeof source.recall === 'function') return source.recall({ intent, limit, context })
-  const store = source.read().store || emptyStore()
-  return recallOf(store, intent, limit)
+  return recallOf(storeOf(source), intent, limit)
 }
 
 export function buildRecord(source, body = {}) {
@@ -429,8 +496,7 @@ export async function buildImportSkill(source, body = {}, deps = {}) {
   const read = readOf(source)
   const dataDir = String(read.dataDir || '')
   if (dataDir === '') throw codedError('no-data-dir', '没有数据目录，无法写入技能')
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-  const typeNames = typesOf(store).map((type) => String(type.name || '')).filter((name) => name !== '')
+  const typeNames = typeListOf(source, read).map((type) => String(type.name || '')).filter((name) => name !== '')
   const filePath = String(body.path || '').trim()
   const content = typeof body.content === 'string' ? body.content : ''
   const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
@@ -477,13 +543,15 @@ export function buildValidate(source) {
 export function buildSettings(source) {
   const read = readOf(source)
   const extra = source && typeof source.settings === 'function' ? source.settings() : {}
+  const storage = read.storage !== null && typeof read.storage === 'object' ? read.storage : null
   return {
     source: metaOf(source),
     dataDir: String(read.dataDir || ''),
     file: String(read.file || ''),
     exists: Boolean(read.exists),
-    bytes: Number(read.bytes) || 0,
-    updatedAt: String(read.updatedAt || ''),
+    bytes: Number(read.bytes) || (storage === null ? 0 : Number(storage.totalBytes) || 0),
+    updatedAt: read.updatedAt === null || read.updatedAt === undefined ? '' : String(read.updatedAt),
+    ...(storage !== null ? { storage } : {}),
     currentRoot: String(extra.currentRoot || ''),
     version: pluginVersion(),
   }
@@ -492,7 +560,7 @@ export function buildSettings(source) {
 /** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
 export function buildGraph(source) {
   const read = readOf(source)
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
+  const store = storeOf(source)
   const rows = visibleOf(store).map(rowOf)
   const types = typesOf(store)
   const skills = source && typeof source.skills === 'function' ? (source.skills() || []) : []
@@ -669,8 +737,7 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/types') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       const read = active.read() || {}
-      const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-      return json(res, 200, { ok: true, data: { types: typesOf(store) } })
+      return json(res, 200, { ok: true, data: { types: typeListOf(active, read) } })
     }
     if (route === '/skills') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

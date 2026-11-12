@@ -78,7 +78,8 @@ await check('apply：工具写读同一 dataDir', async () => {
   record.execute({ intent: '做一份任务卡', action: 'task-card-builder', outcome: 'success', type: '文档 / 教案' })
   const out = recall.execute({ intent: '做一份任务卡', limit: 3 })
   assert.ok(out.candidates.length >= 1)
-  assert.ok(fs.existsSync(path.join(dir, 'exp-lib.json')))
+  // 0.14.0 起落盘入口是 manifest.json（旧单文件迁移为 exp-lib.legacy.json）。
+  assert.ok(fs.existsSync(path.join(dir, 'manifest.json')))
 })
 
 try {

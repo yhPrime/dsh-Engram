@@ -23,12 +23,14 @@ import {
   deleteType,
   forgetExperience,
   mergeTypes,
+  readManifest,
   readStore,
   renameType,
   upsertExperience,
   writeStore,
 } from '../store.js'
 import { similarityV2, stateOf } from '../retrieval.js'
+import { readShardRecords } from '../shard-store.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-provider-cluster-'))
 let passed = 0
@@ -154,12 +156,15 @@ check('幂等：连续 ensureClusters 结果一致', () => {
   assert.equal(JSON.stringify(store.clusters), once)
 })
 
-check('不落盘：writeStore 不写 clusters，readStore 重算', () => {
+check('派生不夹带：分片记录里没有 clusters，manifest 只是缓存，readStore 重算', () => {
   const store = freshStore()
   seed(store)
   writeStore(dir, store)
-  const raw = JSON.parse(fs.readFileSync(path.join(dir, 'exp-lib.json'), 'utf8'))
-  assert.equal('clusters' in raw, false)
+  // 0.14.0 分片布局：经验记录里不能夹带派生字段（写回会变成两套真相）；
+  // 簇签名落 manifest 当缓存（§7.3），读时仍从分片重算。
+  const manifest = readManifest(dir)
+  for (const row of readShardRecords(dir, manifest)) assert.equal('clusters' in row, false)
+  assert.equal(manifest.clusters.length, store.types.length)
   const reloaded = readStore(dir)
   assert.ok(reloaded.clusters.length === reloaded.types.length)
   assert.equal(reloaded.clusters.find((item) => item.name === 'PPT / 课件').stats.count, 1)

@@ -7,6 +7,7 @@
 
 import {
   FEEDBACK_ETA,
+  SYSTEM_TYPE,
   applyFeedback,
   assignType,
   buildInduction,
@@ -18,7 +19,10 @@ import {
   mergeTypes,
   pendingTasks,
   rankExperiences,
+  readColdStore,
+  readManifest,
   readStore,
+  resolveTypeForRecord,
   resolveVerdicts,
   visibleExperiences,
   renameType,
@@ -27,11 +31,12 @@ import {
   upsertExperience,
   writeStore,
 } from './store.js'
+import { readRecordsByIds, readShardRecordsOfTypes, recordShardWrite, writeTypeShards } from './shard-store.js'
 import { findActiveSession, findRecordBinding, userMessageForRecord } from './session.js'
 import { measure, slimRecall, slimReceipt } from './token-budget.js'
 import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
-import { routeCluster } from './cluster.js'
+import { ensureClusters, routeCluster } from './cluster.js'
 import { resolveEngramDataDir } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId } from './skills.js'
 
@@ -62,6 +67,41 @@ function hostSessionOf(exec) {
   } catch {
     return { sessionId: '', cwd: '' }
   }
+}
+
+/** 把记录按 typeId 分组（写回 touched 类型时 rowsByType 必须是该类型的全部行，含 tombstone）。 */
+function groupRowsByType(rows) {
+  const out = {}
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+    const typeId = String(row.typeId || SYSTEM_TYPE.id)
+    if (out[typeId] === undefined) out[typeId] = []
+    out[typeId].push(row)
+  }
+  return out
+}
+
+/**
+ * 只读 manifest 的类型目录（T4）：count 用 `stats.tasksByType` 的唯一 taskId 数，与 `listTypes` 同口径。
+ * 返回 null 表示 manifest 还没有统计（G6 缺失）→ 调用方回退全量读，不要在这里现算。
+ */
+function typesFromManifest(manifest) {
+  if (manifest === null || manifest === undefined) return null
+  const stats = manifest.stats !== null && typeof manifest.stats === 'object' ? manifest.stats : null
+  const taskCounts = stats !== null && stats.tasksByType !== null && typeof stats.tasksByType === 'object' ? stats.tasksByType : null
+  if (taskCounts === null) return null
+  const types = Array.isArray(manifest.types) ? manifest.types : []
+  return types
+    .map((type) => ({
+      id: type.id,
+      name: type.name,
+      description: type.description || '',
+      system: type.system === true || type.id === SYSTEM_TYPE.id,
+      source: type.source || 'preset',
+      createdAt: type.createdAt || '',
+      count: Number(taskCounts[type.id]) || 0,
+    }))
+    .sort((left, right) => Number(left.system) - Number(right.system) || right.count - left.count || left.name.localeCompare(right.name, 'zh'))
 }
 
 /**
@@ -95,7 +135,7 @@ export function buildTools(defineTool, config = {}) {
     if (stored !== '') return stored
     if (item === undefined || item === null || !item.sessionId || item.turn === undefined || item.turn === null) return ''
     try {
-      return userMessageForRecord({ sessionId: item.sessionId, turn: item.turn }, { sessionsRoot: config.sessionsRoot })
+      return userMessageForRecord({ sessionId: item.sessionId, turn: item.turn }, { sessionsRoot: config.sessionsRoot, dataDir: dataDirOf() })
     } catch {
       return ''
     }
@@ -133,15 +173,18 @@ export function buildTools(defineTool, config = {}) {
     execute(args = {}, exec) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
-      const store = readStore(dataDir)
+      // P3.5（task-9）：记录路径走 partial 读 + 定向写。manifest 是入口；老库（无 manifest）仍走全量。
+      const manifest = readManifest(dataDir)
       const host = hostSessionOf(exec)
       const hostCwd = host.cwd !== '' ? host.cwd : (config.cwd || process.cwd())
       // 没给类型时按簇路由自动归族（config.routing='off' 或 autoAssign=false 可关）；落不进任何簇就保持「未分类」。
+      // 路由只用 manifest 的 clusters 缓存（与全量重算的一致性有测试守着）。
       const autoAssign = config.autoAssign !== false && config.routing !== 'off'
       let typeName = args.typeName !== undefined ? args.typeName : args.type
+      const typeNameGiven = !(typeName === undefined || typeName === null || String(typeName).trim() === '')
       let routedCluster = null
-      if ((typeName === undefined || typeName === null || String(typeName).trim() === '') && autoAssign) {
-        const route = routeCluster(store, String(args.intent || ''))
+      if (!typeNameGiven && autoAssign && manifest !== null) {
+        const route = routeCluster({ types: manifest.types, clusters: manifest.clusters }, String(args.intent || ''))
         if (!route.fallback) {
           typeName = route.name
           routedCluster = { clusterId: route.clusterId, name: route.name, score: route.score }
@@ -151,7 +194,7 @@ export function buildTools(defineTool, config = {}) {
       let binding = null
       if (config.autoBind !== false) {
         try {
-          binding = findRecordBinding({ intent: args.intent, action: args.action }, { sessionsRoot: config.sessionsRoot, cwd: hostCwd })
+          binding = findRecordBinding({ intent: args.intent, action: args.action }, { sessionsRoot: config.sessionsRoot, cwd: hostCwd, dataDir })
           // 宿主给出确切会话时，绑定必须属于同一会话；否则宁可不用（别把别的窗口的 turn 挂上来）。
           if (binding !== null && host.sessionId !== '' && binding.sessionId !== host.sessionId) binding = null
         } catch {
@@ -166,20 +209,14 @@ export function buildTools(defineTool, config = {}) {
         try {
           activeSession = host.sessionId !== ''
             ? { sessionId: host.sessionId, file: '', cwd: host.cwd }
-            : findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: hostCwd, tool: 'exp_record', intent: args.intent })
+            : findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: hostCwd, tool: 'exp_record', intent: args.intent, dataDir })
         } catch {
           activeSession = null
         }
       }
       const sessionId = binding !== null ? binding.sessionId : (activeSession === null ? undefined : activeSession.sessionId)
-      // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。
-      // 只允许回填本会话自己的待判定（以前 B 会话能改 A 会话的行）。
-      const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
-        ? resolveVerdicts(store, args.verdicts, { sessionId, requireSession: config.autoBind !== false })
-        : []
-      // 待判定队列在写入本条之前取：刚记的这条不算「提醒过一次」，下一轮才出现。
-      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
-      const result = upsertExperience(store, {
+      // 写入口的入参/选项：fast / slow 两条路径共用（保证语义只在一处定义）。
+      const upsertInput = {
         intent: args.intent,
         action: args.action,
         outcome: args.outcome,
@@ -204,15 +241,95 @@ export function buildTools(defineTool, config = {}) {
         expectedG: args.expectedG,
         context: args.context,
         skillId: args.skillId,
-      }, {
+      }
+      const upsertOptions = {
         mergeThreshold: config.mergeThreshold,
         replaceThreshold: config.replaceThreshold,
         maxTypes: config.maxTypes,
         newTypesPerDay: config.newTypesPerDay,
         typeSimilarity: config.typeSimilarity,
         feedbackDecayDays: config.feedbackDecayDays,
-      })
-      writeStore(dataDir, store)
+      }
+      const haveVerdicts = Array.isArray(args.verdicts) && args.verdicts.length > 0
+      let verdictResults = []
+      let pendingOut = { rows: [], skipped: [] }
+      let result = null
+      let activeCount = 0
+
+      // 快路径（task-9）：有 manifest 且不需要跨类型回填时，只读目标类型（+ pending 所在类型）的行，
+      // upsert 后走 recordShardWrite（定向写 + 压缩触发）。partial store 绝不交给 writeStore。
+      if (manifest !== null && !haveVerdicts) {
+        const typeStore = {
+          version: manifest.version,
+          types: (Array.isArray(manifest.types) ? manifest.types : []).map((type) => ({ ...type })),
+          experiences: [],
+          clusters: manifest.clusters,
+        }
+        const resolved = resolveTypeForRecord(typeStore, typeNameGiven ? String(typeName) : '', {
+          typeDescription: args.typeDescription,
+          maxTypes: config.maxTypes,
+          newTypesPerDay: config.newTypesPerDay,
+          similarity: config.typeSimilarity,
+        })
+        // 没给显式类型、又落到「未分类」时，upsert 会跨类型继承归属——partial store 看不到别的类型，走慢路径。
+        const needsCrossTypeInheritance = !typeNameGiven
+          && resolved.type !== undefined && resolved.type !== null
+          && resolved.type.id === SYSTEM_TYPE.id
+        if (resolved.type !== undefined && resolved.type !== null && !needsCrossTypeInheritance) {
+          const targetTypeId = String(resolved.type.id)
+          if (!typeNameGiven) {
+            typeName = resolved.type.name
+            upsertInput.type = typeName
+          }
+          // pending 提醒/TTL 要跨类型：按 manifest.pending 的 typeId 定向读，别加载全库。
+          const pendingRefs = (Array.isArray(manifest.pending) ? manifest.pending : [])
+            .map((entry) => ({ id: String((entry && entry.id) || ''), typeId: String((entry && entry.typeId) || SYSTEM_TYPE.id) }))
+            .filter((ref) => ref.id !== '')
+          const loadedTypeIds = new Set([targetTypeId])
+          for (const ref of pendingRefs) loadedTypeIds.add(ref.typeId)
+          const loadedRows = readShardRecordsOfTypes(dataDir, manifest, [...loadedTypeIds]).records
+          const store = { version: manifest.version, types: typeStore.types, clusters: manifest.clusters, experiences: loadedRows }
+          pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
+          // skipClusters：partial store 上重算簇没有意义（别的类型没有行），由 recordShardWrite 按
+          // touched 类型重算（签名走 state 快速路径，成本很小）。
+          result = upsertExperience(store, upsertInput, { ...upsertOptions, skipClusters: true })
+          // 写回：touched = 读过的类型 + upsert 实际落到/新建的类型；每类都要给**全部行**（含墓碑）。
+          const rowsByType = groupRowsByType(store.experiences)
+          const touched = [...new Set([...loadedTypeIds, String(result.experience.typeId || targetTypeId)])]
+          const rowsPayload = {}
+          for (const typeId of touched) rowsPayload[typeId] = rowsByType[typeId] || []
+          const updated = recordShardWrite(dataDir, manifest, {
+            touchedTypeIds: touched,
+            rowsByType: rowsPayload,
+            types: store.types,
+            compact: config.compactShard,
+          })
+          activeCount = Number.isFinite(Number(updated.stats && updated.stats.visible)) ? Number(updated.stats.visible) : 0
+        }
+      }
+
+      // 慢路径（老库 / 带 verdicts 回填 / 需要跨类型继承）：保持 0.13 的全量读—改—写。
+      if (result === null) {
+        const store = readStore(dataDir)
+        if (!typeNameGiven && autoAssign) {
+          const route = routeCluster(store, String(args.intent || ''))
+          if (!route.fallback) {
+            typeName = route.name
+            routedCluster = { clusterId: route.clusterId, name: route.name, score: route.score }
+            upsertInput.type = typeName
+          }
+        }
+        // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。
+        // 只允许回填本会话自己的待判定（以前 B 会话能改 A 会话的行）。
+        verdictResults = haveVerdicts
+          ? resolveVerdicts(store, args.verdicts, { sessionId, requireSession: config.autoBind !== false })
+          : []
+        // 待判定队列在写入本条之前取：刚记的这条不算「提醒过一次」，下一轮才出现。
+        pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
+        result = upsertExperience(store, upsertInput, upsertOptions)
+        writeStore(dataDir, store)
+        activeCount = visibleExperiences(store).length
+      }
       // 技能账本：用了技能就回填结果；撞到障碍就按签名计数（连续 3 次覆盖并归档）。
       let skillResult = null
       let skillWarning = null
@@ -252,7 +369,6 @@ export function buildTools(defineTool, config = {}) {
       }
       const typeInfo = result.type || {}
       const sanitized = result.sanitized || {}
-      const active = visibleExperiences(store)
       const pending = config.pendingReceipt === false
         ? []
         : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item), edit: pendingEdit(item) }) }))
@@ -273,7 +389,7 @@ export function buildTools(defineTool, config = {}) {
         routedCluster,
         supersededId: result.supersededId || undefined,
         retired: Array.isArray(result.retired) && result.retired.length > 0 ? result.retired : undefined,
-        count: active.length,
+        count: activeCount,
         // outcome 与分步回报反号时明确提示：G 取最弱一步，统计会按 G 记失败（2026-11-07）。
         signWarning: result.signMismatch === true
           ? `outcome（${result.experience.outcome}）与分步回报反号：G=${result.experience.G} 取最弱一步，统计会按 G 记失败。`
@@ -319,14 +435,23 @@ export function buildTools(defineTool, config = {}) {
       context: { type: 'array', description: '可选：当前任务的情境线索；给了就优先召回情境匹配的经验。' },
       mark: { type: 'boolean', description: '可选：把这次召回记为一次「主动提取」（累加 retrievals，用于证据展示，不改排序）。' },
       all: { type: 'boolean', description: '可选：强制全库检索，忽略路由。' },
+      cold: { type: 'boolean', description: '可选：查冷档（超出容量上限被下沉的老经验，默认不参与召回）。只读，不写盘。' },
       detail: { type: 'boolean', description: '可选：返回完整回执（含全部字段与长 note）；默认瘦身档省 token。' },
       verdicts: { type: 'array', description: '可选：顺手回填回执里的 pending，[{id,outcome,dimensions?}]。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}, exec) {
       const dataDir = dataDirOf()
+      // cold:true 只查冷档（P2）：冷档默认不参与召回，这是显式入口；cold 模式只读、不写盘。
+      const coldMode = args.cold === true
       return withStoreLock(dataDir, () => {
-      const store = readStore(dataDir)
+      // P3-B（T1）：manifest 是只读路径入口；需要全量时再懒读，避免「命中簇也读全库」。
+      const manifest = coldMode ? null : readManifest(dataDir)
+      let fullStoreCache = null
+      const fullStore = () => {
+        if (fullStoreCache === null) fullStoreCache = coldMode ? readColdStore(dataDir) : readStore(dataDir)
+        return fullStoreCache
+      }
       const host = hostSessionOf(exec)
       const hostCwd = host.cwd !== '' ? host.cwd : (config.cwd || process.cwd())
       // 召回也要拿到当前会话：pending 只发本会话的，回填也只能结自己的账。
@@ -336,47 +461,128 @@ export function buildTools(defineTool, config = {}) {
         try {
           activeSession = host.sessionId !== ''
             ? { sessionId: host.sessionId, file: '', cwd: host.cwd }
-            : findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: hostCwd, tool: 'exp_recall', intent: args.intent })
+            : findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: hostCwd, tool: 'exp_recall', intent: args.intent, dataDir })
         } catch {
           activeSession = null
         }
       }
-      const sessionId = activeSession === null ? undefined : activeSession.sessionId
+      const sessionId = coldMode ? undefined : (activeSession === null ? undefined : activeSession.sessionId)
       // 回填（0.13.0）：召回时顺手把上一条 pending 结掉，模型不必为判定新开一次调用。
-      const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
-        ? resolveVerdicts(store, args.verdicts, { sessionId, requireSession: config.autoBind !== false })
+      // cold 模式只读：不结账、不写盘（否则会把冷档子集当成整库写回去）。
+      const verdictResults = !coldMode && Array.isArray(args.verdicts) && args.verdicts.length > 0
+        ? resolveVerdicts(fullStore(), args.verdicts, { sessionId, requireSession: config.autoBind !== false })
         : []
       // 技能优先：高确定技能命中时只返回技能本身，不再列具体经验。
       // 只拿还没全局注册的技能：注册过的交给 DSH 当普通技能用，经验库不再排序它
-      const skills = listSkills(dataDir, { onlyLocal: true })
+      // cold 模式不参与技能匹配：查冷档就是查冷档，别被技能正文盖掉。
+      const skills = coldMode ? [] : listSkills(dataDir, { onlyLocal: true })
       const pendingSkills = skills.filter((skill) => skill.meta.pendingCommit === true).length
-      const confidentHit = matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: true })
-      const overallHit = matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: false, minSimilarity: TRIAL_MIN_SIMILARITY })
+      const confidentHit = coldMode ? null : matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: true })
+      const overallHit = coldMode ? null : matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: false, minSimilarity: TRIAL_MIN_SIMILARITY })
       // 先算两种命中再决定用哪个：高确定命中可能只因为「候选池被置信过滤缩小」而赢，
       // 例如问页码时池里只剩 pptx-existing-deck-edit；此时 overall 的 pptx-page-number(0.525)
       // 明显更像，应该按「试用技能」给它，而不是错配给养熟的旧技能。
       const overallClearlyBetter = overallHit !== null
         && (confidentHit === null || (overallHit.skill.slug !== confidentHit.skill.slug && overallHit.score >= confidentHit.score))
       const picked = overallClearlyBetter ? { hit: overallHit, trial: true } : (confidentHit !== null ? { hit: confidentHit, trial: false } : (overallHit !== null ? { hit: overallHit, trial: true } : null))
-      const routing = args.all === true
+      const routing = coldMode || args.all === true
         ? 'off'
         : (config.routing === 'shadow' ? 'shadow' : config.routing === 'off' ? 'off' : 'on')
       let clusterId
       if (args.cluster !== undefined && args.cluster !== null && String(args.cluster).trim() !== '') {
-        const type = findType(store.types, String(args.cluster))
+        const type = findType(manifest !== null ? manifest.types : fullStore().types, String(args.cluster))
         if (type === null) throw new Error(`没有这个簇：${String(args.cluster)}（用 exp_type list 看现有类型）`)
         clusterId = type.id
       }
       const recallLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || Number(config.recallLimitDefault) || 3)))
+      const recentRequested = !coldMode && config.recent !== false
+      const recentAllSessions = config.autoBind === false
+      const sessionIdText = sessionId === undefined ? '' : String(sessionId)
+
+      /**
+       * 命中簇时只读「主簇 + 次簇(≥0.7×主) + 未分类」的分片，再走同一个 rankExperiences。
+       * 回退全量的条件（任一命中）：无 manifest / 冷档 / routing≠on / 有 verdicts 回写 /
+       * recent 需要跨全部会话却没有索引 / 路由 fallback / 收窄后不足 3 条（rankExperiences 此时本来就会退回全量 pool）。
+       * 写回（mark / pending 提醒）走 writeTypeShards + touched 类型的全部行；
+       * 红线：partial store 绝不交给 writeStore。
+       */
+      const canDownPush = manifest !== null && !coldMode && routing === 'on'
+        && verdictResults.length === 0
+        && !(recentRequested && recentAllSessions && sessionIdText === '')
+      let store = null
+      let usedPartial = false
+      let recentRows = null
+      if (canDownPush) {
+        const route = clusterId !== undefined
+          ? { clusterId, candidates: [], fallback: false, score: 1 }
+          : routeCluster({ types: manifest.types, clusters: manifest.clusters }, String(args.intent || ''))
+        if (route !== null && route.fallback !== true && typeof route.clusterId === 'string' && route.clusterId !== '') {
+          const typeIds = new Set([String(route.clusterId), SYSTEM_TYPE.id])
+          const second = Array.isArray(route.candidates) ? route.candidates[1] : undefined
+          const secondUsable = second !== undefined && second !== null && String(second.clusterId || '') !== ''
+            && String(second.clusterId) !== String(route.clusterId)
+            && Number(second.score) >= Number(route.score) * 0.7
+          if (secondUsable) typeIds.add(String(second.clusterId))
+          const loaded = readShardRecordsOfTypes(dataDir, manifest, [...typeIds])
+          const visibleRows = loaded.records.filter((row) => row && !row.deleted_at && !row.superseded_by && !row.retired_at && row.verdict !== 'skipped')
+          const primaryRows = visibleRows.filter((row) => String(row.typeId) === String(route.clusterId) || String(row.typeId) === SYSTEM_TYPE.id)
+          const secondaryRows = secondUsable ? visibleRows.filter((row) => String(row.typeId) === String(second.clusterId)) : []
+          if (primaryRows.length + secondaryRows.length >= 3) {
+            store = { version: manifest.version, types: manifest.types, clusters: manifest.clusters, experiences: loaded.records }
+            usedPartial = true
+            if (recentRequested) {
+              if (sessionIdText === '' && !recentAllSessions) {
+                // recent 默认 fail-closed：没有会话就没有 recent，命中路径给空数组即可。
+                recentRows = []
+              } else {
+                const entries = (Array.isArray(manifest.recent) ? manifest.recent : [])
+                  .filter((entry) => entry !== null && typeof entry === 'object' && String(entry.id || '') !== ''
+                    && (sessionIdText === '' || String(entry.sessionId || '') === sessionIdText))
+                recentRows = readRecordsByIds(dataDir, manifest, entries.map((entry) => ({ id: String(entry.id), typeId: String(entry.typeId || SYSTEM_TYPE.id) })))
+              }
+            }
+          }
+        }
+      }
+      if (store === null) store = fullStore()
       // autoBind=false 是显式「不绑会话」模式（headless/脚本/运维）：发 recentAllSessions 拿全量。
       // 默认模式认不出会话时 recent 默认 fail-closed（store.js），绝不跨会话泄漏。
-      const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false, recentAllSessions: config.autoBind === false, sessionId: sessionId || '' })
+      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText }
+      if (Array.isArray(recentRows)) rankOptions.recentRows = recentRows
+      const result = rankExperiences(store, String(args.intent || ''), recallLimit, rankOptions)
       // 相似度低于 0.20 且判 weak：不展示噪声候选（无关任务时避免「1 条沾边候选」被当推荐）。
       if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
       result.pendingSkills = pendingSkills
-      // 待判定：随回执带出（≤2 条）。
-      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
-      if (verdictResults.some((item) => item.ok) || pendingOut.rows.length > 0 || pendingOut.skipped.length > 0) writeStore(dataDir, store)
+      // 待判定：随回执带出（≤2 条）。cold 模式不查待判定、更不写盘。
+      // partial 路径用 manifest.pending 的 id+typeId 定向读 pending 所在类型，再定向写回
+      // （task-6 的 writeTypeShards 会就地重算 touched 类型的 stats/recent，不在这里手工算）。
+      let pendingOut
+      if (coldMode) {
+        pendingOut = { rows: [], skipped: [] }
+      } else if (usedPartial && manifest !== null && Array.isArray(manifest.pending) && manifest.pending.length > 0) {
+        const refs = manifest.pending
+          .map((entry) => ({ id: String((entry && entry.id) || ''), typeId: String((entry && entry.typeId) || SYSTEM_TYPE.id) }))
+          .filter((ref) => ref.id !== '')
+        const pendingTypeIds = [...new Set(refs.map((ref) => ref.typeId))]
+        const loadedPending = readShardRecordsOfTypes(dataDir, manifest, pendingTypeIds)
+        const pendingStore = { version: manifest.version, types: manifest.types, clusters: manifest.clusters, experiences: loadedPending.records }
+        pendingOut = pendingTasks(pendingStore, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
+        if (pendingOut.rows.length > 0 || pendingOut.skipped.length > 0) {
+          const rowsByType = groupRowsByType(pendingStore.experiences)
+          writeTypeShards(dataDir, readManifest(dataDir), {
+            touchedTypeIds: pendingTypeIds,
+            rowsByType: Object.fromEntries(pendingTypeIds.map((typeId) => [typeId, rowsByType[typeId] || []])),
+          })
+        }
+      } else {
+        pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
+      }
+      const verdictWrote = verdictResults.some((item) => item.ok)
+      const fullPendingWrote = !usedPartial && (pendingOut.rows.length > 0 || pendingOut.skipped.length > 0)
+      if (!coldMode && (verdictWrote || fullPendingWrote)) {
+        if (fullStoreCache === null) throw new Error('P3-B 内部错误：写回需要全量 store，但当前是 partial 读路径（partial store 不能交给 writeStore）')
+        writeStore(dataDir, fullStoreCache)
+      }
       const pending = config.pendingReceipt === false
         ? []
         : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item), edit: pendingEdit(item) }) }))
@@ -457,15 +663,29 @@ export function buildTools(defineTool, config = {}) {
         if (induction !== null) result.induction = induction
       }
       // 提取即强化（0.26.0）：只有调用方显式 mark 才记「主动提取」次数，读到不写、不污染排序。
-      if (args.mark === true) {
+      if (!coldMode && args.mark === true) {
         const recalledIds = new Set(result.candidates.flatMap((candidate) => (candidate.evidence || []).map((evidence) => evidence.id)))
         let marked = 0
+        const markedTypes = new Set()
         for (const row of store.experiences) {
           if (!recalledIds.has(row.id)) continue
           row.retrievals = (Number(row.retrievals) || 0) + 1
           marked += 1
+          markedTypes.add(String(row.typeId || SYSTEM_TYPE.id))
         }
-        if (marked > 0) writeStore(dataDir, store)
+        if (marked > 0) {
+          if (usedPartial && manifest !== null) {
+            // 只重写「被 mark 的类型」；rowsByType 是该类型的全部行（含 tombstone），红线不放宽。
+            const rowsByType = groupRowsByType(store.experiences)
+            const touchedTypeIds = [...markedTypes]
+            writeTypeShards(dataDir, readManifest(dataDir), {
+              touchedTypeIds,
+              rowsByType: Object.fromEntries(touchedTypeIds.map((typeId) => [typeId, rowsByType[typeId] || []])),
+            })
+          } else {
+            writeStore(dataDir, store)
+          }
+        }
         result.marked = marked
       }
       // 瘦身（0.13.0）：默认只回 2 条、去掉重复字段与空值；detail:true 返回原始 payload。
@@ -478,6 +698,10 @@ export function buildTools(defineTool, config = {}) {
         if (typeof result.induction === 'string') payload.induction = result.induction
         if (Number(result.marked) > 0) payload.marked = Number(result.marked)
         payload.pendingSkills = pendingSkills
+        if (coldMode) {
+          payload.cold = true
+          payload.note = `冷档查询：只返回超出容量上限被下沉的老经验（默认召回不含它们）。${payload.note === undefined ? '' : payload.note}`
+        }
       }
       logUsage(dataDir, {
         tool: 'exp_recall',
@@ -486,6 +710,7 @@ export function buildTools(defineTool, config = {}) {
         neighbors: result.neighbor_count,
         hit: result.candidates.length > 0,
         mode: result.mode,
+        cold: coldMode,
         route: result.route && result.route.fallback === false ? result.route.name : '(fallback)',
         route_score: result.route ? result.route.score : null,
         limit: recallLimit,
@@ -671,9 +896,50 @@ export function buildTools(defineTool, config = {}) {
     execute(args = {}) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
-      const store = readStore(dataDir)
+      const manifest = readManifest(dataDir)
       const action = String(args.action || '').trim()
-      let result
+      // T4：list/create 只读 manifest（stats.tasksByType 提供唯一任务数），不加载全量经验。
+      // merge/delete/assign/rename 要动经验行或引用名，仍走全量（写路径等 task-6 的 writeTypeShards 能力）。
+      let catalogTypes = null
+      let result = null
+      if (manifest !== null) {
+        if (action === 'list') {
+          const types = typesFromManifest(manifest)
+          if (types !== null) {
+            catalogTypes = manifest.types
+            result = { action, types }
+          }
+        } else if (action === 'create') {
+          const typeStore = {
+            version: manifest.version,
+            types: (Array.isArray(manifest.types) ? manifest.types : []).map((type) => ({ ...type })),
+            experiences: [],
+          }
+          const type = createType(typeStore, args.name, args.typeDescription !== undefined ? args.typeDescription : args.description)
+          // 新类型是空簇：用 cluster.js 的同一套 ensureClusters 生成，别在 tools 里拼 cluster 结构。
+          const cluster = ensureClusters({ types: [type], experiences: [] })[0]
+          writeTypeShards(dataDir, manifest, {
+            types: typeStore.types,
+            clusters: [...(Array.isArray(manifest.clusters) ? manifest.clusters : []), cluster],
+            touchedTypeIds: [type.id],
+            rowsByType: { [type.id]: [] },
+          })
+          catalogTypes = typeStore.types
+          result = { action, created: type.name, typeId: type.id }
+        }
+      }
+      if (result !== null) {
+        logUsage(dataDir, {
+          tool: 'exp_type',
+          op: action,
+          target: String(args.name || args.id || args.newName || ''),
+        }, usageOptions)
+        result.typeCount = catalogTypes.filter((type) => type.system !== true && type.id !== 'ty_other').length
+        result.typeLimit = Math.max(1, Math.trunc(Number(config.maxTypes) || 24))
+        return result
+      }
+      // 回退：无 manifest / stats 缺 tasksByType / rename·merge·delete·assign —— 仍走全量。
+      const store = readStore(dataDir)
       if (action === 'list') {
         result = { action, types: listTypes(store) }
       } else if (action === 'create') {

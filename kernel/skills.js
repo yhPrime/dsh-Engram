@@ -428,6 +428,32 @@ export function listSkills(dataDir, options = {}) {
 }
 
 /** 写技能目录（SKILL.md + skill.json）。 */
+/**
+ * 提示段专用技能目录缓存（0.14.0）：listSkills 要递归走 `skills/` 并逐份读 `SKILL.md` + `skill.json`，
+ * 22 个技能实测约 60 ms，而提示段只列前几个名字。提示段容得下 2 秒陈旧；记录/召回/控制台仍走
+ * `listSkills`，不吃这份缓存（避免测试与实时性受影响）。
+ */
+const HINT_SKILLS_TTL_MS = 10000
+const hintSkillsCache = new Map()
+
+export function listSkillsCached(dataDir, options = {}) {
+  const key = `${path.resolve(String(dataDir || ''))}|${options.onlyLocal === true ? 'local' : 'all'}`
+  const hit = hintSkillsCache.get(key)
+  const now = Date.now()
+  if (hit !== undefined && now - hit.at < HINT_SKILLS_TTL_MS) return hit.skills
+  const skills = listSkills(dataDir, options)
+  hintSkillsCache.set(key, { at: now, skills })
+  return skills
+}
+
+/** 技能目录变了就地清缓存（导入/注册/取消注册后由调用方决定要不要清；不调也只是多陈旧 2 秒）。 */
+export function clearSkillsHintCache(dataDir) {
+  const prefix = `${path.resolve(String(dataDir || ''))}|`
+  for (const key of [...hintSkillsCache.keys()]) {
+    if (key.startsWith(prefix)) hintSkillsCache.delete(key)
+  }
+}
+
 export function writeSkill(dir, draft, meta) {
   fs.mkdirSync(dir, { recursive: true })
   writeFileAtomic(path.join(dir, SKILL_FILENAME), renderSkillMd(draft.name, draft.description, draft.body))
