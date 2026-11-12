@@ -821,6 +821,26 @@ await check('resolvePickedDirectory：是库就用、父级找 .exp、都没有�
   assert.ok(fresh.note.includes('新建'), `空目录该提示会新建：${fresh.note}`)
 })
 
+await check('GET /pick-directory?probe=1：只回答能不能弹窗口，不弹窗', async () => {
+  const ready = await call(createMockSource(), '/pick-directory?probe=1', {
+    deps: { getDirectoryPicker: () => fakePicker('C:/x') },
+  })
+  assert.equal(ready.status, 200, JSON.stringify(ready.payload))
+  assert.equal(ready.payload.data.available, true)
+  assert.equal(ready.payload.data.kind, 'native')
+
+  const missing = await call(createMockSource(), '/pick-directory?probe=1', { deps: {} })
+  assert.equal(missing.payload.data.available, false)
+  assert.equal(missing.payload.data.kind, null)
+  assert.ok(String(missing.payload.data.message).includes('没有系统目录选择器'))
+
+  const browseOnly = await call(createMockSource(), '/pick-directory?probe=1', {
+    deps: { getDirectoryPicker: () => fakePicker('C:/x', 'browse') },
+  })
+  assert.equal(browseOnly.payload.data.available, false)
+  assert.ok(String(browseOnly.payload.data.message).includes('browse'))
+})
+
 fs.rmSync(testHome, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

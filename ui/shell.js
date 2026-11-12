@@ -512,6 +512,38 @@ export function resolvePickedDirectory(picked) {
 }
 
 /**
+ * 宿主给的目录选择能力，能弹系统窗口就返回选目录方法，否则抛出原因。
+ *
+ * @param deps - `getDirectoryPicker()`：可选，返回宿主的目录选择服务。
+ * @returns {{ pick: (signal?: AbortSignal) => Promise<string|null>, kind: string }}
+ */
+function nativePickerOf(deps = {}) {
+  const picker = typeof deps.getDirectoryPicker === 'function' ? deps.getDirectoryPicker() : null
+  if (picker === null || picker === undefined) {
+    throw codedError('picker-unavailable', '这个宿主没有系统目录选择器（桌面版才有），请手动填路径')
+  }
+  const capability = typeof picker.capability === 'function' ? picker.capability() : null
+  if (capability === null || capability === undefined || capability.kind !== 'native') {
+    const kind = capability && capability.kind ? String(capability.kind) : '未知'
+    throw codedError('picker-unavailable', `当前目录选择器是 ${kind} 版，打不开系统窗口，请手动填路径`)
+  }
+  return { pick: (signal) => capability.pick(signal), kind: 'native' }
+}
+
+/**
+ * 只读探针：这个宿主能不能弹系统选目录窗口（不弹，只回答）。
+ * 界面「?」与出问题时自查都用它——别靠点一下猜。
+ */
+export function describeDirectoryPicker(deps = {}) {
+  try {
+    const picker = nativePickerOf(deps)
+    return { available: true, kind: picker.kind, message: '能弹系统选目录窗口' }
+  } catch (error) {
+    return { available: false, kind: null, message: String((error && error.message) || error) }
+  }
+}
+
+/**
  * 在宿主屏幕上弹系统自带的选目录窗口，返回人选的那个路径（取消则 null）。
  *
  * 用的是宿主自己的 `ctx.directoryPicker`（桌面版是 Windows 的 IFileOpenDialog，
@@ -522,16 +554,8 @@ export function resolvePickedDirectory(picked) {
  * @param signal - 调用方生命周期；中止就关掉窗口。
  */
 export async function pickDirectory(deps = {}, signal) {
-  const picker = typeof deps.getDirectoryPicker === 'function' ? deps.getDirectoryPicker() : null
-  if (picker === null || picker === undefined) {
-    throw codedError('picker-unavailable', '这个宿主没有系统目录选择器（桌面版才有），请手动填路径')
-  }
-  const capability = typeof picker.capability === 'function' ? picker.capability() : null
-  if (capability === null || capability === undefined || capability.kind !== 'native') {
-    const kind = capability && capability.kind ? String(capability.kind) : '未知'
-    throw codedError('picker-unavailable', `当前目录选择器是 ${kind} 版，打不开系统窗口，请手动填路径`)
-  }
-  const picked = await capability.pick(signal)
+  const picker = nativePickerOf(deps)
+  const picked = await picker.pick(signal)
   if (picked === null || picked === undefined || String(picked).trim() === '') return { path: null, canceled: true, note: '' }
   return { canceled: false, ...resolvePickedDirectory(picked) }
 }
@@ -932,6 +956,11 @@ export async function handleRequest(req, res, source, deps = {}) {
       return json(res, 200, { ok: true, data: buildValidate(active) })
     }
     if (route === '/pick-directory') {
+      // 只读探针：GET ?probe=1 只回答「能不能弹窗口」，不弹。
+      if (url.searchParams.get('probe') === '1') {
+        if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '探针只用 GET')
+        return json(res, 200, { ok: true, data: describeDirectoryPicker(deps) })
+      }
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       // 窗口是模态的：请求挂着等人选完；页面关了就把窗口一起收掉。
       // 听的是 res 的 close，不是 req 的——Node 16 起 req 的 close 在请求体收完就会发，

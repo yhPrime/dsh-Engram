@@ -35,6 +35,8 @@
 
 ## 当前发布
 
+- **v0.14.3（选目录探针）**
+  - `GET /exp-ui/api/pick-directory?probe=1` 只读探针：回答这个宿主能不能弹系统选目录窗口（`available` / `kind` / 原因），不弹窗；点「选择文件夹…」失败时先看它
 - **v0.14.2（存储位置改成「选择文件夹…」）**
   - 设置页「存储位置」原来是一个文本框 + 「切换」按钮，要自己粘贴 `.exp` 的绝对路径；现在主按钮是「选择文件夹…」，点了弹宿主自己的系统选目录窗口（Windows 上是 `IFileOpenDialog`，与「选工作区目录」同一个窗口），选完直接生效
   - 新路由 `POST /exp-ui/api/pick-directory`：走宿主 `ctx.directoryPicker` 的 `native` 能力；取消返回 `canceled:true`；宿主只有 `browse` 能力（远程浏览器等）或根本没有这个服务时如实报 `picker-unavailable`，界面退回手填路径，不假装弹过窗口
