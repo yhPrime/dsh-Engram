@@ -133,10 +133,12 @@ window.__ModuleLoader__.load({
 .eng-table td { padding: 8px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
 .eng-table tr:last-child td { border-bottom: 0; }
 .eng-scroll .eng-table thead th { position: sticky; top: 0; z-index: 1; background: var(--dsw-alias-bg-layer-2); }
-.eng-tip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
+.eng-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
 .eng-tip:hover, .eng-tip:focus-visible { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); outline: none; }
-.eng-tip-bubble { display: none; position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 30; width: max-content; max-width: 300px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 96%, transparent); color: var(--dsw-alias-label-primary); font-size: 11px; line-height: 1.55; box-shadow: 0 8px 24px rgba(0,0,0,.18); pointer-events: none; }
-.eng-tip:hover .eng-tip-bubble, .eng-tip:focus-visible .eng-tip-bubble { display: block; }.eng-subnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+/* 悬浮说明挂在 <body> 上（position: fixed）：宽度按视口上限收，左右上下再夹回视口内，
+   不会被面板的 overflow 容器裁掉半截，也不会把长句子排出屏幕。 */
+.eng-tip-layer { position: fixed; z-index: 2147483000; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 16px)); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); background: var(--dsw-alias-bg-layer-2, #ffffff); color: var(--dsw-alias-label-primary, #1f2329); font: 11px/1.55 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0,0,0,.2); pointer-events: none; }
+.eng-subnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 .eng-subnav-item { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .eng-subnav-item[data-active="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
@@ -448,13 +450,87 @@ window.__ModuleLoader__.load({
       const kind = props.kind === 'primary' ? 'eng-btn eng-btn-primary' : props.kind === 'danger' ? 'eng-btn eng-btn-danger' : 'eng-btn'
       return h('button', { type: 'button', className: `${kind}${props.small ? ' eng-btn-sm' : ''}`, disabled: props.disabled, onClick: props.onClick, title: props.title }, props.children)
     }
+    /**
+     * 悬浮说明层：挂在 <body> 下、`position: fixed` 定位。
+     * 以前气泡是 `.eng-tip` 里的绝对定位子元素，面板一窄 / 一滚动就被 overflow 容器裁掉半截
+     * （提示只露中间几行）。现在宽度按视口收（max-width 见 .eng-tip-layer），
+     * 位置算完再左右、上下夹回视口，长句子也一定读得全。
+     */
+    const TIP_LAYER_CLASS = 'eng-tip-layer'
+    let tipLayerBound = false
+    function hideTipLayer() {
+      if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return
+      const nodes = document.querySelectorAll(`.${TIP_LAYER_CLASS}`)
+      for (const node of Array.from(nodes)) {
+        if (!node) continue
+        if (typeof node.remove === 'function') node.remove()
+        else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node)
+      }
+    }
+    function showTipLayer(text, anchor) {
+      hideTipLayer()
+      if (typeof document === 'undefined' || !document.body || typeof document.createElement !== 'function') return
+      if (!anchor || typeof anchor.getBoundingClientRect !== 'function') return
+      const rect = anchor.getBoundingClientRect()
+      const win = typeof window === 'undefined' ? {} : window
+      const layer = document.createElement('div')
+      layer.className = TIP_LAYER_CLASS
+      layer.setAttribute('role', 'tooltip')
+      layer.textContent = text
+      document.body.appendChild(layer)
+      // 说明层在 <body> 下，拿不到面板里那层 --dsw-alias-* 变量；从锚点算出来的值抄过来，
+      // 浅色/深色主题气泡都跟着面板走（抄不到就用 CSS 里的兜底色）。
+      const readStyle = win.getComputedStyle || (document.defaultView && document.defaultView.getComputedStyle)
+      if (typeof readStyle === 'function') {
+        let styles = null
+        try {
+          styles = readStyle.call(win, anchor)
+        } catch {
+          styles = null
+        }
+        if (styles && typeof styles.getPropertyValue === 'function') {
+          const background = String(styles.getPropertyValue('--dsw-alias-bg-layer-2') || '').trim()
+          const foreground = String(styles.getPropertyValue('--dsw-alias-label-primary') || '').trim()
+          const borderColor = String(styles.getPropertyValue('--dsw-alias-border-l1') || '').trim()
+          if (background !== '') layer.style.background = background
+          if (foreground !== '') layer.style.color = foreground
+          if (borderColor !== '') layer.style.borderColor = borderColor
+        }
+      }
+      const width = Number(layer.offsetWidth) || 0
+      const height = Number(layer.offsetHeight) || 0
+      const root = document.documentElement || {}
+      const viewportWidth = Number(root.clientWidth) || Number(win.innerWidth) || 1024
+      const viewportHeight = Number(root.clientHeight) || Number(win.innerHeight) || 768
+      const margin = 8
+      const left = Math.max(margin, Math.min(rect.left + rect.width / 2 - width / 2, viewportWidth - width - margin))
+      let top = rect.top - height - margin
+      if (top < margin) top = Math.min(rect.bottom + margin, viewportHeight - height - margin)
+      top = Math.max(margin, top)
+      layer.style.left = `${Math.round(left)}px`
+      layer.style.top = `${Math.round(top)}px`
+      if (!tipLayerBound && typeof win.addEventListener === 'function') {
+        tipLayerBound = true
+        // 面板一滚/一缩放，固定坐标就失效了：直接收起来，别留一个漂着的说明。
+        win.addEventListener('scroll', hideTipLayer, true)
+        win.addEventListener('resize', hideTipLayer)
+      }
+    }
     /** 悬浮说明：问号图标，悬停/键盘聚焦时弹气泡（用于有歧义的设置项）。 */
     function Tip(props) {
       const text = String(props.text || '')
+      useEffect(() => hideTipLayer, [])
       if (text === '') return null
-      return h('span', { className: 'eng-tip', tabIndex: 0, role: 'note', 'aria-label': text },
-        '?',
-        h('span', { className: 'eng-tip-bubble', role: 'tooltip' }, text))
+      return h('span', {
+        className: 'eng-tip',
+        tabIndex: 0,
+        role: 'note',
+        'aria-label': text,
+        onMouseEnter: (event) => showTipLayer(text, event.currentTarget),
+        onFocus: (event) => showTipLayer(text, event.currentTarget),
+        onMouseLeave: hideTipLayer,
+        onBlur: hideTipLayer,
+      }, '?')
     }
     function Field(props) {
       return h('div', { className: 'eng-field', style: props.wide ? { gridColumn: '1 / -1' } : undefined },
@@ -3356,6 +3432,9 @@ window.__ModuleLoader__.load({
       Usage,
       Graph,
       SaveExperienceAction,
+      Tip,
+      showTipLayer,
+      hideTipLayer,
       parseGradientStops,
       graphStops,
       withAlpha,
