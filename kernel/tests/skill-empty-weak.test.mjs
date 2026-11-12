@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { createSkill } from '../skills.js'
+import { createSkill, readSkillBySlug } from '../skills.js'
 import { buildTools } from '../tools.js'
 
 let passed = 0
@@ -45,6 +45,13 @@ check('技能命中且经验候选为空：weak=true 且 note 明说', () => {
   assert.ok(String(recalled.note || '').includes('经验候选为空'), recalled.note)
 })
 
+check('exp_record 的裸 slug skillId 也解析并落账（真实使用模拟发现）', () => {
+  const before = readSkillBySlug(dir, 'sonner-toast').meta.confidence.uses
+  const recorded = call('exp_record', { intent: 'Sonner toast 通知组件样式定制', action: '按技能做', outcome: 'success', skillId: 'skill:sonner-toast' })
+  assert.equal(recorded.skill.action, 'feedback')
+  const after = readSkillBySlug(dir, 'sonner-toast').meta.confidence.uses
+  assert.equal(after, before + 1)
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

@@ -66,6 +66,8 @@ check('残留 index.lock（>10 分钟）清在 dataDir/.git，提交成功', () 
 check('活锁（刚刚创建）不删，提交失败但不破坏锁', () => {
   const dir = fresh()
   const skill = createSkill(dir, { slug: 'alive-test', name: 'alive-test', description: '活锁测试', body: '# t' })
+  // 造出真实变更，逼 commitSkills 真的去 add/commit（无变更时它会短路返回 true，测不到锁）。
+  fs.writeFileSync(path.join(skill.dir, 'note.txt'), 'change\n', 'utf8')
   const lock = path.join(dir, '.git', 'index.lock')
   fs.writeFileSync(lock, 'alive', 'utf8')
   const committed = commitSkills(dir, 'test: alive lock')
@@ -106,6 +108,17 @@ check('updateSkillMeta 成功后 pendingCommit 复位', () => {
   assert.equal(head.pendingCommit, false)
 })
 
+check('同内容再次 attach：无变更短路，commit=true 且 pending=false', () => {
+  const dir = fresh()
+  const skill = createSkill(dir, { slug: 'same-test', name: 'same-test', description: '同内容测试', body: '# t' })
+  const source = path.join(dir, 'same.py')
+  fs.writeFileSync(source, 'print(1)\n', 'utf8')
+  const first = attachSkillFiles(dir, 'same-test', [source])
+  const second = attachSkillFiles(dir, 'same-test', [source])
+  assert.equal(first.commit, true)
+  assert.equal(second.commit, true, '没有变更也不该报提交失败')
+  assert.equal(readSkillBySlug(dir, 'same-test').meta.pendingCommit, false)
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

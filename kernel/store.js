@@ -1711,10 +1711,11 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 单列一段「最近相关」（按时间倒序、相似度 ≥0.25），保证当轮那条一定看得见，不挤占候选名额。
   const recent = options.recent === true ? (() => {
     const query = stateOf(intent)
-    const floor = Math.max(0.25, RECALL_MIN_SIMILARITY)
+    // 「最近做过的」不设相似度门槛：真实对话里相邻轮意图相似度常低到 0.0–0.2，
+    // 设门槛会让刚记的条下一轮消失（真实使用模拟 6/7 已判定轮不可见）。相似度照给，由模型判断。
     return [...experiences]
       .map((row) => ({ row, similarity: similarityV2(query, stateOf(row.intent, row.action)) }))
-      .filter((item) => item.similarity >= floor && item.row.verdict !== 'skipped')
+      .filter((item) => item.row.verdict !== 'skipped')
       .sort((left, right) => String(right.row.lastSeenAt || right.row.ts || '').localeCompare(String(left.row.lastSeenAt || left.row.ts || '')))
       .slice(0, 2)
       .map((item) => ({

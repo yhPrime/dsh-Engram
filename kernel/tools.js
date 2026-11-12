@@ -175,25 +175,34 @@ export function buildTools(defineTool, config = {}) {
       let skillResult = null
       let skillWarning = null
       if (typeof args.skillId === 'string' && args.skillId.trim() !== '') {
-        const slug = args.skillId.trim().replace(/^skill:/, '')
-        const rawBlocked = Array.isArray(args.blockedByList) ? args.blockedByList : args.blockedBy
-        const blocked = Array.isArray(rawBlocked)
-          ? rawBlocked.filter((item) => typeof item === 'string' && item.trim() !== '')
-          : (typeof rawBlocked === 'string' && rawBlocked.trim() !== '' ? [rawBlocked] : [])
-        if (blocked.length > 1) {
-          skillResult = {
-            action: 'multi',
-            results: blocked.map((item) => applySkillObstacle(dataDir, slug, { blockedBy: item, label: args.note, intent: args.intent })),
-          }
-        } else if (blocked.length === 1) {
-          skillResult = applySkillObstacle(dataDir, slug, { blockedBy: blocked[0], label: args.note, intent: args.intent })
-        } else {
-          skillResult = applySkillOutcome(dataDir, slug, Number(result.experience.G) < 0 ? 'hurt' : 'helped', { intent: args.intent })
+        // 与 exp_feedback 同口径：裸 slug 也要解析套件前缀；解析不了要明确告知，不能静默 missing。
+        let slug = ''
+        try {
+          slug = resolveSkillId(dataDir, args.skillId)
+        } catch (error) {
+          skillResult = { action: 'missing', slug: args.skillId.trim().replace(/^skill:/, '') }
+          skillWarning = String((error && error.message) || error)
         }
-        const warning = skillResult.action === 'multi'
-          ? (skillResult.results.find((item) => typeof item.warning === 'string') || {}).warning
-          : skillResult.warning
-        if (typeof warning === 'string') skillWarning = warning
+        if (slug !== '') {
+          const rawBlocked = Array.isArray(args.blockedByList) ? args.blockedByList : args.blockedBy
+          const blocked = Array.isArray(rawBlocked)
+            ? rawBlocked.filter((item) => typeof item === 'string' && item.trim() !== '')
+            : (typeof rawBlocked === 'string' && rawBlocked.trim() !== '' ? [rawBlocked] : [])
+          if (blocked.length > 1) {
+            skillResult = {
+              action: 'multi',
+              results: blocked.map((item) => applySkillObstacle(dataDir, slug, { blockedBy: item, label: args.note, intent: args.intent })),
+            }
+          } else if (blocked.length === 1) {
+            skillResult = applySkillObstacle(dataDir, slug, { blockedBy: blocked[0], label: args.note, intent: args.intent })
+          } else {
+            skillResult = applySkillOutcome(dataDir, slug, Number(result.experience.G) < 0 ? 'hurt' : 'helped', { intent: args.intent })
+          }
+          const warning = skillResult.action === 'multi'
+            ? (skillResult.results.find((item) => typeof item.warning === 'string') || {}).warning
+            : skillResult.warning
+          if (typeof warning === 'string') skillWarning = warning
+        }
       }
       const typeInfo = result.type || {}
       const sanitized = result.sanitized || {}
@@ -299,6 +308,8 @@ export function buildTools(defineTool, config = {}) {
       }
       const recallLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || Number(config.recallLimitDefault) || 3)))
       const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false })
+      // 相似度低于 0.20 且判 weak：不展示噪声候选（无关任务时避免「1 条沾边候选」被当推荐）。
+      if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
       result.pendingSkills = pendingSkills
       // 待判定：随回执带出（≤2 条）。
       const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl })

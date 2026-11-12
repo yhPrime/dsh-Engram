@@ -147,6 +147,20 @@ check('⑨ 完全无关且一条候选都没有：weak=true（终验发现）', 
   assert.deepEqual(recalled.candidates, [])
 })
 
+check('⑩ 相邻轮低相似度也能在 recent 看到（真实使用模拟发现）', () => {
+  const agent = newAgent()
+  const made = agent.record({ intent: '给研学课 PPT 插一页过渡页', action: '先套模板', outcome: 'success', typeName: 'PPT / 课件' })
+  const recalled = agent.recall('第 8 页还是 7 页，页码错了')
+  assert.ok((recalled.recent || []).some((item) => item.id === made.id), JSON.stringify(recalled.recent || []))
+})
+
+check('⑪ 无关任务：低相似度候选不展示（weak<0.2 清空候选）', () => {
+  const agent = newAgent()
+  agent.record({ intent: '给机器人编排一段舞蹈动作', action: '套模板动作', outcome: 'success', typeName: '机器人 / 动作' })
+  const recalled = agent.recall('给花店写一份周末促销文案（朋友圈）')
+  assert.equal(recalled.weak, true)
+  assert.deepEqual(recalled.candidates, [])
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

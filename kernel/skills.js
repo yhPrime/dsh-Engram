@@ -875,15 +875,35 @@ function gitRun(cwd, args) {
 }
 
 function gitCapture(cwd, args) {
+  // 沙箱里 git 输出接 pipe 会 EPERM（实测），和 artifact-diff 一样落临时文件再读。
+  const tmp = path.join(os.tmpdir(), `engram-gitcap-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
+  let fd = null
   try {
-    return String(execFileSync('git', ['-C', cwd, ...args], {
+    fd = fs.openSync(tmp, 'w')
+    execFileSync('git', ['-C', cwd, ...args], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['ignore', fd, 'ignore'],
       timeout: 300000,
       windowsHide: true,
-    }) || '')
+    })
+    fs.closeSync(fd)
+    fd = null
+    return fs.readFileSync(tmp, 'utf8')
   } catch {
     return null
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // 已关闭
+      }
+    }
+    try {
+      fs.unlinkSync(tmp)
+    } catch {
+      // 临时文件不存在
+    }
   }
 }
 
@@ -917,7 +937,9 @@ function skillWarningFor(skill, intent) {
   if (!skill) return null
   const text = [skill.name, skill.description, ...(skill.meta.triggers || []), ...(skill.meta.context || [])].join(' ')
   const similarity = stateSimilarity(abstractState(String(intent || '')), abstractState(text))
-  return similarity < 0.12
+  // 中文短意图与技能描述的词面相似度天然很低（正确技能实测 0.035），阈值压到 0.01：
+  // 只有几乎零重叠才提示「可能写错」，避免正常调用被误报。
+  return similarity < 0.01
     ? `skillId 与 intent 的相似度只有 ${Math.round(similarity * 100) / 100}，确认没有写错技能（账本已按该 id 更新）。`
     : null
 }
