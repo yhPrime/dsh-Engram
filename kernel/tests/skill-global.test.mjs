@@ -137,6 +137,7 @@ await check('同一次 attach 同名附件：明确报错而不是静默覆盖',
   fs.writeFileSync(path.join(dirA, 'same.txt'), 'one', 'utf8')
   fs.writeFileSync(path.join(dirB, 'same.txt'), 'two', 'utf8')
   assert.throws(() => attachSkillFiles(dataDir, 'dup-files', [path.join(dirA, 'same.txt'), path.join(dirB, 'same.txt')]), /同名附件/)
+  assert.equal(fs.existsSync(path.join(dataDir, 'skills', 'dup-files', 'scripts', 'same.txt')), false, '被拒时不能留下孤儿文件')
 })
 fs.rmSync(root, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)

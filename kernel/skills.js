@@ -485,9 +485,13 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
   const files = Array.isArray(skill.meta.files) ? [...skill.meta.files] : []
   let total = files.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0)
   const added = []
-  for (const source of Array.isArray(sources) ? sources : []) {
-    const raw = String(source || '').trim()
-    if (raw === '') continue
+  // 先整体校验、再逐项落盘：中途拒绝（同名/超限）时不会留下未登记的孤儿文件。
+  const planned = []
+  let budget = total
+  const sourcesList = (Array.isArray(sources) ? sources : [])
+    .map((item) => String(item || '').trim())
+    .filter((item) => item !== '')
+  for (const raw of sourcesList) {
     const resolved = path.resolve(raw)
     let stat
     try {
@@ -500,24 +504,29 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
     const name = safeAttachName(resolved)
     const rel = `${SCRIPTS_DIRNAME}/${name}`
     // 同一次 attach 里同名文件会互相覆盖（只留最后一份），明确拒绝；跨调用替换是允许的。
-    if (added.some((item) => item.path === rel)) throw new Error(`同一次 attach 里有同名附件：${rel}（改名或分两次调用）`)
+    if (planned.some((item) => item.rel === rel)) throw new Error(`同一次 attach 里有同名附件：${rel}（改名或分两次调用）`)
     const index = files.findIndex((item) => item.path === rel)
     const oldBytes = index >= 0 ? Number(files[index].bytes) || 0 : 0
     // 同名附件是替换不是新增：预算要减去旧的一份，否则 3×1.5MB 同名文件会误撞 8MB 上限。
-    if (total - oldBytes + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(total - oldBytes)}）`)
-    if (index < 0 && files.length >= MAX_ATTACH_COUNT) throw new Error(`附件数量不能超过 ${MAX_ATTACH_COUNT} 个（当前 ${files.length}）`)
+    if (budget - oldBytes + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(budget - oldBytes)}）`)
+    const pendingNew = planned.filter((item) => item.index < 0).length
+    if (index < 0 && files.length + pendingNew >= MAX_ATTACH_COUNT) throw new Error(`附件数量不能超过 ${MAX_ATTACH_COUNT} 个（当前 ${files.length + pendingNew}）`)
+    budget = budget - oldBytes + stat.size
+    planned.push({ resolved, stat, name, rel, index, oldBytes })
+  }
+  for (const item of planned) {
     fs.mkdirSync(scriptsDir, { recursive: true })
-    const target = path.join(scriptsDir, name)
-    fs.copyFileSync(resolved, target)
+    const target = path.join(scriptsDir, item.name)
+    fs.copyFileSync(item.resolved, target)
     const entry = {
-      path: rel,
-      bytes: stat.size,
+      path: item.rel,
+      bytes: item.stat.size,
       sha256: createHash('sha256').update(fs.readFileSync(target)).digest('hex'),
       addedAt: new Date().toISOString(),
     }
-    if (index >= 0) files[index] = entry
+    if (item.index >= 0) files[item.index] = entry
     else files.push(entry)
-    total += stat.size - oldBytes
+    total += item.stat.size - item.oldBytes
     added.push(entry)
   }
   skill.meta.files = files

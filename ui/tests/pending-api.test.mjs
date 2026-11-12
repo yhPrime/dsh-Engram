@@ -6,7 +6,8 @@
  */
 import assert from 'node:assert/strict'
 
-import { buildPending, buildSkills, buildState, buildUsageSummary, buildVerdicts, buildExperiences } from '../shell.js'
+import { buildGraph, buildPending, buildSettings, buildSkills, buildState, buildTypeOp, buildUsageSummary, buildVerdicts, buildExperiences } from '../shell.js'
+import { statsOf } from '../data-source.js'
 import { detailOf, visibleOf } from '../data-source.js'
 
 let passed = 0
@@ -61,6 +62,10 @@ check('build* 对 null 源不抛 TypeError', () => {
   assert.doesNotThrow(() => buildSkills(null))
   assert.doesNotThrow(() => buildPending(null))
   assert.doesNotThrow(() => buildUsageSummary(null))
+  assert.doesNotThrow(() => buildSettings(null))
+  assert.doesNotThrow(() => buildGraph(null))
+  assert.throws(() => buildTypeOp(null), /不支持类型管理/)
+  assert.doesNotThrow(() => statsOf({ experiences: [null] }))
 })
 
 check('null 行不崩：visibleOf/detailOf 过滤', () => {

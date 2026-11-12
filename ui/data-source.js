@@ -301,7 +301,9 @@ export function typesOf(store) {
 
 /** 统计（面板顶部四格 + 类型分布）。 */
 export function statsOf(store) {
-  const all = Array.isArray(store && store.experiences) ? store.experiences : []
+  // null/非对象行（自定义或 mock 数据源）不能打崩统计：先过滤，再计数。
+  const all = (Array.isArray(store && store.experiences) ? store.experiences : [])
+    .filter((item) => item && typeof item === 'object')
   const visible = visibleOf(store)
   const byCategory = {}
   for (const item of visible) {

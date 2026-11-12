@@ -465,7 +465,7 @@ export function buildSkillFeedback(source, body = {}) {
 }
 
 export function buildTypeOp(source, body = {}) {
-  if (typeof source.typeOp !== 'function') throw codedError('unsupported', '当前数据源不支持类型管理')
+  if (!source || typeof source.typeOp !== 'function') throw codedError('unsupported', '当前数据源不支持类型管理')
   return source.typeOp(body)
 }
 
@@ -476,7 +476,7 @@ export function buildValidate(source) {
 
 export function buildSettings(source) {
   const read = readOf(source)
-  const extra = typeof source.settings === 'function' ? source.settings() : {}
+  const extra = source && typeof source.settings === 'function' ? source.settings() : {}
   return {
     source: metaOf(source),
     dataDir: String(read.dataDir || ''),
@@ -495,7 +495,7 @@ export function buildGraph(source) {
   const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
   const rows = visibleOf(store).map(rowOf)
   const types = typesOf(store)
-  const skills = typeof source.skills === 'function' ? source.skills() : []
+  const skills = source && typeof source.skills === 'function' ? (source.skills() || []) : []
   const nodes = [{ id: 'root', kind: 'root', label: '经验库' }]
   const edges = []
   const knownTypes = new Set()
