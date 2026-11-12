@@ -23,7 +23,9 @@ import {
   rowOf,
   visibleOf,
   statsOf,
+  statsOfManifest,
   typesOf,
+  typesOfManifest,
   usageSummary,
 } from './data-source.js'
 import fs from 'node:fs'
@@ -51,6 +53,11 @@ const MAX_LIMIT = 300
 export const SETTINGS_SPEC = {
   config: [
     { key: 'hint', label: '每轮提示段', type: 'boolean', hint: '关闭后不再向系统提示写经验库用法', tip: '开启时，每轮系统提示里会多一段以「【经验库】」开头的说明（条数/类型目录/用法）。关掉后要重载插件才会撤掉已经注册的那一段——保存后提示段不会立刻消失。' },
+    { key: 'hintMode', label: '提示段样式', type: 'enum', values: ['slim', 'full'], labels: { slim: '瘦身（默认，约 120 字符）', full: '完整（含类型/技能目录）' }, tip: '瘦身档只写「怎么用 + 条数 + 待判定 + 前几个技能」；完整档会列全部类型与技能，每轮固定开销约 1,300 字符。' },
+    { key: 'hintSkills', label: '提示段列技能', type: 'boolean', tip: '瘦身档里是否列技能名（按顺序最多 8 个）；关掉后技能只在 exp_recall 命中时出现。' },
+    { key: 'recallLimitDefault', label: '召回默认条数', type: 'number', hint: '默认 3', tip: 'exp_recall 不传 limit 时返回几条候选。显式传 limit 时按传的来（上限 8）。' },
+    { key: 'pendingTtl', label: '待判定提醒次数', type: 'number', hint: '默认 3', tip: '一条待判定记录随回执出现几次仍未被回填，就自动转 skipped（止损，不再打扰模型）。' },
+    { key: 'pendingReceipt', label: '回执带待判定', type: 'boolean', tip: '关闭后 exp_record / exp_recall 的返回里不再附带 pending，判定只能靠控制台查看。' },
     { key: 'usageLog', label: '用法日志', type: 'boolean', hint: '记录 exp_* 调用，用于使用记录页', tip: '把每次 exp_record / exp_recall / exp_feedback 的调用写进 <数据目录>/usage.jsonl，零 token 开销；关掉后「使用记录」页就没有新数据。' },
     { key: 'usageLogMaxBytes', label: '日志上限（字节）', type: 'number', tip: 'usage.jsonl 超过这个大小就轮转成 usage.jsonl.1（只保留一份旧文件）。内部有 1024 字节下限：填 1 也按 1024 生效。' },
     { key: 'feedbackEta', label: '反馈学习率 η', type: 'number', hint: '0~1，默认 0.35', tip: '每次「有帮助/没帮上」把 G 往 +1 / -1 拉的幅度。η 越大改得越快；默认 0.35。' },
@@ -205,10 +212,45 @@ function safeUsage(source, limit) {
 }
 
 /** 安全取固化技能：读不到 / 读坏都当空。 */
+function metaOf(source) {
+  const src = source && typeof source === 'object' ? source : {}
+  return { id: src.id, mode: src.mode, label: src.label, readOnly: src.readOnly === true }
+}
+
+function readOf(source) {
+  if (!source || typeof source.read !== 'function') return {}
+  try {
+    return source.read() || {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 取整库行（页面级）：live 的 read() 只给 manifest/storage（P3-A），行走 `hot()`；
+ * mock / 老数据源仍在 read().store 里，保持兼容。
+ */
+function storeOf(source) {
+  const read = readOf(source)
+  if (read.store && typeof read.store === 'object') return read.store
+  if (source && typeof source.hot === 'function') {
+    try {
+      const hot = source.hot()
+      if (hot && hot.store && typeof hot.store === 'object') return hot.store
+    } catch {
+      return emptyStore()
+    }
+  }
+  return emptyStore()
+}
+
 function safeSkills(source) {
   try {
-    const rows = source.skills()
-    return Array.isArray(rows) ? rows : []
+    const rows = source && typeof source.skills === 'function' ? source.skills() : []
+    // 行数据畸形（null/缺 slug）不能把整个技能页打崩：过滤掉，页面照常渲染。
+    return Array.isArray(rows)
+      ? rows.filter((row) => row && typeof row === 'object' && (typeof row.slug === 'string' || typeof row.id === 'string'))
+      : []
   } catch {
     return []
   }
@@ -223,26 +265,68 @@ function skillSummaryOf(rows) {
   return summary
 }
 
-/** 概览（`/state` 的 data）。 */
-export function buildState(source) {
-  const read = source.read() || {}
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-  const experiences = Array.isArray(store.experiences) ? store.experiences : []
-  const types = typesOf(store)
-  const stats = statsOf(store)
-  const skills = safeSkills(source)
-  const bytes = Number(read.bytes) || 0
+/** 从 manifest 的桶/簇/统计算 `/state` 的 totals（G6；字段名兼容几种写法）。 */
+function totalsOfManifest(manifest, types, skills) {
+  const stats = manifest && manifest.stats !== null && typeof manifest.stats === 'object' ? manifest.stats : {}
+  const buckets = Array.isArray(manifest && manifest.buckets) ? manifest.buckets : []
+  const all = buckets.reduce((sum, bucket) => sum + (Number(bucket && bucket.count) || 0), 0)
+  const visible = types.reduce((sum, type) => sum + (Number(type.count) || 0), 0)
+  const numberOr = (keys, fallback) => {
+    for (const key of keys) {
+      const value = Number(stats[key])
+      if (Number.isFinite(value)) return value
+    }
+    return fallback
+  }
   return {
+    all: numberOr(['all', 'total'], all),
+    visible: numberOr(['visible'], visible),
+    deleted: numberOr(['deleted', 'deletedInsights'], 0),
+    superseded: numberOr(['superseded', 'supersededInsights'], 0),
+    retired: numberOr(['retired', 'retiredInsights'], 0),
+    types: types.length,
+    skills: skills.length,
+  }
+}
+
+/** 概览（`/state` 的 data）：有 manifest.stats 时只读 manifest（P3-A），否则退回全量行。 */
+export function buildState(source) {
+  const read = readOf(source)
+  const manifest = read.manifest !== null && typeof read.manifest === 'object' ? read.manifest : null
+  const storage = read.storage !== null && typeof read.storage === 'object' ? read.storage : null
+  const skills = safeSkills(source)
+  const bytes = Number(read.bytes) || (storage === null ? 0 : Number(storage.totalBytes) || 0)
+  const base = {
     app: APP_NAME,
     version: pluginVersion(),
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     dataDir: String(read.dataDir || ''),
     file: String(read.file || ''),
     exists: Boolean(read.exists),
     bytes,
-    updatedAt: String(read.updatedAt || ''),
+    updatedAt: read.updatedAt === null || read.updatedAt === undefined ? '' : String(read.updatedAt),
     notice: String(read.notice || ''),
+    ...(storage !== null ? { storage } : {}),
     feedbackEta: FEEDBACK_ETA,
+    skillSummary: skillSummaryOf(skills),
+    usage: usageSummary(safeUsage(source, 500)),
+  }
+  if (manifest !== null && manifest.stats !== null && typeof manifest.stats === 'object') {
+    const types = typesOfManifest(manifest)
+    return {
+      ...base,
+      totals: totalsOfManifest(manifest, types, skills),
+      stats: statsOfManifest(manifest, bytes),
+      types,
+    }
+  }
+  // 没有 manifest / G6 未落地 / mock：退回全量行，行为与 0.13.0 一致（不静默改语义）。
+  const store = storeOf(source)
+  const experiences = Array.isArray(store.experiences) ? store.experiences : []
+  const types = typesOf(store)
+  const stats = statsOf(store)
+  return {
+    ...base,
     totals: {
       all: experiences.length,
       visible: stats.totalInsights,
@@ -252,43 +336,67 @@ export function buildState(source) {
       types: types.length,
       skills: skills.length,
     },
-    skillSummary: skillSummaryOf(skills),
     stats: { ...stats, dbSizeBytes: bytes },
     types,
-    usage: usageSummary(safeUsage(source, 500)),
   }
+}
+
+/** 类型目录：有 manifest 时只读 manifest（P3-A），否则退回整库行。 */
+function typeListOf(source, read = readOf(source)) {
+  if (read && read.manifest !== null && typeof read.manifest === 'object') {
+    const types = typesOfManifest(read.manifest)
+    if (types.length > 0) return types
+  }
+  return typesOf(storeOf(source))
 }
 
 /** `/experiences` 的 data。 */
 export function buildExperiences(source, params) {
-  const read = source.read() || {}
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-  const query = String(params.get('query') || '').trim()
+  const read = readOf(source)
+  const store = storeOf(source)
+  const query = String((params && typeof params.get === 'function' ? params.get('query') : '') || '').trim()
   const meta = {
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     notice: String(read.notice || ''),
   }
   if (query !== '') {
-    const limit = numberParam(params.get('limit'), 8, 50)
-    if (typeof source.recall === 'function') {
+    const limit = numberParam(params && typeof params.get === 'function' ? params.get('limit') : null, 8, 50)
+    if (source && typeof source.recall === 'function') {
       const recalled = source.recall({ intent: query, limit })
       return { ...meta, ...recalled, query }
     }
     return { ...meta, ...recallOf(store, query, limit) }
   }
-  return { ...meta, ...listOf(store, params) }
+  return { ...meta, ...listOf(store, params || new URLSearchParams()) }
 }
 
 /** `/experience` 的 data；找不到返回 null。 */
 export function buildExperience(source, id) {
-  const read = source.read() || {}
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
+  const store = storeOf(source)
   return detailOf(store, id)
 }
 
 /** `/feedback` 的 data：delegates 到 data source（live 会抛 read-only）。 */
 export function buildFeedback(source, id, result) {
   return source.feedback(id, result)
+}
+
+/** `/pending` 的 data：待判定队列（最多 5 条）。 */
+export function buildPending(source) {
+  return source && typeof source.pending === 'function' ? source.pending(5) : []
+}
+
+/** `/verdicts` 的 data：把回填交给 source（逐条返回 ok/失败原因）。 */
+export function buildVerdicts(source, list) {
+  if (!source || typeof source.verdicts !== 'function') throw new Error('当前数据源不支持判定回填')
+  return source.verdicts(Array.isArray(list) ? list : [])
+}
+
+/** `/usage-summary` 的 data：调用次数与回执字符数汇总（token 账）。 */
+export function buildUsageSummary(source) {
+  return source && typeof source.usageSummary === 'function'
+    ? source.usageSummary()
+    : { calls: 0, chars: 0, avgChars: 0, byTool: {} }
 }
 
 function treeOrderOf(node) {
@@ -336,12 +444,12 @@ function decorateSkillRows(tree, rows) {
 
 /** `/skills` 的 data：固化技能列表 + 状态分布 + 目录树。 */
 export function buildSkills(source) {
-  const read = source.read() || {}
+  const read = readOf(source)
   const rows = safeSkills(source)
   const tree = buildSkillTree(rows)
   tree.sort((left, right) => treeOrderOf(right) - treeOrderOf(left) || left.name.localeCompare(right.name, 'zh'))
   return {
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     notice: String(read.notice || ''),
     total: rows.length,
     summary: skillSummaryOf(rows),
@@ -355,17 +463,17 @@ export function buildSkills(source) {
  * live 交给 kernel engine；mock 能做记录与简化召回，其余明确「示例模式不支持」。
  */
 export function buildRecall(source, body = {}) {
+  if (!source || typeof source.recall !== 'function') throw new Error('当前数据源不支持检索')
   const intent = String(body.intent || '').trim()
   if (intent === '') throw codedError('intent-required', '缺少 intent')
   const limit = Math.max(1, Math.min(50, Math.trunc(Number(body.limit) || 8)))
   const context = Array.isArray(body.context) ? body.context.map(String) : []
   if (typeof source.recall === 'function') return source.recall({ intent, limit, context })
-  const store = source.read().store || emptyStore()
-  return recallOf(store, intent, limit)
+  return recallOf(storeOf(source), intent, limit)
 }
 
 export function buildRecord(source, body = {}) {
-  if (typeof source.record !== 'function') throw codedError('read-only', '当前数据源不支持写入经验')
+  if (!source || typeof source.record !== 'function') throw codedError('read-only', '当前数据源不支持写入经验')
   return source.record(body)
 }
 
@@ -385,11 +493,10 @@ export function buildConsolidate(source, body = {}) {
  */
 export async function buildImportSkill(source, body = {}, deps = {}) {
   if (source.mode !== 'live') throw codedError('unsupported', '示例数据不支持导入技能')
-  const read = source.read() || {}
+  const read = readOf(source)
   const dataDir = String(read.dataDir || '')
   if (dataDir === '') throw codedError('no-data-dir', '没有数据目录，无法写入技能')
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-  const typeNames = typesOf(store).map((type) => String(type.name || '')).filter((name) => name !== '')
+  const typeNames = typeListOf(source, read).map((type) => String(type.name || '')).filter((name) => name !== '')
   const filePath = String(body.path || '').trim()
   const content = typeof body.content === 'string' ? body.content : ''
   const categories = Array.isArray(body.categories) ? body.categories.map(String) : []
@@ -424,25 +531,27 @@ export function buildSkillFeedback(source, body = {}) {
 }
 
 export function buildTypeOp(source, body = {}) {
-  if (typeof source.typeOp !== 'function') throw codedError('unsupported', '当前数据源不支持类型管理')
+  if (!source || typeof source.typeOp !== 'function') throw codedError('unsupported', '当前数据源不支持类型管理')
   return source.typeOp(body)
 }
 
 export function buildValidate(source) {
-  if (typeof source.validate !== 'function') return { problems: [] }
+  if (!source || typeof source.validate !== 'function') return { problems: [] }
   return { problems: source.validate() }
 }
 
 export function buildSettings(source) {
-  const read = source.read() || {}
-  const extra = typeof source.settings === 'function' ? source.settings() : {}
+  const read = readOf(source)
+  const extra = source && typeof source.settings === 'function' ? source.settings() : {}
+  const storage = read.storage !== null && typeof read.storage === 'object' ? read.storage : null
   return {
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     dataDir: String(read.dataDir || ''),
     file: String(read.file || ''),
     exists: Boolean(read.exists),
-    bytes: Number(read.bytes) || 0,
-    updatedAt: String(read.updatedAt || ''),
+    bytes: Number(read.bytes) || (storage === null ? 0 : Number(storage.totalBytes) || 0),
+    updatedAt: read.updatedAt === null || read.updatedAt === undefined ? '' : String(read.updatedAt),
+    ...(storage !== null ? { storage } : {}),
     currentRoot: String(extra.currentRoot || ''),
     version: pluginVersion(),
   }
@@ -450,11 +559,11 @@ export function buildSettings(source) {
 
 /** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
 export function buildGraph(source) {
-  const read = source.read() || {}
-  const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
+  const read = readOf(source)
+  const store = storeOf(source)
   const rows = visibleOf(store).map(rowOf)
   const types = typesOf(store)
-  const skills = typeof source.skills === 'function' ? source.skills() : []
+  const skills = source && typeof source.skills === 'function' ? (source.skills() || []) : []
   const nodes = [{ id: 'root', kind: 'root', label: '经验库' }]
   const edges = []
   const knownTypes = new Set()
@@ -628,8 +737,7 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/types') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       const read = active.read() || {}
-      const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-      return json(res, 200, { ok: true, data: { types: typesOf(store) } })
+      return json(res, 200, { ok: true, data: { types: typeListOf(active, read) } })
     }
     if (route === '/skills') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
@@ -653,6 +761,23 @@ export async function handleRequest(req, res, source, deps = {}) {
         ids: Array.isArray(row.ids) ? row.ids.map(String) : [],
       }))
       return json(res, 200, { ok: true, data: { rows } })
+    }
+    if (route === '/pending') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      return json(res, 200, { ok: true, data: buildPending(active) })
+    }
+    if (route === '/verdicts') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      try {
+        return json(res, 200, { ok: true, data: buildVerdicts(active, body && body.verdicts) })
+      } catch (error) {
+        return fail(res, 400, 'verdict-failed', String((error && error.message) || error))
+      }
+    }
+    if (route === '/usage-summary') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      return json(res, 200, { ok: true, data: buildUsageSummary(active) })
     }
     if (route === '/recall') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')

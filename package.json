@@ -1,6 +1,6 @@
 {
   "name": "dsh-engram",
-  "version": "0.12.0",
+  "version": "0.14.0",
   "description": "Engram（记忆痕迹）：经验与技能引擎 + 经验库控制台，一个标准 DSH 插件。",
   "type": "module",
   "main": "./index.js",
@@ -21,7 +21,9 @@
     "./live": "./ui/live.js",
     "./mock": "./ui/mock.js",
     "./data-source": "./ui/data-source.js",
-    "./locale/*.json": "./ui/locale/*.json"
+    "./locale/*.json": "./ui/locale/*.json",
+    "./ooxml": "./kernel/ooxml.js",
+    "./artifact-diff": "./kernel/artifact-diff.js"
   },
   "files": [
     "index.js",

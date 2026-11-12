@@ -12,7 +12,7 @@ import zlib from 'node:zlib'
 
 const CHAT_SAVE_REV = 'v3'
 
-import { readStore, upsertExperience, writeStore } from './store.js'
+import { readStore, upsertExperience, withStoreLock, writeStore } from './store.js'
 
 function dshHome() {
   const raw = String(process.env.DSH_HOME || '').trim()
@@ -272,6 +272,7 @@ export function saveTurnAsExperience(dataDir, input = {}, options = {}) {
   const intent = clip(turn.userText || input.intent || '（未识别到用户输入）', 200)
   const action = clip(turn.assistantText || '（助手回复为空）', 600)
   const note = clip(input.note || `从会话一键存入：session ${sessionId} · message ${messageId}`, 300)
+  return withStoreLock(dataDir, () => {
   const store = readStore(dataDir)
   const result = upsertExperience(store, {
     intent,
@@ -294,6 +295,7 @@ export function saveTurnAsExperience(dataDir, input = {}, options = {}) {
     action,
     outcome,
   }
+  })
 }
 
 /**

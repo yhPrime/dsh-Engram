@@ -44,6 +44,11 @@ function topByFrequency(counts, limit) {
 /**
  * 从簇内经验聚合签名。只用 intent + action，与召回口径一致；不掺 note
  * （note 里是命令、路径、坑，噪声大于信号）。
+ *
+ * 快速路径（task-9）：记录里已经存了 `state`（写入时 `abstractState(intent, action)` 算的
+ * tokens / cgrams），与这里重新 tokenize 的结果一致；用它可把「记一条」时对整类型重新算签名
+ * 的 O(tokenize) 成本降到 O(1)/条。artifacts 仍走 `canonicalArtifacts`（语义组与 ARTIFACT_HINTS
+ * 不同，不能拿 state.artifacts 顶替）。state 缺失或是空壳（老夹具/旧数据）时回退原始逻辑。
  * @param {object[]} rows - 该簇的可见经验。
  * @returns {{artifacts: string[], tokens: string[], cgrams: string[]}}
  */
@@ -53,10 +58,20 @@ export function signatureOf(rows) {
   const artifacts = new Map()
   for (const row of rows || []) {
     const text = `${row.intent || ''} ${row.action || ''}`
-    for (const token of new Set(tokenize(text))) {
-      if (token.length >= 2) bump(tokens, token)
+    const state = row && typeof row === 'object' && row.state !== null && typeof row.state === 'object' ? row.state : null
+    const reusable = state !== null && Array.isArray(state.tokens) && Array.isArray(state.cgrams)
+      && (state.tokens.length > 0 || state.cgrams.length > 0)
+    if (reusable) {
+      for (const token of state.tokens) {
+        if (String(token).length >= 2) bump(tokens, token)
+      }
+      for (const gram of state.cgrams) bump(grams, gram)
+    } else {
+      for (const token of new Set(tokenize(text))) {
+        if (token.length >= 2) bump(tokens, token)
+      }
+      for (const gram of new Set(cjkBigrams(text.toLowerCase()))) bump(grams, gram)
     }
-    for (const gram of new Set(cjkBigrams(text.toLowerCase()))) bump(grams, gram)
     for (const artifact of new Set(canonicalArtifacts(text))) bump(artifacts, artifact)
   }
   return {
@@ -122,7 +137,12 @@ function statsOf(rows) {
   return { count: groups.size, success, fail, uses, lastUsedAt, steps: rows.filter((row) => (row.kind || 'task') === 'step').length || rows.length }
 }
 
-function buildCluster(type, rows) {
+/**
+ * 构造单个簇（type + 该类型的**可见**行）。
+ * 导出给定向写路径用：`recordShardWrite` 只改一个类型后要刷新它的簇缓存，
+ * 否则 manifest.clusters 陈旧、下一次召回路由与全量算出来的不一致（task-9）。
+ */
+export function buildCluster(type, rows) {
   return {
     id: type.id,
     name: type.name,

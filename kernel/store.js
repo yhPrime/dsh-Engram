@@ -1,5 +1,9 @@
 /**
- * Provider 存储与语义：一个 JSON 文件 = 一个「经验库」空间。
+ * 存储与语义：一个目录 = 一个「经验库」空间。
+ *
+ * 0.14.0 起落盘是分片布局（见 `shard-store.js`）：`manifest.json` + `buckets/<typeId>.<k>.jsonl`，
+ * 旧单文件 `exp-lib.json` 在第一次写盘时一次性迁移为 `exp-lib.legacy.json`（只读，回滚用）。
+ * 对外仍是一个聚合后的 `{version, types, experiences, clusters}`——读写签名与语义不变。
  *
  * 与 Source 方案的 store 不同点：
  *  - 写入是 upsert：重复就地更新、近似替换写新条并标记旧条 superseded_by、其余追加；
@@ -14,9 +18,33 @@ import { createHash } from 'node:crypto'
 
 // 内核随包自带（与 dsh-exp-lib-source/kernel.js 同源），Provider 不依赖别的插件包。
 import { OUTCOME_SCORES, abstractState, estimateAdvantages, stateSimilarity, tokenize } from './kernel.js'
-import { RECALL_MIN_SIMILARITY, retrieveV2 } from './retrieval.js'
-import { listSkills } from './skills.js'
+import { RECALL_MIN_SIMILARITY, retrieveV2, similarityV2, stateOf } from './retrieval.js'
+import { listSkillsCached } from './skills.js'
 import { ensureClusters, refreshClusters, routeCluster, buildBrief } from './cluster.js'
+import { pendingBrief } from './brief.js'
+import { resolveEngramDataDir } from './settings.js'
+import {
+  AVG_RECORD_BYTES,
+  CACHE_MAX_BYTES,
+  assertDeclaredBucketsIntact,
+  buildManifest,
+  compactStore,
+  hasShardFiles,
+  manifestPath,
+  migrateToShards,
+  missingColdFiles,
+  onDataDirWritten,
+  readColdRecords,
+  readJsonFile,
+  readManifestFile,
+  readShardRecords,
+  scanShards,
+  shardsMismatch,
+  storageBytes,
+  storageFingerprint,
+  writeManifest,
+  writeShards,
+} from './shard-store.js'
 
 /** 只有系统兜底类型；业务类型不再预设，由模型在记录时按需创建（带防膨胀限制）。 */
 export const SYSTEM_TYPE = Object.freeze({
@@ -59,6 +87,13 @@ export const FEEDBACK_ETA = 0.35
 /** 每条经验保留的反馈日志条数（审计用；超出丢最旧）。 */
 export const FEEDBACK_LOG_LIMIT = 20
 
+/** 按码点截断（不劈 emoji 代理对）：超长时留一个省略号，结果仍在 max 内。 */
+function cutCodePoint(text, max) {
+  const value = String(text || '')
+  if (value.length <= max) return value
+  return `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
+}
+
 /** DSH 家目录：宿主会注入 DSH_HOME；没有时退回 ~/.dsh。换机器不用改任何配置。 */
 function dshHome() {
   const fromEnv = String(process.env.DSH_HOME || '').trim()
@@ -76,17 +111,10 @@ function dshHome() {
  *   → ~/.dsh/engram/data
  * 工具面（exp_record / exp_recall / …）与插件入口都走那一条，不读这里的逻辑。
  *
- * 这里仍在用的只有两处，且都是「读旧映射」：
- *   ① resolveToolDataDir()：只被 renderHint() 用（每轮提示段的条数统计）。
- *      它会去翻 `…/.mnemon/state/memory-providers.json` 里的 `services["exp-lib"].dataDir`。
- *      2026-11-09 实机：该文件仍在
- *      （C:\Users\yh\WorkDeepSeek\.mnemon\state\memory-providers.json，指向 .exp），
- *      所以提示段和工具现在读到同一个目录；但**一旦在控制台改了「存储位置」，
- *      提示段不会跟着变**（它还认这份旧映射）。
- *   ② 兼容函数本身：数据目录被显式配置时整条链路直接短路。
+ * 这里仍在用的只有兼容函数本身（老库迁移路径），提示段与工具面自 0.13.0 起
+ * 都走 `resolveEngramDataDir()`，不再读 `.mnemon` 里的旧映射。
  *
- * ⚠️ 不要直接删：删掉会丢掉老库自动迁移路径。等确认不再需要从旧布局迁移，
- * 再连同 renderHint 的数据源一起切换成 resolveEngramDataDir() 并清理。
+ * ⚠️ 不要直接删：删掉会丢掉老库自动迁移路径。
  */
 
 /** @legacy-provider 默认数据目录：配置优先，其次 $DSH_HOME/exp-lib/provider-data（可用 EXP_LIB_PROVIDER_DIR 覆盖）。 */
@@ -239,67 +267,600 @@ export function resolveToolDataDir(config = {}) {
   return dataDirFromProviderState(config) || resolveDataDir(config)
 }
 
+/** 同步睡眠（不忙等，锁/重试用）。 */
+function sleepSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  } catch {
+    const until = Date.now() + ms
+    while (Date.now() < until) { /* 退化为忙等 */ }
+  }
+}
+
 export function storeFile(dataDir) {
   return path.join(dataDir, FILE_NAME)
 }
 
-export function readStore(dataDir) {
-  const file = storeFile(dataDir)
-  let store
+/** 空库（首次运行）：只有系统兜底类型。 */
+function emptyStore() {
+  return { version: 1, types: [{ ...SYSTEM_TYPE }], experiences: [] }
+}
+
+/**
+ * 单一归一化：旧单文件和分片聚合两条读路径都走这一份。
+ * 所以「迁移前后逐字段等价」是结构性保证——两条路不会各算一套。
+ */
+function normalizeStore(raw) {
+  // 结构损坏不能静默降级成空库：空快照被下一次写回会覆盖原数据（对抗测试实测丢 2 条）。
+  if (raw.experiences !== undefined && raw.experiences !== null && !Array.isArray(raw.experiences)) {
+    throw new Error(`经验库结构损坏：experiences 应为数组，实际是 ${typeof raw.experiences}`)
+  }
+  if (raw.types !== undefined && raw.types !== null && !Array.isArray(raw.types)) {
+    throw new Error(`经验库结构损坏：types 应为数组，实际是 ${typeof raw.types}`)
+  }
+  const rawTypes = Array.isArray(raw.types)
+    ? raw.types.filter((type) => type && typeof type === 'object' && !Array.isArray(type) && typeof type.id === 'string' && type.id !== '')
+    : []
+  const types = (rawTypes.length > 0 ? rawTypes : [{ ...SYSTEM_TYPE }]).map((type) => (type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
+  if (!types.some((type) => type.id === SYSTEM_TYPE.id)) types.push({ ...SYSTEM_TYPE })
+  const experiences = Array.isArray(raw.experiences)
+    ? raw.experiences.filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    : []
+  // typeId 悬空（types 丢失/被删）：读时归「未分类」，别让计数/召回读到幽灵类型。
+  const typeIds = new Set(types.map((type) => type.id))
+  for (const item of experiences) {
+    if (!typeIds.has(item.typeId)) {
+      item.typeId = SYSTEM_TYPE.id
+      item.typeName = SYSTEM_TYPE.name
+    }
+  }
+  // 旧数据迁移：GOutcome 缺失时按 outcome 基准补上；有反馈日志就以日志重放为准，
+  // 让「G 与 feedback 计数」读到的是同一份真相（日志封顶 20 条）。
+  for (const item of experiences) {
+    const log = trimFeedbackLog(item.feedback_log)
+    const signalCount = log.filter((event) => event && FEEDBACK_RESULTS[event.result] !== 0).length
+    if (signalCount > 0) {
+      // 有信号事件：基准由 outcome 决定，G 由日志重放（单一真相）。
+      item.feedback_log = log
+      item.GOutcome = round4(scoreOf(item.outcome))
+      item.G = replayFeedback(item.GOutcome, log)
+      item.GSource = 'feedback'
+      const counts = { helped: 0, hurt: 0, neutral: 0 }
+      for (const event of log) if (counts[event.result] !== undefined) counts[event.result] += 1
+      const last = log[log.length - 1]
+      const previous = item.feedback !== null && typeof item.feedback === 'object' ? item.feedback : null
+      item.feedback = previous !== null
+        ? { ...previous, lastAt: last.at, lastResult: last.result }
+        : { ...counts, lastAt: last.at, lastResult: last.result }
+    } else {
+      // 没有信号事件（无日志 / 只有 neutral / 历史 G 无法还原）：保持原 G，
+      // 只在缺 GOutcome 时用它补基准；绝不把 1 静默读成 0.8（2026-11-07 验收）。
+      if (item.GOutcome === undefined || item.GOutcome === null) {
+        item.GOutcome = Number.isFinite(Number(item.G)) ? round4(Number(item.G)) : round4(scoreOf(item.outcome))
+      }
+      item.G = item.GOutcome
+      item.GSource = 'outcome'
+      if (log.length > 0) item.feedback_log = log
+    }
+  }
+  return { version: Number(raw.version) || 1, types, experiences }
+}
+
+/** 从记录反推类型目录：每行分片都带 typeId/typeName，所以 manifest.types 只是缓存。 */
+function typesFromRecords(records, fallbackTypes) {
+  const byId = new Map()
+  if (Array.isArray(fallbackTypes)) {
+    for (const type of fallbackTypes) {
+      if (type && typeof type === 'object' && typeof type.id === 'string' && type.id !== '') byId.set(type.id, { ...type })
+    }
+  }
+  const system = byId.get(SYSTEM_TYPE.id)
+  byId.set(SYSTEM_TYPE.id, system !== undefined ? { ...system, system: true } : { ...SYSTEM_TYPE })
+  for (const row of records) {
+    const id = String(row.typeId || '')
+    if (id === '' || byId.has(id)) continue
+    byId.set(id, { id, name: String(row.typeName || id), description: '', system: false, source: 'rebuilt' })
+  }
+  return [...byId.values()]
+}
+
+/**
+ * 重建 manifest（D1，2026-11-12）：**manifest 只是可重建缓存，事实源只有 buckets/cold**。
+ *
+ * 为什么不把 manifest 当事实源：每次记录都会重写它，两台设备并发写时
+ * `buckets` 各自追加（JSONL 行级 merge 干净）而 manifest 整文件冲突。
+ * 让冲突无害的做法就是——Git 取哪一边都行，下次读走这里重建。
+ *
+ * @param {string} dataDir
+ * @param {{version?: number, types?: object[], migratedFrom?: string}} [options]
+ *        有可解析的旧 manifest 时把 types/migratedFrom 带进来：类型描述这类元数据只在
+ *        manifest 里有，重建时能救回来就别丢。
+ * @returns {object} 重建出的 manifest
+ */
+export function rebuildManifest(dataDir, options = {}) {
+  // D3（2026-11-12）：旧 manifest 可解析时先核对它的声明——声明 count>0 的分片被清空/截断，
+  // 重建会把「少了几行」当成事实写进新 manifest，等于把事故抹平。宁可报错，不许静默丢行。
+  assertDeclaredBucketsIntact(dataDir, options.buckets, options.cold)
+  const scan = scanShards(dataDir)
+  // D5：旧 manifest 登记的冷档文件缺失时，保留这份登记（不要把 cold 清空）——
+  // 否则 hot 读一次自愈后，`cold:true` 会静默返回 0 条，事故变静默。
+  const preserveCold = options.cold !== undefined && options.cold !== null && missingColdFiles(dataDir, options.cold).length > 0
+  const store = normalizeStore({
+    version: Number(options.version) || 1,
+    types: typesFromRecords(scan.records, options.types),
+    experiences: scan.records,
+  })
+  ensureClusters(store)
+  const previous = {
+    cold: preserveCold ? options.cold : scan.cold,
+    ...(typeof options.migratedFrom === 'string' && options.migratedFrom !== '' ? { migratedFrom: options.migratedFrom } : {}),
+  }
+  const manifest = buildManifest(store, scan.buckets, previous)
+  writeManifest(dataDir, manifest)
+  clearHintCache(dataDir)
+  return manifest
+}
+
+/**
+ * 读 manifest（带自愈）。返回 null 只表示「这库里还没有分片」，此时读走旧单文件。
+ *
+ * 自愈触发条件（都不会抛错、也不会把库读空）：
+ *  - manifest 缺失但分片在（缓存丢了 / 刚合并过）；
+ *  - manifest 解析失败；
+ *  - manifest 与磁盘对不上（分片文件集合或字节数变了）。
+ * 重建只改 manifest，分片一个字节都不动。
+ */
+export function readManifest(dataDir) {
+  let manifest = null
+  let broken = false
   try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const types = (Array.isArray(raw.types) && raw.types.length > 0 ? raw.types : [{ ...SYSTEM_TYPE }]).map((type) => (type && type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
-    const experiences = Array.isArray(raw.experiences) ? raw.experiences.filter((item) => item && typeof item === 'object') : []
-    // 旧数据迁移：GOutcome 缺失时按 outcome 基准补上；有反馈日志就以日志重放为准，
-    // 让「G 与 feedback 计数」读到的是同一份真相（日志封顶 20 条）。
-    for (const item of experiences) {
-      const log = trimFeedbackLog(item.feedback_log)
-      const signalCount = log.filter((event) => event && FEEDBACK_RESULTS[event.result] !== 0).length
-      if (signalCount > 0) {
-        // 有信号事件：基准由 outcome 决定，G 由日志重放（单一真相）。
-        item.feedback_log = log
-        item.GOutcome = round4(scoreOf(item.outcome))
-        item.G = replayFeedback(item.GOutcome, log)
-        item.GSource = 'feedback'
-        const counts = { helped: 0, hurt: 0, neutral: 0 }
-        for (const event of log) if (counts[event.result] !== undefined) counts[event.result] += 1
-        const last = log[log.length - 1]
-        const previous = item.feedback !== null && typeof item.feedback === 'object' ? item.feedback : null
-        item.feedback = previous !== null
-          ? { ...previous, lastAt: last.at, lastResult: last.result }
-          : { ...counts, lastAt: last.at, lastResult: last.result }
-      } else {
-        // 没有信号事件（无日志 / 只有 neutral / 历史 G 无法还原）：保持原 G，
-        // 只在缺 GOutcome 时用它补基准；绝不把 1 静默读成 0.8（2026-11-07 验收）。
-        if (item.GOutcome === undefined || item.GOutcome === null) {
-          item.GOutcome = Number.isFinite(Number(item.G)) ? round4(Number(item.G)) : round4(scoreOf(item.outcome))
-        }
-        item.G = item.GOutcome
-        item.GSource = 'outcome'
-        if (log.length > 0) item.feedback_log = log
+    manifest = readManifestFile(dataDir)
+  } catch {
+    broken = true
+  }
+  const sharded = hasShardFiles(dataDir)
+  if (!broken && manifest !== null && !shardsMismatch(dataDir, manifest)) return manifest
+  // 没有分片可参考：要么是还没迁移的老库（有 exp-lib.json），要么本来就是空库。
+  if (manifest === null && !sharded) return null
+  if (!sharded && fs.existsSync(storeFile(dataDir))) return null
+  // 事实源在分片里：重建缓存。类型元数据只在 manifest 里有，能救就救。
+  return rebuildManifest(dataDir, {
+    version: manifest === null ? 1 : manifest.version,
+    types: manifest === null ? undefined : manifest.types,
+    buckets: manifest === null ? undefined : manifest.buckets,
+    cold: manifest === null ? undefined : manifest.cold,
+    migratedFrom: manifest === null ? '' : (manifest.migratedFrom || ''),
+  })
+}
+
+/**
+ * 读经验库（对外签名与返回语义不变）：永远返回聚合后的 `{version, types, experiences, clusters}`。
+ *
+ * 存储形态两选一，`manifest.json` 是唯一入口：
+ *  - 有 manifest（或分片）→ 读全部分片再聚合（0.14.0 的分片布局）；
+ *  - 没有 → 读旧单文件 `exp-lib.json`（升级前的老库）。
+ *
+ * 两条路径共用 `normalizeStore`，所以迁移前后逐字段等价。
+ * 读路径只在 manifest 缓存过期/损坏时写一次 manifest（自愈），绝不迁移、不改分片。
+ *
+ * @param {string} dataDir
+ * @param {{cache?: boolean, cacheMaxBytes?: number}} [options]
+ *        `cache:true` 才启用读缓存（**只给只读调用方**，见 `readStoreCached` 的说明）；
+ *        默认不传 = 现行为，每次全量解析、返回可自由修改的对象。
+ */
+export function readStore(dataDir, options = {}) {
+  if (options !== null && typeof options === 'object' && options.cache === true) return readStoreCached(dataDir, options)
+  return readStoreUncached(dataDir)
+}
+
+function readStoreUncached(dataDir) {
+  const manifest = readManifest(dataDir)
+  let store
+  if (manifest !== null) {
+    const records = readShardRecords(dataDir, manifest)
+    store = normalizeStore({ version: manifest.version, types: manifest.types, experiences: records })
+    const declared = manifest.buckets.reduce((sum, bucket) => sum + (Number(bucket.count) || 0), 0)
+    if (declared !== records.length) {
+      // 条数与分片不符（并发合并 / 半写）：缓存自愈；已读到的记录照常返回，不丢数据。
+      try {
+        rebuildManifest(dataDir, { version: manifest.version, types: manifest.types, migratedFrom: manifest.migratedFrom || '' })
+      } catch {
+        // 重建失败不影响本次读；下次写盘会覆盖 manifest。
       }
     }
-    store = { version: Number(raw.version) || 1, types, experiences }
-  } catch {
-    store = { version: 1, types: [{ ...SYSTEM_TYPE }], experiences: [] }
+  } else {
+    const raw = readJsonFile(storeFile(dataDir), '经验库')
+    store = raw === null ? emptyStore() : normalizeStore(raw)
   }
-  // 簇是派生视图：每次读都从 types + 可见经验重算，不落盘（writeStore 只写固定字段）。
+  // 簇是派生视图：每次读都从 types + 可见经验重算；manifest.clusters 只是给提示段/路由用的缓存。
   ensureClusters(store)
   return store
 }
 
-export function writeStore(dataDir, store) {
+/**
+ * 可选读缓存（§4.8 / task-7）：`readStore(dataDir, { cache: true })` 才启用，默认关闭。
+ *
+ * 背景：分片后一次 `readStore` 要 open+parse ≤50 个文件再重算簇；10x 库实测是单文件基线的
+ * 1.27×/1.70×/1.76×。命中时只花一串 stat 的指纹钱（~0.2 ms），跳掉 4.4 MB 的 parse。
+ *
+ * 调用方怎么用（**只读路径**）：
+ *   const store = readStore(dataDir, { cache: true })   // engine.snapshot / 控制台状态接口
+ *
+ * ⚠️ 写路径（`tools.js`、exp_record / exp_feedback / 任何「读—改—写」）**必须不传 cache**：
+ * 缓存对象是冻结的，改不动；更关键的是「读旧对象 → 改 → 写回」会把别人的更新覆盖掉。
+ *
+ * 键：`storageFingerprint`（manifest + 每个分片/冷档的 `mtimeNs:size:ino`）。
+ * 失效：`writeManifest` 末尾的通知（覆盖 writeStore / writeTypeShards / rebuildManifest / 迁移，
+ * 同进程立刻一致）；其它进程的写盘靠指纹变化。
+ * 淘汰：LRU，上限 `CACHE_MAX_BYTES`（32 MiB）。
+ * 返回对象被**深冻结**：缓存与调用方共享同一份对象，冻结比每次深拷贝便宜两个数量级；
+ * 任何就地修改都会在严格模式下抛 TypeError（而不是悄悄把缓存写脏）。
+ */
+const STORE_READ_CACHE = new Map()
+let storeReadCacheBytes = 0
+
+function deepFreeze(value, seen = new Set()) {
+  if (value === null || typeof value !== 'object' || seen.has(value)) return value
+  seen.add(value)
+  for (const key of Object.keys(value)) deepFreeze(value[key], seen)
+  return Object.freeze(value)
+}
+
+/** 清掉某个 dataDir 的读缓存；不传参数清全部（测试 / 运维用）。 */
+export function clearStoreReadCache(dataDir) {
+  if (dataDir === undefined || dataDir === null || dataDir === '') {
+    STORE_READ_CACHE.clear()
+    storeReadCacheBytes = 0
+    return
+  }
+  const key = path.resolve(String(dataDir))
+  const entry = STORE_READ_CACHE.get(key)
+  if (entry === undefined) return
+  STORE_READ_CACHE.delete(key)
+  storeReadCacheBytes -= entry.bytes
+}
+
+/** 读缓存诊断：条数与估算占用字节（测试 / 控制台可见）。 */
+export function readStoreCacheInfo() {
+  return { entries: STORE_READ_CACHE.size, bytes: storeReadCacheBytes }
+}
+
+// 任一次 manifest 落盘（含 P3 的 writeTypeShards、迁移、自愈重建）后，同进程读缓存立刻失效。
+onDataDirWritten((dataDir) => clearStoreReadCache(dataDir))
+
+function readStoreCached(dataDir, options = {}) {
+  const key = path.resolve(String(dataDir || ''))
+  const maxBytes = Number.isFinite(Number(options.cacheMaxBytes))
+    ? Math.max(0, Number(options.cacheMaxBytes))
+    : CACHE_MAX_BYTES
+  const fingerprint = storageFingerprint(key)
+  const hit = STORE_READ_CACHE.get(key)
+  if (hit !== undefined && hit.fingerprint === fingerprint) {
+    // LRU：命中也刷新位置（Map 插入顺序即 LRU 顺序）。
+    STORE_READ_CACHE.delete(key)
+    STORE_READ_CACHE.set(key, hit)
+    return hit.store
+  }
+  const store = deepFreeze(readStoreUncached(key))
+  // 读的过程中 manifest 可能被自愈重建（写盘）——以读完后的指纹为准，否则下一次又白读一遍。
+  const freshFingerprint = storageFingerprint(key)
+  // 内存占用：分片库用热档字节数；未迁移的老库没有 manifest/分片，得按记录数估（否则永远 0、不淘汰）。
+  const bytes = Math.max(
+    storageBytes(key),
+    Array.isArray(store.experiences) ? store.experiences.length * AVG_RECORD_BYTES : 0,
+  )
+  if (hit !== undefined) {
+    STORE_READ_CACHE.delete(key)
+    storeReadCacheBytes -= hit.bytes
+  }
+  STORE_READ_CACHE.set(key, { fingerprint: freshFingerprint, store, bytes })
+  storeReadCacheBytes += bytes
+  while (storeReadCacheBytes > maxBytes && STORE_READ_CACHE.size > 1) {
+    const oldestKey = STORE_READ_CACHE.keys().next().value
+    const removed = STORE_READ_CACHE.get(oldestKey)
+    STORE_READ_CACHE.delete(oldestKey)
+    storeReadCacheBytes -= removed.bytes
+  }
+  return store
+}
+
+/**
+ * 读冷档（`exp_recall({ cold: true })` 用）：把 `cold/<year>-<a|b|…>.jsonl` 聚合成与
+ * `readStore` 同形状的 store，只给「显式查冷档」这一条路。
+ *
+ * 冷档默认不参与召回、不进关系图、不进簇统计、不计入提示段条数（§7.1）；
+ * 这个函数不改变任何热档口径，也不写盘。
+ * 注意：冷档记录不可 `exp_feedback`（不在热档 store 里，按 id 找不到）——这是预期行为。
+ */
+export function readColdStore(dataDir) {
+  // D5（2026-11-12）：先看**原始** manifest 的冷档登记——`readManifest` 的自愈会把缺失的冷档
+  // 登记清掉（hot 读不该被冷档缺失影响），直接走它会让 `cold:true` 静默返回 0 条。
+  let manifest = null
+  try {
+    manifest = readManifestFile(dataDir)
+  } catch {
+    manifest = null
+  }
+  if (manifest === null) manifest = readManifest(dataDir)
+  if (manifest === null) return emptyStore()
+  const records = readColdRecords(dataDir, manifest)
+  const store = normalizeStore({ version: manifest.version, types: manifest.types, experiences: records })
+  ensureClusters(store)
+  return store
+}
+
+/**
+ * 提示段专用读缓存（0.14.0）：`renderHint` 在每次模型请求都会被求值，而 `readStore` 要全量解析、
+ * 逐条重放 G、重算簇签名——真实库 122 条约 24 ms，其后随条数线性上涨。
+ *
+ * 只给提示段用：计数、待判定、类型目录、技能名这几项容得下「manifest 没变就沿用」；记录/召回/
+ * 控制台仍走 `readStore` 原路，不吃这份缓存，所以正确性不受影响。
+ *
+ * 失效：同进程写完立刻清；跨进程靠 manifest 指纹（见下）。
+ */
+const hintStoreCache = new Map()
+
+/**
+ * 提示段缓存指纹（只认 manifest.json）：
+ *  1. 有 manifest → `stat(manifest.json)` 的 mtime+size+ino；
+ *  2. 没有（迁移前的单文件布局）→ 回退 `stat(exp-lib.json)`。
+ *
+ * 为什么**不**扫全部分片：提示段每次模型请求都跑一次；stat 全部分片/冷档（≤54 个）
+ * 会把 P0 的 0.13 ms 吃成 1.22 ms，等于把 P0 的收益还回去。
+ * 为什么**不加** TTL：稀疏调用下 TTL 没用（一轮对话间隔常 >1s，每轮都过期 = 没缓存）；
+ * 而 manifest 每次写盘必变，指纹本身已经够用。
+ *
+ * ⚠️ 硬约束：每次写盘都必须**最后**写 manifest（`writeShards` / `writeTypeShards` /
+ * `compactStore` 的调用方都遵守）。顺序错了，这里会一直命中旧缓存。
+ */
+function hintFileSignature(dataDir) {
+  const key = path.resolve(String(dataDir || ''))
+  for (const file of [manifestPath(key), storeFile(key)]) {
+    try {
+      const stat = fs.statSync(file)
+      return `${stat.mtimeMs}:${stat.size}:${stat.ino}`
+    } catch {
+      // 该文件不存在，试下一个（manifest 优先，老库回退单文件）
+    }
+  }
+  return 'missing'
+}
+
+function readStoreForHint(dataDir) {
+  const key = path.resolve(String(dataDir || ''))
+  const sig = hintFileSignature(key)
+  const hit = hintStoreCache.get(key)
+  if (hit !== undefined && hit.sig === sig) return hit.store
+  const store = readStore(dataDir)
+  hintStoreCache.set(key, { at: Date.now(), sig, store })
+  return store
+}
+
+/** 写盘后清提示段缓存（同进程立刻一致；跨进程靠 manifest 指纹）。 */
+function clearHintCache(dataDir) {
+  hintStoreCache.delete(path.resolve(String(dataDir || '')))
+}
+
+/**
+ * 写盘锁（0.13.0；D1 强化 2026-11-12）：多进程并发写会「读-改-写」丢更新（对抗测试实测 27 条只剩 9 条）。
+ * 用目录锁（mkdir 原子）做互斥；同进程重入直接放行（writeStore 在锁内被调用不算再次加锁）。
+ *
+ * 崩溃残留：锁目录里写 `pid` 与 `heartbeat`（持锁期间每 2s 刷新）。
+ * 获取失败时若 pid 已不存在、或心跳超过 10s 未更新，**立即判残留并清理**，不再空等 60s；
+ * `STALE_LOCK_MS` 仍作最后兜底（老版本锁目录没有 pid/心跳文件时靠目录 mtime）。
+ */
+const heldLocks = new Set()
+const STALE_LOCK_MS = 60000
+const LOCK_WAIT_MS = 10000
+const LOCK_HEARTBEAT_MS = 2000
+const LOCK_HEARTBEAT_STALE_MS = 10000
+const LOCK_PID_MISSING_STALE_MS = 2000
+
+function lockPidFile(lockDir) {
+  return path.join(lockDir, 'pid')
+}
+
+function lockHeartbeatFile(lockDir) {
+  return path.join(lockDir, 'heartbeat')
+}
+
+function readLockPid(lockDir) {
+  try {
+    const pid = Number(String(fs.readFileSync(lockPidFile(lockDir), 'utf8')).trim())
+    return Number.isFinite(pid) && pid > 0 ? pid : NaN
+  } catch {
+    return NaN
+  }
+}
+
+function readLockHeartbeat(lockDir) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(lockHeartbeatFile(lockDir), 'utf8'))
+    const at = Number(raw && raw.at)
+    return Number.isFinite(at) ? at : NaN
+  } catch {
+    return NaN
+  }
+}
+
+/** pid 判活：ESRCH = 进程不存在（残留）；EPERM = 进程在但没权限（视为仍持有）。 */
+function pidIsAlive(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return Boolean(error && error.code !== 'ESRCH')
+  }
+}
+
+function lockIsStale(lockDir) {
+  let dirAge = Number.POSITIVE_INFINITY
+  try {
+    dirAge = Date.now() - fs.statSync(lockDir).mtimeMs
+  } catch {
+    return true
+  }
+  if (dirAge > STALE_LOCK_MS) return true
+  const heartbeat = readLockHeartbeat(lockDir)
+  if (Number.isFinite(heartbeat) && Date.now() - heartbeat > LOCK_HEARTBEAT_STALE_MS) return true
+  const pid = readLockPid(lockDir)
+  if (Number.isFinite(pid)) return !pidIsAlive(pid)
+  // 没有 pid 文件：可能是刚 mkdir 还没写 pid 的窗口；超过 2s 还没有就按残留处理。
+  return dirAge > LOCK_PID_MISSING_STALE_MS
+}
+
+function writeLockHeartbeat(lockDir) {
+  try {
+    fs.writeFileSync(lockHeartbeatFile(lockDir), JSON.stringify({ pid: process.pid, at: Date.now() }), 'utf8')
+  } catch {
+    // 心跳写不了不影响持锁；兜底靠 mtime
+  }
+}
+
+function removeLockDir(lockDir) {
+  try {
+    fs.rmSync(lockDir, { recursive: true, force: true })
+  } catch {
+    // 已被别的进程清掉
+  }
+}
+
+export function withStoreLock(dataDir, fn, options = {}) {
+  const key = path.resolve(String(dataDir || ''))
+  if (heldLocks.has(key)) return fn()
+  const lockDir = `${storeFile(key)}.lock`
+  // 数据目录可能还不存在（首次记录）：先建父目录，否则 mkdir 锁目录会 ENOENT。
+  fs.mkdirSync(path.dirname(lockDir), { recursive: true })
+  const waitMs = Number.isFinite(Number(options.waitMs)) && Number(options.waitMs) >= 0 ? Number(options.waitMs) : LOCK_WAIT_MS
+  const deadline = Date.now() + waitMs
+  let acquired = false
+  while (!acquired) {
+    try {
+      fs.mkdirSync(lockDir)
+      acquired = true
+      break
+    } catch (error) {
+      if (error && error.code !== 'EEXIST') throw error
+    }
+    if (lockIsStale(lockDir)) {
+      removeLockDir(lockDir)
+      continue
+    }
+    if (Date.now() > deadline) throw new Error(`经验库正被另一个进程写入（锁 ${lockDir}），稍后重试`)
+    sleepSync(20)
+  }
+  heldLocks.add(key)
+  // 持锁先登记 pid + 心跳：后来者据此判断「持锁进程是否还活着 / 心跳是否停了」。
+  try {
+    fs.writeFileSync(lockPidFile(lockDir), String(process.pid), 'utf8')
+    writeLockHeartbeat(lockDir)
+  } catch {
+    // 写不了 pid/心跳时退化为老行为（靠 mtime 判陈旧）
+  }
+  const heartbeatTimer = setInterval(() => writeLockHeartbeat(lockDir), LOCK_HEARTBEAT_MS)
+  if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref()
+  try {
+    return fn()
+  } finally {
+    heldLocks.delete(key)
+    clearInterval(heartbeatTimer)
+    removeLockDir(lockDir)
+  }
+}
+
+/** 清掉崩溃留下的 `基名.*.tmp`（>10 分钟），否则每次崩溃都留一个库大小的垃圾。 */
+function cleanupStaleTempFiles(dir, base) {
+  try {
+    const now = Date.now()
+    for (const name of fs.readdirSync(dir)) {
+      // D2：manifest 的临时文件在根目录（`manifest.json.*.tmp`），与旧单文件临时文件一起清。
+      const matchesBase = name.startsWith(`${base}.`) && name.endsWith('.tmp')
+      const matchesManifest = name.startsWith('manifest.json.') && name.endsWith('.tmp')
+      if (!matchesBase && !matchesManifest) continue
+      const full = path.join(dir, name)
+      try {
+        if (now - fs.statSync(full).mtimeMs > 600000) fs.unlinkSync(full)
+      } catch {
+        // 正被别的进程使用
+      }
+    }
+  } catch {
+    // 目录不可读就跳过
+  }
+}
+
+/**
+ * 一次性迁移（幂等）：没有 manifest 且有旧单文件时，把旧库改成分片布局。
+ *
+ * 顺序（计划书 §4.6）：读旧库 → 写分片 → 写 manifest → 把 exp-lib.json 改名为 legacy。
+ * 任一步失败：`exp-lib.json` 原样保留、不写 manifest、抛错（**绝不静默返回空库再写回**）。
+ * 读路径不迁移，所以本函数只会由第一次写盘或显式调用触发；连续调用第二次不写任何文件。
+ * @returns {{migrated: boolean, reason?: string, records?: number, types?: number, buckets?: number}}
+ */
+export function migrateStore(dataDir) {
+  return withStoreLock(dataDir, () => {
+    if (readManifest(dataDir) !== null) return { migrated: false, reason: 'manifest-exists' }
+    const raw = readJsonFile(storeFile(dataDir), '经验库')
+    if (raw === null) return { migrated: false, reason: 'no-legacy' }
+    const store = normalizeStore(raw)
+    ensureClusters(store)
+    const out = migrateToShards(dataDir, store)
+    clearHintCache(dataDir)
+    return { migrated: true, records: store.experiences.length, types: store.types.length, buckets: out.buckets }
+  })
+}
+
+/**
+ * 写经验库（对外签名与返回语义不变）：分片布局 —— 全部分片 + manifest。
+ *
+ * **这是「全量重写」入口**：它会按 `store.experiences` 重建所有类型的分片，
+ * 只传一个局部 store（例如只改了某类型的几条）会把其它类型的内容当成删除。
+ * 局部写请用 `shard-store.writeTypeShards()`（G4，P3 的写路径）。
+ *
+ * 首次写盘时若只有旧单文件，先做一次性迁移（失败就抛错，不会把空快照写回去）。
+ * 写完分片后做容量治理（§4.4 / D4）：超闸就压缩最大的分片并把尾部下沉冷档。
+ */
+export function writeStore(dataDir, store, options = {}) {
+  if (options.locked !== true && !heldLocks.has(path.resolve(String(dataDir || '')))) {
+    return withStoreLock(dataDir, () => writeStore(dataDir, store, { ...options, locked: true }))
+  }
   const file = storeFile(dataDir)
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temp = `${file}.${process.pid}.tmp`
+  let manifest = readManifest(dataDir)
+  if (manifest === null && fs.existsSync(file)) {
+    migrateStore(dataDir)
+    manifest = readManifest(dataDir)
+  }
   const payload = {
     version: 1,
     updated_at: new Date().toISOString(),
     types: Array.isArray(store.types) && store.types.length > 0 ? store.types : [{ ...SYSTEM_TYPE }],
     experiences: Array.isArray(store.experiences) ? store.experiences : [],
   }
-  fs.writeFileSync(temp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
-  fs.renameSync(temp, file)
+  // clusters 只落 manifest 当缓存；返回值保持旧形状（调用方零改动）。
+  const shardInput = { version: payload.version, types: payload.types, experiences: payload.experiences }
+  ensureClusters(shardInput)
+  let next = writeShards(dataDir, shardInput, manifest)
+  // P2 容量治理（§4.4 / D4；§7.10 安全阀）：单桶 > 2 MiB、热档总字节 > 32 MiB、可见条数 > N_MAX 时，
+  // 压缩当前最大的分片。压缩只动分片与冷档，manifest 在这里统一写一次（先数据后索引）。
+  const compactOptions = options.compact !== null && typeof options.compact === 'object' ? options.compact : {}
+  const compacted = compactStore(dataDir, next, compactOptions)
+  if (compacted.compacted.length > 0) {
+    // 下沉/清掉的记录要从内存视图里剔除，否则 manifest.stats/recent 会把它们还当热档算。
+    const removed = new Set(compacted.removedIds.map(String))
+    const hotView = {
+      version: payload.version,
+      types: payload.types,
+      experiences: shardInput.experiences.filter((row) => !removed.has(String(row && row.id))),
+    }
+    ensureClusters(hotView)
+    next = buildManifest(hotView, compacted.manifest.buckets, compacted.manifest)
+    writeManifest(dataDir, next)
+  }
+  // 清掉迁移前遗留的旧临时文件（exp-lib.json.*.tmp）
+  cleanupStaleTempFiles(path.dirname(file), path.basename(file))
+  clearHintCache(dataDir)
   return payload
 }
 
@@ -491,7 +1052,7 @@ export function resolveTypeForRecord(store, rawName, options = {}) {
     source: 'model-created',
   }
   store.types.push(type)
-  refreshClusters(store)
+  if (options.skipClusters !== true) refreshClusters(store)
   return { type, created: true }
 }
 
@@ -547,15 +1108,25 @@ function round4(value) {
   return Math.round(Number(value) * 1e4) / 1e4
 }
 
+/** 新鲜度（0.5–1）：旧条不压新条，但也不直接淘汰；90 天衰减到 2/3。 */
+function freshnessOfRow(row) {
+  const time = Date.parse(String((row && (row.lastSeenAt || row.ts || row.registeredAt)) || ''))
+  if (!Number.isFinite(time)) return 1
+  const days = Math.max(0, (Date.now() - time) / 86400000)
+  return 1 / (1 + days / 90)
+}
+
 /** 召回展示用的 note 上限：只截展示、不删数据；保首尾，长路径/命令不至于被切在开头。 */
 export const RECALL_NOTE_LIMIT = 300
 
 function truncateNote(raw) {
   const text = String(raw || '')
-  if (text.length <= RECALL_NOTE_LIMIT) return text
+  // 按码点截断：UTF-16 下 slice 会把 emoji 劈出孤立代理项。
+  const chars = Array.from(text)
+  if (chars.length <= RECALL_NOTE_LIMIT) return text
   const head = Math.floor(RECALL_NOTE_LIMIT * 0.65)
   const tail = RECALL_NOTE_LIMIT - head - 1
-  return `${text.slice(0, head)}…${text.slice(-tail)}`
+  return `${chars.slice(0, head).join('')}…${chars.slice(-tail).join('')}`
 }
 
 /** 证据质量：(加权平均 G + 1) / 2，映射到 [0,1]，负回报会被压到 0.2 以下。 */
@@ -691,12 +1262,31 @@ export function upsertExperience(store, input, options = {}) {
   const cleanIntent = sanitizeField(input.intent)
   const cleanAction = sanitizeField(input.action)
   const cleanNote = sanitizeField(rawNote)
-  const intent = cleanIntent.text
-  const action = cleanAction.text
+  // 写侧上限（对抗测试发现）：10 万字符 note / 1 万字符 intent 会整段落库、把库撑大。
+  // 读侧本来只展示 300 字，写侧也按码点截断（不劈 emoji）。
+  const cutField = (text, max) => {
+    const value = String(text || '')
+    return value.length <= max ? value : `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
+  }
+  const intent = cutField(cleanIntent.text, 500)
+  const action = cutField(cleanAction.text, 2000)
+  cleanNote.text = cutField(cleanNote.text, 2000)
   if (intent === '' || action === '') throw new Error('intent 与 action 必填')
   const mergeThreshold = Number.isFinite(Number(options.mergeThreshold)) ? Number(options.mergeThreshold) : DEFAULT_MERGE_THRESHOLD
   const replaceThreshold = Number.isFinite(Number(options.replaceThreshold)) ? Number(options.replaceThreshold) : DEFAULT_REPLACE_THRESHOLD
-  const outcome = String(input.outcome || 'unknown')
+  // 结果可以不给（0.13.0）：缺省就挂「待判定」，等模型拿到用户后续反应再回填。
+  const rawOutcome = input.outcome === undefined || input.outcome === null ? '' : String(input.outcome).trim()
+  const hasOutcome = rawOutcome !== ''
+  const outcome = hasOutcome ? rawOutcome : 'unknown'
+  // 入口校验：outcome 必须来自固定枚举（以前 '完美'/'SUCCESS' 会被静默落库成 G=0）。
+  if (hasOutcome && !Object.prototype.hasOwnProperty.call(OUTCOME_SCORES, rawOutcome)) {
+    throw new Error(`outcome 只能是 ${Object.keys(OUTCOME_SCORES).join(' / ')}，收到：${rawOutcome}`)
+  }
+  if (input.expectedOutcome !== undefined && input.expectedOutcome !== null && String(input.expectedOutcome).trim() !== ''
+    && !Object.prototype.hasOwnProperty.call(OUTCOME_SCORES, String(input.expectedOutcome).trim())) {
+    throw new Error(`expectedOutcome 只能是 ${Object.keys(OUTCOME_SCORES).join(' / ')}，收到：${input.expectedOutcome}`)
+  }
+  const wantPending = input.verdict === 'pending' || (!hasOutcome && input.verdict !== 'decided')
   // 类型丢了但残渣里有（`<parameter name="type">PPT / 课件`）→ 捞回来，别让它掉进「未分类」。
   const explicitType = String(input.type || '').trim()
   const recoveredType = explicitType === '' ? extractParameter(rawNote, 'type') : ''
@@ -706,6 +1296,8 @@ export function upsertExperience(store, input, options = {}) {
     maxTypes: options.maxTypes,
     newTypesPerDay: options.newTypesPerDay,
     similarity: options.typeSimilarity,
+    // 定向写路径（task-9）：partial store 上重算簇没有意义（其它类型没有行），跳过省 CPU。
+    skipClusters: options.skipClusters,
   })
   let type = resolved.type
   const hasExplicitType = typeName !== ''
@@ -737,6 +1329,9 @@ export function upsertExperience(store, input, options = {}) {
   const failedStep = Number.isInteger(failedStepInput) && failedStepInput > 0 ? failedStepInput : null
   const stepRewardsInput = Array.isArray(input.stepRewards) ? input.stepRewards.map(Number).filter(Number.isFinite) : null
   const context = normalizeContext(input.context)
+  const dimensions = normalizeDimensions(input.dimensions)
+  const artifacts = normalizeArtifacts(input.artifacts)
+  const evidence = normalizeEvidence(input.evidence)
   // 多步的整条 G 取「最弱一步」：人也是一步做砸就整件事没成。
   // 但 outcome 自己就是失败时不能被分步回报「洗白」：所以取 min(reward, ...stepRewards)。
   const computedG = stepRewardsInput !== null && stepRewardsInput.length > 0
@@ -796,7 +1391,7 @@ export function upsertExperience(store, input, options = {}) {
   const outcomeSignOf = (item) => signOf(item.GOutcome !== undefined && item.GOutcome !== null ? item.GOutcome : scoreOf(item.outcome))
   const duplicate = active.find((item) => sameTask(item)
     && actionKeyOf(item.action) === actionKeyOf(action)
-    && outcomeSignOf(item) === signOf(reward)
+    && (hasOutcome ? (item.verdict === 'pending' || outcomeSignOf(item) === signOf(reward)) : true)
     && stateSimilarity(state, item.state || {}) >= mergeThreshold)
   // 负样本退休（2026-11-07）：同一做法已有成功 → 旧的失败条转为历史（软隐、可复活），
   // 不再永远挡在召回前面。不按日历：失败被证明可绕过才算「学过了」。
@@ -820,11 +1415,19 @@ export function upsertExperience(store, input, options = {}) {
   if (duplicate !== undefined) {
     duplicate.hits = (Number(duplicate.hits) || 1) + 1
     duplicate.lastSeenAt = now
-    duplicate.outcome = outcome
-    duplicate.step_rewards = stepRewardsInput !== null ? stepRewardsInput : [reward]
-    duplicate.GOutcome = computedG
+    if (hasOutcome) {
+      duplicate.outcome = outcome
+      duplicate.step_rewards = stepRewardsInput !== null ? stepRewardsInput : [reward]
+      duplicate.GOutcome = computedG
+      duplicate.verdict = 'decided'
+      duplicate.verdictAt = now
+      duplicate.decidedBy = 'model'
+      applyExpectation(duplicate)
+    }
     if (input.context !== undefined) duplicate.context = context
-    applyExpectation(duplicate)
+    if (dimensions !== null) duplicate.dimensions = dimensions
+    if (artifacts !== null) duplicate.artifacts = artifacts
+    if (evidence !== null) duplicate.evidence = evidence
     foldExpiredFeedback(duplicate, nowMs, decayDays)
     syncDerivedFeedback(duplicate)
     if (cleanNote.text !== '') duplicate.note = cleanNote.text
@@ -833,7 +1436,7 @@ export function upsertExperience(store, input, options = {}) {
       duplicate.typeName = type.name
     }
     const retiredIds = retireNegatives(duplicate.id)
-    refreshClusters(store)
+    if (options.skipClusters !== true) refreshClusters(store)
     return { experience: duplicate, action: 'updated', retired: retiredIds, signMismatch, type: resolved, sanitized, typeRecoveredFromNote: recoveredType !== '' }
   }
 
@@ -884,7 +1487,7 @@ export function upsertExperience(store, input, options = {}) {
     pushHistory(revivable, wasSuperseded
       ? { type: 'revived', displaced: head === undefined ? null : head.id }
       : { type: 'revived', reason: 'retired' })
-    refreshClusters(store)
+    if (options.skipClusters !== true) refreshClusters(store)
     return { experience: revivable, action: 'revived', signMismatch, type: resolved, sanitized, typeRecoveredFromNote: recoveredType !== '' }
   }
 
@@ -893,6 +1496,10 @@ export function upsertExperience(store, input, options = {}) {
   //    否则库里永远没有负样本，Â 恒为 0，排序就退化成相似度排序。
   // 取代目标取**最近一条**可见匹配（数组顺序=写入顺序），而不是最早那条：
   // 否则刚复活的旧条会反复被新做法打回隐藏，记 A→C→A→D 可以无限抖动（2026-11-07 验收实测）。
+  //
+  // 逐行比较的是**意图**（intent-only）状态，不能直接复用 `row.state`：那份 state 是
+  // `abstractState(intent, action)`，混了做法，拿去和 intent-only 查比会改取代判定。
+  // 所以走 `abstractState(item.intent)` + kernel 的有界 LRU（纯函数、意图不可变，结果只读）。
   const replaceTarget = type === undefined ? undefined : (kind === 'step' && stepIndex === null ? undefined : [...active].reverse().find((item) => item.typeId === type.id
     && sameTask(item)
     && actionKeyOf(item.action) !== actionKeyOf(action)
@@ -924,6 +1531,16 @@ export function upsertExperience(store, input, options = {}) {
     outcome,
     note: cleanNote.text,
     origin: input.origin === 'auto' ? 'auto' : input.origin === 'external' ? 'external' : 'manual',
+    verdict: wantPending ? 'pending' : 'decided',
+    verdictAt: wantPending ? null : now,
+    decidedBy: wantPending ? null : 'model',
+    registeredAt: now,
+    ...(typeof input.sessionId === 'string' && input.sessionId.trim() !== '' ? { sessionId: input.sessionId.trim() } : {}),
+    ...(Number.isInteger(Number(input.turn)) ? { turn: Number(input.turn) } : {}),
+    ...(typeof input.cwd === 'string' && input.cwd.trim() !== '' ? { cwd: input.cwd.trim() } : {}),
+    ...(dimensions !== null ? { dimensions } : {}),
+    ...(artifacts !== null ? { artifacts } : {}),
+    ...(evidence !== null ? { evidence } : {}),
     typeId: type === undefined ? SYSTEM_TYPE.id : type.id,
     typeName: type === undefined ? SYSTEM_TYPE.name : type.name,
     deleted_at: null,
@@ -936,8 +1553,27 @@ export function upsertExperience(store, input, options = {}) {
     pushHistory(experience, { type: 'created', supersedes: replaceTarget.id })
   }
   store.experiences.push(experience)
+  // pending 上限（task-7 B4）：按**会话各自**最多挂 2 条，超了把该会话最旧的转 skipped。
+  // 以前是全局 2 条——第三个窗口记账会把第一个窗口的 pending 顶成 skipped（跨窗口互相踩）。
+  if (wantPending) {
+    const groups = new Map()
+    for (const item of store.experiences) {
+      if (!item || item.deleted_at || item.superseded_by || item.retired_at || item.verdict !== 'pending') continue
+      const key = typeof item.sessionId === 'string' ? item.sessionId : ''
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(item)
+    }
+    for (const waiting of groups.values()) {
+      waiting.sort((left, right) => String(left.registeredAt || left.ts || '').localeCompare(String(right.registeredAt || right.ts || '')))
+      for (const extra of waiting.slice(0, Math.max(0, waiting.length - 2))) {
+        extra.verdict = 'skipped'
+        extra.verdictAt = now
+        extra.decidedBy = 'auto-cap'
+      }
+    }
+  }
   const retiredIds = retireNegatives(experience.id)
-  refreshClusters(store)
+  if (options.skipClusters !== true) refreshClusters(store)
   return { experience, action: replaceTarget === undefined ? 'added' : 'superseded', supersededId: replaceTarget === undefined ? undefined : replaceTarget.id, retired: retiredIds, signMismatch, type: resolved, sanitized, typeRecoveredFromNote: recoveredType !== '' }
 }
 
@@ -1015,6 +1651,45 @@ export function normalizeContext(value) {
     if (tag !== '' && !tags.includes(tag)) tags.push(tag)
   }
   return tags.slice(0, 5)
+}
+
+/**
+ * 能力维度（0.13.0）：模型自由填的短标签，≤3 个、每个 ≤24 字符。
+ * 插件不校验语义、不做自动归类——只负责存和统计（判定归模型）。
+ */
+export function normalizeDimensions(value) {
+  const raw = Array.isArray(value) ? value : (value === undefined || value === null || value === '' ? [] : [value])
+  const tags = []
+  for (const item of raw) {
+    const text = String(item || '').replace(/\s+/g, ' ').trim()
+    if (text === '') continue
+    const tag = text.length > 24 ? `${text.slice(0, 23)}…` : text
+    if (!tags.includes(tag)) tags.push(tag)
+    if (tags.length >= 3) break
+  }
+  return tags.length === 0 ? null : tags
+}
+
+/** 产物路径（手改学习的锚点，0.14.0）：≤5 个、每个 ≤200 字符。 */
+export function normalizeArtifacts(value) {
+  const raw = Array.isArray(value) ? value : []
+  const out = []
+  for (const item of raw) {
+    const text = String(item === undefined || item === null ? '' : item).trim()
+    if (text === '' || out.includes(text)) continue
+    out.push(text.length > 200 ? `${text.slice(0, 199)}…` : text)
+    if (out.length >= 5) break
+  }
+  return out.length === 0 ? null : out
+}
+
+/** 判定证据：用户原话 + 来源（模型可不给）。 */
+export function normalizeEvidence(value) {
+  if (value === null || value === undefined || typeof value !== 'object') return null
+  const quote = String(value.quote === undefined || value.quote === null ? '' : value.quote).replace(/\s+/g, ' ').trim().slice(0, 120)
+  const source = String(value.source || '').trim().slice(0, 24)
+  if (quote === '' && source === '') return null
+  return { ...(quote === '' ? {} : { quote }), ...(source === '' ? {} : { source }) }
 }
 
 /** 稳定的小哈希，给没有 taskId 的步骤自动归组（同一意图的步骤视为同一任务）。 */
@@ -1199,6 +1874,116 @@ export function visibleExperiences(store, options = {}) {
   })
 }
 
+/** 待判定队列（只读，不改状态）：最近 limit 条 verdict=pending。 */
+export function pendingRows(store, limit = 2, options = {}) {
+  const max = Math.max(1, Math.min(5, Math.trunc(Number(limit) || 2)))
+  // 会话归属（0.13.0）：带 sessionId 时只返回本会话的待判定，别把别的会话的原始意图带出来。
+  const sessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : ''
+  // 认不出会话（strict）时宁可不显示：否则会把别的会话的 pending 泄漏出去。
+  if (options.strict === true && sessionId === '') return []
+  return (Array.isArray(store.experiences) ? store.experiences : [])
+    .filter((item) => item && !item.deleted_at && !item.superseded_by && !item.retired_at && item.verdict === 'pending')
+    .filter((item) => sessionId === '' || item.sessionId === sessionId)
+    .sort((left, right) => String(right.registeredAt || right.ts || '').localeCompare(String(left.registeredAt || left.ts || '')))
+    .slice(0, max)
+}
+
+/**
+ * 把待判定队列带进回执：提醒次数 +1；超过 pendingTtl 次仍未回填 → 转 skipped（止损）。
+ * 会修改 store，调用方负责 writeStore。
+ * @returns {{rows: object[], skipped: string[]}}
+ */
+export function pendingTasks(store, limit = 2, options = {}) {
+  const max = Math.max(1, Math.min(5, Math.trunc(Number(limit) || 2)))
+  const ttl = Math.max(1, Math.trunc(Number(options.pendingTtl) || 3))
+  const now = new Date().toISOString()
+  // 会话归属（0.13.0）：pendingRows 先按 sessionId 过滤再截断，所以上限是「每个会话各自 ≤2」；
+  // 会话未知时（autoBind=false 的脚本/运维路径）退化为全局队列，这是显式选择不绑会话的语义。
+  const rows = []
+  const skipped = []
+  for (const item of pendingRows(store, max + 1, { sessionId: options.sessionId, strict: options.strict })) {
+    const reminders = (Number(item.pendingReminders) || 0) + 1
+    if (reminders > ttl) {
+      item.verdict = 'skipped'
+      item.verdictAt = now
+      item.decidedBy = 'auto-ttl'
+      pushHistory(item, { type: 'verdict-skipped', at: now, reason: 'ttl' })
+      skipped.push(item.id)
+      continue
+    }
+    item.pendingReminders = reminders
+    rows.push(item)
+    if (rows.length >= max) break
+  }
+  return { rows, skipped }
+}
+
+/**
+ * 回填判定：模型给 `verdicts: [{id, outcome, dimensions?}]`，这里只负责写回。
+ * 判定逻辑不在这里——插件不判断「成没成」，那是模型的事。
+ * @returns {Array<{id: string, ok: boolean, error?: string, outcome?: string, G?: number, dimensions?: string[]}>}
+ */
+export function resolveVerdicts(store, list = [], options = {}) {
+  // 同一 id 在列表里出现多次只处理一次（后者会覆盖前者；一次回执里重复回填没意义）。
+  const seen = new Set()
+  const entries = []
+  for (const raw of Array.isArray(list) ? list : []) {
+    const key = String((raw && raw.id) || '').trim()
+    if (key !== '') {
+      if (seen.has(key)) continue
+      seen.add(key)
+    }
+    entries.push(raw)
+  }
+  const sessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : ''
+  // requireSession：工具路径认不出会话就一律拒绝回填（UI/运维仍可显式回填）。
+  if (options.requireSession === true && sessionId === '') {
+    return entries.map((raw) => ({ id: String((raw && raw.id) || '').trim(), ok: false, error: '无法确定会话，不能回填' }))
+  }
+  const now = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()
+  const results = []
+  for (const raw of entries) {
+    const id = String((raw && raw.id) || '').trim()
+    if (id === '') {
+      results.push({ id, ok: false, error: 'id 必填（取自回执 pending[].id）' })
+      continue
+    }
+    const row = (Array.isArray(store.experiences) ? store.experiences : []).find((item) => String(item.id) === id)
+    if (row === undefined) {
+      results.push({ id, ok: false, error: '没有这条经验' })
+      continue
+    }
+    if (row.deleted_at) {
+      results.push({ id, ok: false, error: '这条已删除' })
+      continue
+    }
+    if (sessionId !== '' && row.sessionId !== sessionId) {
+      results.push({ id, ok: false, error: '不属于当前会话，不能回填' })
+      continue
+    }
+    const outcome = String((raw && raw.outcome) || '').trim()
+    if (!Object.prototype.hasOwnProperty.call(OUTCOME_SCORES, outcome)) {
+      results.push({ id, ok: false, error: `outcome 只能是 ${Object.keys(OUTCOME_SCORES).join('/')}，收到：${outcome}` })
+      continue
+    }
+    const before = row.outcome
+    row.outcome = outcome
+    row.GOutcome = round4(scoreOf(outcome))
+    row.step_rewards = [row.GOutcome]
+    syncDerivedFeedback(row)
+    row.verdict = 'decided'
+    row.verdictAt = now
+    row.decidedBy = 'model'
+    const dims = normalizeDimensions(raw && raw.dimensions)
+    if (dims !== null) row.dimensions = dims
+    if (raw && raw.note !== undefined && String(raw.note).trim() !== '') row.note = String(raw.note).trim().slice(0, 300)
+    pushHistory(row, { type: 'verdict', at: now, outcome, from: before })
+    results.push({ id, ok: true, outcome, G: row.G, dimensions: row.dimensions || [] })
+  }
+  if (results.some((item) => item.ok)) refreshClusters(store)
+  return results
+}
+
 /**
  * 按意图召回并排序。
  *
@@ -1210,7 +1995,8 @@ export function visibleExperiences(store, options = {}) {
  * 不这么降级的话，模型会看到一排 `rank_score: 0` 却以为那是排序结果。
  */
 export function rankExperiences(store, intent, limit = 8, options = {}) {
-  const experiences = visibleExperiences(store, options)
+  // 待判定超时转为 skipped 的条不再参与召回：它们从未被判过，拿它们当候选会误导。
+  const experiences = visibleExperiences(store, options).filter((item) => item.verdict !== 'skipped')
   const routingMode = ['off', 'shadow', 'on'].includes(String(options.routing || '').toLowerCase())
     ? String(options.routing).toLowerCase()
     : 'off'
@@ -1223,21 +2009,25 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     : (manualCluster !== null
       ? { clusterId: manualCluster.id, name: manualCluster.name, score: 1, fallback: false, candidates: [] }
       : routeCluster(store, intent))
+  // weak 先声明：空库提前返回时 attach 也会读它（空库视为不弱）。
+  let weak = false
   const attach = (payload) => {
     if (route === null) return payload
     payload.route = route
-    payload.brief = buildBrief(store, route, payload.candidates || [])
+    if (!weak) payload.brief = buildBrief(store, route, payload.candidates || [])
     return payload
   }
   if (experiences.length === 0) {
-    return attach({ intent, V: 0, neighbor_count: 0, mode: 'evidence', degenerate: true, note: '经验库没有可见条目。', candidates: [] })
+    // 空库同样算「没有足够相关」：调用方（界面/模型）靠 weak 判断要不要硬推候选。
+    return attach({ intent, V: 0, neighbor_count: 0, mode: 'evidence', degenerate: true, note: '经验库没有可见条目。', candidates: [], weak: true, topSimilarity: 0 })
   }
   const queryContext = normalizeContext(options.context)
   const k = Math.max(1, Math.trunc(Number(limit) || 8))
   // on 模式：主簇 + 次簇（分 ≥0.7×主簇）优先；合起来不足 3 条仍用全库，避免小簇丢召回。
   let pool = experiences
   if (routingMode === 'on' && route !== null && !route.fallback) {
-    const primary = experiences.filter((item) => item.typeId === route.clusterId)
+    // 未分类的条也要进簇内池：它们没被归簇，但同样是知识；只在簇内捞会永远看不见（行为模拟实测）。
+    const primary = experiences.filter((item) => item.typeId === route.clusterId || item.typeId === SYSTEM_TYPE.id)
     const secondary = (route.candidates || [])[1]
     const secondaryRows = secondary !== undefined && secondary.clusterId !== route.clusterId && secondary.score >= route.score * 0.7
       ? experiences.filter((item) => item.typeId === secondary.clusterId)
@@ -1247,10 +2037,12 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   }
   const narrowed = routingMode === 'on' && route !== null && !route.fallback && pool !== experiences
   // 簇内召回不必再吐 8 条：主簇 3 + 次簇 1 是方案定下的配额（论文一个任务只用一个簇，我们放宽到主+次）。
-  const effectiveK = narrowed ? Math.min(k, 4) : k
+  // 簇内配额 4 只约束「默认条数」；调用方显式给 limit 时按显式值（≤8），否则 limit 形同虚设。
+  const effectiveK = narrowed && options.explicitLimit !== true ? Math.min(k, 4) : k
   // 排序用至少 8 个邻居算 Â：只回 1 条时若也只取 1 个邻居，Â 会退化成 evidence 排序，
   // 导致「limit 越小、排名越变」（2026-11-07 行为模拟测出来），所以计算量固定、输出再截。
-  const computeK = Math.max(effectiveK, 8)
+  // 上限 16：同一条查询在 limit=8 与 limit=40 下必须得到同一套排名（行为复核发现曾漂移）。
+  const computeK = Math.min(16, Math.max(effectiveK, 8))
   const neighbors = retrieveV2(pool, intent, { k: computeK, minSimilarity: options.minSimilarity })
   const result = estimateAdvantages(pool, intent, { k: computeK, neighbors })
   const byId = new Map(pool.map((item) => [item.id, item]))
@@ -1264,6 +2056,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       rank_score: candidate.rank_score,
       support: candidate.support,
       mean_similarity: candidate.mean_similarity,
+      freshness: row === null ? 1 : freshnessOfRow(row),
       typeName: row ? row.typeName : '未分类',
       evidence: candidate.evidence.map((evidence) => {
         const experience = byId.get(evidence.id)
@@ -1289,6 +2082,11 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
         }
         // 编码特异性：情境线索（有才带），并按查询情境算命中比例。
         const rowContext = experience ? normalizeContext(experience.context) : []
+        // 能力维度：模型写的短标签，召回时带出去（否则维度只写不读，等于白记）。
+        const rowDimensions = experience && Array.isArray(experience.dimensions) && experience.dimensions.length > 0
+          ? experience.dimensions
+          : null
+        if (rowDimensions !== null) entry.dimensions = rowDimensions
         if (rowContext.length > 0) entry.context = rowContext
         if (queryContext.length > 0) {
           const hit = rowContext.filter((tag) => queryContext.includes(tag)).length
@@ -1355,13 +2153,50 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     ))
   }
 
+  // 相关性与优势混排（0.13.0，行为模拟发现）：只按 Â 排会被成熟条占满，新记的条永远排不上来；
+  // 改为 `0.6×相似度 + 0.4×rank_score`，让「像不像当前任务」成为主序，Â 做次序。必须排在截断之前。
+  // 给了情境线索时不混排：情境优先是另一条独立的排序（见上），混排会把它的优先权盖掉。
+  if (options.rankBlend !== false && !degenerate && queryContext.length === 0) {
+    const blend = (item) => (0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0))
+      * (0.5 + 0.5 * (Number.isFinite(Number(item.freshness)) ? Number(item.freshness) : 1))
+    candidates.sort((left, right) => (
+      blend(right) - blend(left)
+      || right.support - left.support
+      || right.mean_similarity - left.mean_similarity
+      || (left.action < right.action ? -1 : left.action > right.action ? 1 : 0)
+    ))
+  }
+
+  // mode / spread 必须按全部候选算完再截输出，否则 limit=1 时 verified<2 会被误判成 evidence。
+  const truncated = candidates.slice(0, effectiveK)
+  // 失败步骤必须留一席：若输出里全是正回报，模型就永远看不到「上次错在哪」（2026-11-07 多步验收实测）。
+  // 补位取「最相似的负样本」；limit=1 时不动：调用方明确只要一条，不能为了留负样本把 top1 换掉。
+  if (truncated.length >= 2 && !truncated.some((item) => item.evidence.some((evidence) => (Number(evidence.G) || 0) < 0))) {
+    const negativeCandidate = [...candidates]
+      .filter((item) => item.evidence.some((evidence) => (Number(evidence.G) || 0) < 0))
+      .sort((left, right) => (Number(right.mean_similarity) || 0) - (Number(left.mean_similarity) || 0))[0]
+    if (negativeCandidate !== undefined) truncated[truncated.length - 1] = negativeCandidate
+  }
+
+  // 相关性下限（0.13.0）：用**实际展示的条**算（复核发现：用全量会把没展示的高分条算进来，weak 漏报）。
+  // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
+  // 一条候选都没有时同样算「没有足够相关」（终验发现：空候选时 weak 是 undefined，调用方没法判）。
+  const shownSimilarity = truncated.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
+  const topSimilarity = shownSimilarity
+  weak = truncated.length === 0 || shownSimilarity < 0.4
   let note
   if (neighbors.length === 0) {
     note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
+  } else if (weak) {
+    note = `没有足够相关的历史经验（最高相似度 ${round4(shownSimilarity)}）；先按常规做，做完记一条，别硬套下面的候选。`
   } else if (degenerate) {
     note = `无成败对照（advantage 极差 ${spread}），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。`
   } else {
-    note = `按 JitRL 优势排序（Â=Q̂−V̂，乘置信度；advantage 极差 ${spread}）。`
+    note = `按「相似度×0.6 + Â×0.4」排序（Â=Q̂−V̂，乘置信度；advantage 极差 ${spread}）。`
+  }
+  // 0.40–0.50 是「沾边但换主题」的地带：不判 weak（候选仍可用），但必须明说相关度一般，别照抄。
+  if (!weak && shownSimilarity >= 0.4 && shownSimilarity < 0.5) {
+    note += `（相关度一般 ${round4(shownSimilarity)}，参考而非照抄。）`
   }
   // 全族都是负回报时，排序仍会给出一个「最不坏」的——必须明说别照做，否则模型会把失败做法当推荐。
   const allNegative = candidates.length > 0 && candidates.every((item) => item.evidence.every((evidence) => (Number(evidence.G) || 0) < 0))
@@ -1369,15 +2204,38 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     ? '候选全是负回报：没有可推荐的做法，别照着做；建议换个做法并在做完后记录结果。'
     : null
 
-  // mode / spread 必须按全部候选算完再截输出，否则 limit=1 时 verified<2 会被误判成 evidence。
-  const truncated = candidates.slice(0, effectiveK)
-  // 失败步骤必须留一席：簇内配额 4 条时，若所有候选都是正回报，
-  // 那条负候选会被截掉，模型就永远看不到「上次错在哪」（2026-11-07 多步验收实测）。
-  // limit=1 时不动：调用方明确只要一条，不能为了留负样本把 top1 换掉。
-  if (truncated.length >= 2 && !truncated.some((item) => item.evidence.some((evidence) => (Number(evidence.G) || 0) < 0))) {
-    const negativeCandidate = candidates.find((item) => item.evidence.some((evidence) => (Number(evidence.G) || 0) < 0))
-    if (negativeCandidate !== undefined) truncated[truncated.length - 1] = negativeCandidate
-  }
+  // 最近做过的事（0.13.0，行为模拟发现）：用户说「刚才那条/这个装饰」时，候选里常被成熟条挤满；
+  // 单列一段「最近相关」（按时间倒序、相似度 ≥0.25），保证当轮那条一定看得见，不挤占候选名额。
+  // recentRows（P3 下推）：partial store 里只有命中类型的行，别的类型的「最近」要靠调用方传原始行；
+  // 相似度与排序仍在这里算（单一真相），tools 不要自己排一遍。
+  const recentSource = Array.isArray(options.recentRows)
+    ? options.recentRows.filter((row) => row && !row.deleted_at && !row.superseded_by && !row.retired_at)
+    : experiences
+  const recent = options.recent === true ? (() => {
+    const query = stateOf(intent)
+    // 「最近做过的」不设相似度门槛：真实对话里相邻轮意图相似度常低到 0.0–0.2，
+    // 设门槛会让刚记的条下一轮消失（真实使用模拟 6/7 已判定轮不可见）。相似度照给，由模型判断。
+    const sessionId = options.sessionId === undefined ? '' : String(options.sessionId || '')
+    // 默认 fail-closed（审计 E2）：认不出会话就不带 recent，避免跨会话泄漏别会话的 intent/action。
+    // 只有显式 recentAllSessions=true 才给全量（UI/运维/headless 不绑会话模式，由调用方自己承担）。
+    if (sessionId === '' && options.recentAllSessions !== true) return []
+    return [...recentSource]
+      .map((row) => ({ row, similarity: similarityV2(query, stateOf(row.intent, row.action)) }))
+      .filter((item) => item.row.verdict !== 'skipped' && (sessionId === '' || item.row.sessionId === sessionId))
+      .sort((left, right) => String(right.row.lastSeenAt || right.row.ts || '').localeCompare(String(left.row.lastSeenAt || left.row.ts || '')))
+      .slice(0, 2)
+      .map((item) => ({
+        id: item.row.id,
+        // 按码点截断：UTF-16 slice 会把 emoji 劈成孤立代理项，回执 JSON 直接出坏字符。
+        intent: cutCodePoint(String(item.row.intent || ''), 60),
+        action: cutCodePoint(String(item.row.action || ''), 80),
+        outcome: item.row.outcome,
+        G: item.row.G,
+        similarity: round4(item.similarity),
+        ...(Array.isArray(item.row.dimensions) && item.row.dimensions.length > 0 ? { dimensions: item.row.dimensions } : {}),
+        ...(item.row.verdict === 'pending' ? { pending: true } : {}),
+      }))
+  })() : null
 
   const payload = attach({
     intent,
@@ -1389,12 +2247,17 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     note,
     warning,
     candidates: truncated,
+    ...(recent !== null ? { recent } : {}),
+    ...(weak ? { weak: true, topSimilarity: round4(topSimilarity) } : {}),
   })
   // 巩固：同族够多且有正负对照时给一条「候选规则」（不写库、零 LLM）。
-  if (options.consolidation !== false) {
-    const consolidated = buildConsolidation(truncated, { minSamples: options.consolidationMinSamples })
+  // 用**全部**候选算，不用截断后的输出——默认 limit=2 时也要能给出候选规则。
+  if (options.consolidation !== false && !weak) {
+    const consolidated = buildConsolidation(candidates, { minSamples: options.consolidationMinSamples })
     if (consolidated !== null) payload.consolidated = consolidated
   }
+  // 归纳原料（tools 层用）：完整候选表，不参与序列化（detail 模式也不带）。
+  Object.defineProperty(payload, 'allCandidates', { value: candidates, enumerable: false, configurable: true })
   return payload
 }
 
@@ -1452,7 +2315,13 @@ export function statsOf(store, dataDir) {
   const topEntities = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([entity, count]) => ({ entity, count }))
   let size = 0
   try {
-    size = fs.statSync(storeFile(dataDir)).size
+    // 分片布局：manifest + 全部分片 + 冷档；未迁移的老库还要算上 exp-lib.json。
+    size = storageBytes(dataDir)
+    try {
+      size += fs.statSync(storeFile(dataDir)).size
+    } catch {
+      // 已迁移：没有旧单文件
+    }
   } catch {
     size = 0
   }
@@ -1603,14 +2472,68 @@ export function assignType(store, id, nameOrId) {
   return { id: experience.id, from, to: type.name, typeId: type.id, changed: from !== type.name }
 }
 
-/** 每轮提示段的文本：类型目录 + 用法提示（有界，读当前配置的数据文件）。 */
+/**
+ * 每轮提示段（0.13.0）：默认瘦身档——常态一行，有 pending 加一行，技能只列前几个；
+ * 固定开销从 1,359 字符降到 ~120。`hintMode:'full'` 回到旧版全量目录。
+ */
 export function renderHint(config = {}, maxCharacters = 900) {
+  if (config && config.hintMode === 'full') return renderHintFull(config, maxCharacters)
+  return renderHintSlim(config, maxCharacters)
+}
+
+/** 瘦身档：只留「怎么用 + 有几条 + 待判定 + 前几个技能」。 */
+export function renderHintSlim(config = {}, maxCharacters = 1400) {
+  const cap = Math.max(80, Math.trunc(Number(maxCharacters) || 1400))
   let store
   try {
-    // @legacy-provider 这里仍走旧解析（会读 .mnemon 里的 services["exp-lib"].dataDir）。
-    // 工具面已经是 resolveEngramDataDir()：在控制台改「存储位置」后，工具跟着变、
-    // 提示段的条数统计不会跟着变。切换前先确认不再需要老库自动迁移。
-    store = readStore(resolveToolDataDir(config))
+    store = readStoreForHint(resolveEngramDataDir(config))
+  } catch {
+    store = { types: [{ ...SYSTEM_TYPE }], experiences: [] }
+  }
+  const active = visibleExperiences(store).length
+  const lines = [
+    `经验库：先 exp_recall（intent 写「对象+任务」，别只写「再来一页」）；做完 exp_record（outcome 可省→pending，回执里用 verdicts 回填；被否定先 exp_feedback hurt）。共 ${active} 条。`,
+  ]
+  const pending = pendingRows(store, 2)
+  if (pending.length > 0) {
+    const briefs = pending.map((item) => `${item.id}｜${pendingBrief(item)}`).join('；')
+    lines.push(`待判定 ${pending.length} 条：${briefs}`)
+  }
+  // 瘦身档的软上限：默认 118 字符（无 pending 时留出余量给技能名）；有 pending 时优先保证 pending 行。
+  const softCap = Math.max(80, Math.min(cap, Math.trunc(Number(config.hintSlimChars) || 360)))
+  if (!(config && config.hintSkills === false)) {
+    let skills = []
+    try {
+      skills = listSkillsCached(resolveEngramDataDir(config), { onlyLocal: true })
+      skills = [...skills].sort((left, right) => (Number((right.meta || {}).order) || 0) - (Number((left.meta || {}).order) || 0))
+    } catch {
+      skills = []
+    }
+    if (skills.length > 0) {
+      const names = []
+      for (const skill of skills.slice(0, 6)) {
+        const next = names.concat(skill.slug)
+        const line = `技能：${next.join('、')}（共 ${skills.length}）`
+        if (lines.join('\n').length + 1 + line.length > softCap) break
+        names.push(skill.slug)
+      }
+      if (names.length > 0) lines.push(`技能：${names.join('、')}（共 ${skills.length}）`)
+      else {
+        const countLine = `技能 ${skills.length} 个（命中即给正文）`
+        if (lines.join('\n').length + 1 + countLine.length <= softCap) lines.push(countLine)
+      }
+    }
+  }
+  const text = lines.join('\n')
+  return text.length > cap ? text.slice(0, Math.max(0, cap - 1)) : text
+}
+
+/** 旧版完整提示段（hintMode:'full'）：类型目录 + 全量技能目录。 */
+export function renderHintFull(config = {}, maxCharacters = 900) {
+  let store
+  try {
+    // 0.13.0 起提示段与工具面同源（resolveEngramDataDir）：控制台改「存储位置」两边一起变。
+    store = readStoreForHint(resolveEngramDataDir(config))
   } catch {
     store = { types: [{ ...SYSTEM_TYPE }], experiences: [] }
   }
@@ -1632,7 +2555,7 @@ export function renderHint(config = {}, maxCharacters = 900) {
   // 列出来之后它可以按当前任务自己判断要不要 exp_recall（技能按意图匹配，不依赖 DSH 的 available_skills）。
   let skills = []
   try {
-    skills = listSkills(resolveToolDataDir(config), { onlyLocal: true })
+    skills = listSkillsCached(resolveEngramDataDir(config), { onlyLocal: true })
     // 高排序（新导入 90）优先列出：刚加进来的技能先被看见。
     skills = [...skills].sort((left, right) => (Number((right.meta || {}).order) || 0) - (Number((left.meta || {}).order) || 0))
   } catch {

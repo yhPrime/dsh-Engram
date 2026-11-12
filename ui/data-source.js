@@ -8,7 +8,13 @@
  *
  * 排序说明：`recallOf` 是**简化实现**（分词 + Jaccard + 简单优势），
  * 只保证界面能拿到候选/证据/分数并稳定排序；真实 JitRL 排序等正式引擎接入后替换。
+ *
+ * 统计说明：`/state` 的 totals/stats **只有一个口径**——kernel 的 `statsEntries`。
+ * 热路径（manifest.stats）与回退路径（对全量 store 现算）都经 `statsOfEntries` 映射成界面形状，
+ * 不因「走轻路径 / 走全量」换算法（否则 topEntities 会漂）。
  */
+
+import { statsEntries } from '../kernel/shard-store.js'
 
 /** 反馈 EMA 系数，与真实经验库一致。 */
 export const FEEDBACK_ETA = 0.35
@@ -109,7 +115,7 @@ export function rowOf(experience) {
 /** 可见经验：未删、未被取代、未退休。 */
 export function visibleOf(store) {
   const rows = Array.isArray(store && store.experiences) ? store.experiences : []
-  return rows.filter((item) => !item.deleted_at && !item.superseded_by && !item.retired_at)
+  return rows.filter((item) => item && typeof item === 'object' && !item.deleted_at && !item.superseded_by && !item.retired_at)
 }
 
 /** 排序（列表页）。 */
@@ -270,7 +276,7 @@ export function recallOf(store, query, limit) {
 /** 单条详情：找得到就返回 `{ row, history, feedbackLog }`，否则 null。 */
 export function detailOf(store, id) {
   const rows = Array.isArray(store && store.experiences) ? store.experiences : []
-  const experience = rows.find((item) => String(item.id) === String(id))
+  const experience = rows.find((item) => item && typeof item === 'object' && String(item.id) === String(id))
   if (experience === undefined) return null
   return {
     row: rowOf(experience),
@@ -299,33 +305,85 @@ export function typesOf(store) {
     .sort((a, b) => Number(a.system) - Number(b.system) || b.count - a.count || a.name.localeCompare(b.name, 'zh'))
 }
 
-/** 统计（面板顶部四格 + 类型分布）。 */
-export function statsOf(store) {
-  const all = Array.isArray(store && store.experiences) ? store.experiences : []
-  const visible = visibleOf(store)
+/** 类型 id → 展示名。 */
+function typeNameMap(types) {
+  const map = new Map()
+  for (const type of Array.isArray(types) ? types : []) {
+    if (type && typeof type === 'object' && typeof type.id === 'string') map.set(String(type.id), String(type.name || '未分类'))
+  }
+  return map
+}
+
+/**
+ * 把 kernel `statsEntries` 的结果映射成界面的 stats 形状。
+ * `/state` 只有这一个统计口径：热路径（manifest.stats）与回退路径（statsEntries(store)）都走这里。
+ */
+export function statsOfEntries(entries, options = {}) {
+  const source = entries !== null && typeof entries === 'object' ? entries : {}
+  const nameOf = options.nameOf instanceof Map ? options.nameOf : new Map()
+  const byType = source.byType !== null && typeof source.byType === 'object' ? source.byType : {}
   const byCategory = {}
-  for (const item of visible) {
-    const key = String(item.typeName || '未分类')
-    byCategory[key] = (byCategory[key] || 0) + 1
+  for (const [typeId, value] of Object.entries(byType)) {
+    const count = Number(value && typeof value === 'object' ? value.visible : value) || 0
+    if (count <= 0) continue
+    const name = nameOf.get(String(typeId)) || String((value && typeof value === 'object' && value.name) || typeId)
+    byCategory[name] = (byCategory[name] || 0) + count
   }
-  const tokens = new Map()
-  for (const item of visible) for (const token of new Set(tokenize(item.intent))) tokens.set(token, (tokens.get(token) || 0) + 1)
+  const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
   return {
-    totalInsights: visible.length,
-    deletedInsights: all.filter((item) => item.deleted_at).length,
-    supersededInsights: all.filter((item) => item.superseded_by).length,
-    retiredInsights: all.filter((item) => item.retired_at).length,
-    edgeCount: all.filter((item) => item.superseded_by).length,
-    dbSizeBytes: 0,
+    totalInsights: number(source.visible !== undefined ? source.visible : source.totalInsights),
+    deletedInsights: number(source.deleted !== undefined ? source.deleted : source.deletedInsights),
+    supersededInsights: number(source.superseded !== undefined ? source.superseded : source.supersededInsights),
+    retiredInsights: number(source.retired !== undefined ? source.retired : source.retiredInsights),
+    // 历史界面口径：edgeCount = 被取代条数（statsEntries.superseded）。
+    edgeCount: number(source.superseded !== undefined ? source.superseded : source.edgeCount),
+    oplogCount: 0,
+    dbSizeBytes: number(options.sizeBytes),
     byCategory,
-    topEntities: [...tokens.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([entity, count]) => ({ entity, count })),
+    topEntities: Array.isArray(source.topEntities) ? source.topEntities : [],
   }
+}
+
+/** 统计（面板顶部四格 + 类型分布）：统一从 kernel statsEntries 出，不再自己分词。 */
+export function statsOf(store) {
+  return statsOfEntries(statsEntries(store), { nameOf: typeNameMap(store && store.types) })
+}
+
+/** 从 manifest 的类型目录 + 簇统计得出界面类型行（轻量，不读经验）。 */
+export function typesOfManifest(manifest) {
+  const types = Array.isArray(manifest && manifest.types) ? manifest.types : []
+  const counts = new Map()
+  for (const cluster of Array.isArray(manifest && manifest.clusters) ? manifest.clusters : []) {
+    const id = String((cluster && (cluster.typeId || cluster.id)) || '')
+    if (id === '') continue
+    const count = Number(cluster && cluster.stats && cluster.stats.count) || 0
+    counts.set(id, (counts.get(id) || 0) + count)
+  }
+  return types
+    .filter((type) => type && typeof type === 'object')
+    .map((type) => ({
+      id: String(type.id || ''),
+      name: String(type.name || '未分类'),
+      description: String(type.description || ''),
+      system: type.system === true,
+      count: counts.get(String(type.id || '')) || 0,
+    }))
+    .sort((a, b) => Number(a.system) - Number(b.system) || b.count - a.count || a.name.localeCompare(b.name, 'zh'))
+}
+
+/**
+ * 从 manifest.stats（G6：写入时就是 statsEntries 的结果）得出面板统计。
+ * 与 statsOf 共用 statsOfEntries——热/全量路径只换「怎么拿到 entries」，不换算法。
+ */
+export function statsOfManifest(manifest, sizeBytes = 0) {
+  const entries = manifest && manifest.stats !== null && typeof manifest.stats === 'object' ? manifest.stats : {}
+  return statsOfEntries(entries, { nameOf: typeNameMap(manifest && manifest.types), sizeBytes })
 }
 
 /** 用后反馈：改 G（EMA 重放）+ 计数 + 历史；找不到 / 不可反馈时抛带 code 的错误。 */
 export function applyFeedbackTo(store, id, result, now = new Date()) {
   const rows = Array.isArray(store && store.experiences) ? store.experiences : []
-  const experience = rows.find((item) => String(item.id) === String(id))
+  const experience = rows.find((item) => item && typeof item === 'object' && String(item.id) === String(id))
   if (experience === undefined) throw codedError('not-found', `没有这条经验：${String(id)}`)
   if (experience.deleted_at) throw codedError('not-feedbackable', '这条经验已删除，不能再反馈')
   if (experience.superseded_by) throw codedError('not-feedbackable', '这条经验已被取代，请给新条反馈')

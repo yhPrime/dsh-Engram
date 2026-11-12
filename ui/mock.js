@@ -544,17 +544,61 @@ export function createMockSource() {
     },
     usageRows(limit) {
       const size = Math.max(1, Math.min(500, Math.trunc(Number(limit) || 100)))
-      return usage.slice(-size)
+      return usage.slice(-size).map((row) => ({ ...row, chars: Number(row.chars) || (row.tool === 'exp_recall' ? 1800 : 260) }))
     },
     skills() {
       return skills
     },
+    pending(limit = 5) {
+      return [
+        { id: 'ex_mock_p1', intent: '给研学课 PPT 插一页过渡页', action: '新建一页：居中大标题 + 副标题', verdict: 'pending', registeredAt: new Date().toISOString(), brief: '上一轮：给研学课 PPT 插一页过渡页' },
+        { id: 'ex_mock_p2', intent: '把课件导出成 PDF', action: 'LibreOffice 无头转换', verdict: 'pending', registeredAt: new Date().toISOString(), brief: '上一轮：导出 PDF' },
+      ].slice(0, limit)
+    },
+
+    verdicts(list) {
+      // 逐条校验，和 live 同口径：未知 id / 非法 outcome 都 ok:false，不能一律 ok:true。
+      const allowed = ['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted']
+      return (Array.isArray(list) ? list : []).map((item) => {
+        const id = String((item && item.id) || '').trim()
+        const outcome = String((item && item.outcome) || '').trim().toLowerCase()
+        if (id === '') return { id, ok: false, error: 'id 必填' }
+        if (!store.experiences.some((row) => row.id === id)) return { id, ok: false, error: '没有这条经验' }
+        if (!allowed.includes(outcome)) return { id, ok: false, error: `outcome 不合法：${outcome || '(空)'}` }
+        return { id, ok: true, outcome }
+      })
+    },
+
+    usageSummary() {
+      const rows = this.usageRows(200)
+      const byTool = {}
+      let chars = 0
+      let withChars = 0
+      for (const row of rows) {
+        const tool = String(row.tool || 'unknown')
+        byTool[tool] = (byTool[tool] || 0) + 1
+        const size = Number(row.chars)
+        if (Number.isFinite(size) && size > 0) {
+          chars += size
+          withChars += 1
+        }
+      }
+      return { calls: rows.length, chars, withChars, avgChars: withChars > 0 ? Math.round(chars / withChars) : 0, byTool }
+    },
+
     feedback(id, result) {
       return applyFeedbackTo(store, id, result)
     },
 
     record(input = {}) {
-      const outcome = String(input.outcome || 'success')
+      // 示例数据也走真实校验：演示里「随便输点什么都能成功」会把界面契约带偏。
+      if (String(input.intent || '').trim() === '' || String(input.action || '').trim() === '') {
+        throw new Error('intent 与 action 必填')
+      }
+      const outcome = String(input.outcome || 'success').trim().toLowerCase()
+      if (!['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'].includes(outcome)) {
+        throw new Error(`outcome 只能是 accepted / success / partial / unknown / failed / corrected / aborted，收到：${input.outcome}`)
+      }
       const at = new Date().toISOString()
       const id = `ex_mock_${Date.now().toString(36)}`
       const G = scoreOf(outcome)
