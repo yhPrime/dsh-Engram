@@ -3010,11 +3010,11 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
-      const saveRoot = async (value) => {
+      const saveRoot = async (value, note) => {
         setBusy(true); setNotice('')
         try {
           await request('/settings', { method: 'POST', body: { currentRoot: value } })
-          setNotice(value === '' ? '已恢复默认目录' : '已切换存储位置')
+          setNotice(value === '' ? '已恢复默认目录' : `已切换存储位置${note ? `（${note}）` : ''}`)
           await Promise.all([settings.reload(), validation.reload()])
           if (props.onChanged) props.onChanged()
         } catch (caught) {
@@ -3022,6 +3022,26 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy(false)
         }
+      }
+      // 「选择文件夹」：弹宿主自己的系统选目录窗口（跟选工作区同一个），选完直接用。
+      // 宿主没有窗口能力（远程浏览器等）时退回手填路径，不假装点过窗口。
+      const pickRoot = async () => {
+        setNotice(''); setBusy(true)
+        let picked = null
+        try {
+          picked = await request('/pick-directory', { method: 'POST' })
+        } catch (caught) {
+          setNotice(caught.message || String(caught))
+          setBusy(false)
+          return
+        }
+        setBusy(false)
+        if (!picked || picked.canceled === true || String(picked.path || '').trim() === '') {
+          setNotice('没选目录，位置没变')
+          return
+        }
+        setRootInput(picked.path)
+        await saveRoot(picked.path, picked.note)
       }
       const draftSetter = (setter) => (key, value) => setter((previous) => ({ ...previous, [key]: value }))
       const renderFields = (fields, draft, setDraft) => (fields || []).map((field) => {
@@ -3060,10 +3080,24 @@ window.__ModuleLoader__.load({
         section === 'storage' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '存储位置'),
-          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '经验库根目录（包含 exp-lib.json 的 .exp 目录）；留空点「恢复默认」。'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '经验库根目录（含 exp-lib.json / manifest.json 的那个目录）。点「选择文件夹…」在系统窗口里挑；也可以直接粘贴路径后回车。'),
           h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
-            h('input', { className: 'eng-input', style: { flex: '1 1 320px' }, value: rootInput, onChange: (event) => setRootInput(event.target.value), placeholder: '例如：C:/Users/yh/WorkDeepSeek/.exp' }),
-            h(Button, { kind: 'primary', disabled: busy || rootInput.trim() === '', onClick: () => saveRoot(rootInput.trim()) }, '切换'),
+            h('input', {
+              className: 'eng-input',
+              style: { flex: '1 1 320px' },
+              value: rootInput,
+              onChange: (event) => setRootInput(event.target.value),
+              onKeyDown: (event) => {
+                if (event.key !== 'Enter' || busy) return
+                event.preventDefault()
+                if (rootInput.trim() !== '') saveRoot(rootInput.trim())
+              },
+              placeholder: '例如：C:/Users/yh/WorkDeepSeek/.exp',
+            }),
+            h(Button, { kind: 'primary', disabled: busy, onClick: pickRoot }, '选择文件夹…'),
+            rootInput.trim() !== '' && rootInput.trim() !== String(data.currentRoot || '')
+              ? h(Button, { disabled: busy, onClick: () => saveRoot(rootInput.trim()) }, '用这个路径')
+              : null,
             h(Button, { disabled: busy, onClick: () => saveRoot('') }, '恢复默认')),
           notice ? h(Banner, null, notice) : null,
           h('dl', { className: 'eng-kv' },

@@ -49,6 +49,8 @@ function mountConsole(webCtx, config) {
         return undefined
       }
     }
+    // 目录选择服务晚于本插件挂上也照样能用（inject 就绪后回填）。
+    let latePicker = null
     const api = createApi(config, {
       getLlm: () => safeGet('llm'),
       getRoute: () => {
@@ -60,7 +62,18 @@ function mountConsole(webCtx, config) {
           return null
         }
       },
+      // 设置页「选择文件夹」用的系统选目录窗口。同样是「拿不到也不能拖垮插件」：
+      // 桌面版由 web-app bundle 提供 native 能力，CLI/TUI 宿主没有，界面会退回手填路径。
+      // 服务可能比本插件晚挂上，所以先 try 一次 ctx.get，再等 inject 回调补上。
+      getDirectoryPicker: () => safeGet('directoryPicker') || latePicker,
     })
+    try {
+      if (typeof webCtx.inject === 'function') {
+        webCtx.inject(['directoryPicker'], (pickerCtx) => { latePicker = pickerCtx.directoryPicker })
+      }
+    } catch {
+      // 没有这个服务就是没有。
+    }
     webCtx.effect(() => webCtx.webServer.register({
       kind: 'prefix',
       path: API_PREFIX,

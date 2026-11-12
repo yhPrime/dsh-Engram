@@ -437,6 +437,8 @@ check('设置页：二级菜单分屏，默认只露出「存储位置」一档'
     assert.ok(serialized.includes(label), `缺少二级菜单：${label}`)
   }
   assert.ok(serialized.includes('恢复默认'), '存储位置的操作没渲染')
+  assert.ok(serialized.includes('选择文件夹'), '存储位置该有「选择文件夹…」，走系统窗口')
+  assert.equal(serialized.includes('切换'), false, '「切换」该换成「选择文件夹…」')
   assert.equal(serialized.includes('每轮提示段'), false, '内核参数不该在存储页露出')
   assert.equal(serialized.includes('关系图主题'), false, '界面参数不该在存储页露出')
   assert.equal(serialized.includes('用 GitHub 登录'), false, '备份/登录不该在存储页露出')

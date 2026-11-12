@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { API_PREFIX, handleRequest, pluginVersion } from '../shell.js'
+import { API_PREFIX, handleRequest, pluginVersion, resolvePickedDirectory } from '../shell.js'
 import { createMockSource } from '../mock.js'
 import { createLiveSource } from '../live.js'
 import { createSkill } from '../../kernel/skills.js'
@@ -61,7 +61,7 @@ function fakeReq(url, method = 'GET', body) {
 
 async function call(source, route, options = {}) {
   const res = fakeRes()
-  await handleRequest(fakeReq(`${API_PREFIX}${route}`, options.method || 'GET', options.body), res, source)
+  await handleRequest(fakeReq(`${API_PREFIX}${route}`, options.method || 'GET', options.body), res, source, options.deps)
   let payload = null
   try {
     payload = JSON.parse(res.body)
@@ -69,6 +69,23 @@ async function call(source, route, options = {}) {
     payload = null
   }
   return { status: res.statusCode, headers: res.headers, payload }
+}
+
+/** 假的宿主目录选择服务：native 能力 + 指定返回值。 */
+function fakePicker(picked, kind = 'native') {
+  const service = {
+    lastSignal: null,
+    capability: () => (kind === 'native'
+      ? {
+        kind: 'native',
+        pick: async (signal) => {
+          service.lastSignal = signal
+          return typeof picked === 'function' ? picked() : picked
+        },
+      }
+      : { kind, list: async () => ({ crumbs: [], entries: [] }), createDirectory: async () => '' }),
+  }
+  return service
 }
 
 function tempDir() {
@@ -733,6 +750,75 @@ await check('POST /skill-forget：删掉技能目录；缺 slug 400', async () =
   assert.equal(fs.existsSync(path.join(dir, 'skills', 'forget-me')), false, '技能目录还在')
   assert.equal((await call(source, '/skills')).payload.data.skills.length, 0)
   assert.equal((await call(source, '/skill-forget', { method: 'POST', body: {} })).payload.error.code, 'slug-required')
+})
+
+await check('POST /pick-directory：弹宿主系统窗口，返回选的目录', async () => {
+  const lib = tempDir()
+  fs.writeFileSync(path.join(lib, 'exp-lib.json'), '{"experiences":[]}', 'utf8')
+  const picker = fakePicker(lib)
+  const out = await call(createMockSource(), '/pick-directory', {
+    method: 'POST',
+    deps: { getDirectoryPicker: () => picker },
+  })
+  assert.equal(out.status, 200, JSON.stringify(out.payload))
+  assert.equal(out.payload.data.path, lib)
+  assert.equal(out.payload.data.canceled, false)
+  assert.equal(out.payload.data.note, '', '选中的就是经验库，不该多嘴')
+  assert.ok(picker.lastSignal instanceof AbortSignal, '要传给窗口一个可中止的 signal')
+  // 窗口是 GET 不了的
+  const wrongMethod = await call(createMockSource(), '/pick-directory', { deps: { getDirectoryPicker: () => fakePicker(lib) } })
+  assert.equal(wrongMethod.status, 405)
+})
+
+await check('POST /pick-directory：选到父级时顺手用里面的 .exp', async () => {
+  const parent = tempDir()
+  const lib = path.join(parent, '.exp')
+  fs.mkdirSync(lib)
+  fs.writeFileSync(path.join(lib, 'manifest.json'), '{}', 'utf8')
+  const out = await call(createMockSource(), '/pick-directory', {
+    method: 'POST',
+    deps: { getDirectoryPicker: () => fakePicker(parent) },
+  })
+  assert.equal(out.payload.data.path, lib)
+  assert.equal(out.payload.data.note, '用的是该文件夹下的 .exp')
+})
+
+await check('POST /pick-directory：取消 / 空目录 / 没窗口能力 / 只有浏览能力', async () => {
+  const canceled = await call(createMockSource(), '/pick-directory', {
+    method: 'POST',
+    deps: { getDirectoryPicker: () => fakePicker(null) },
+  })
+  assert.equal(canceled.status, 200)
+  assert.equal(canceled.payload.data.canceled, true)
+  assert.equal(canceled.payload.data.path, null)
+
+  const empty = await call(createMockSource(), '/pick-directory', {
+    method: 'POST',
+    deps: { getDirectoryPicker: () => fakePicker('   ') },
+  })
+  assert.equal(empty.payload.data.canceled, true)
+
+  const noPicker = await call(createMockSource(), '/pick-directory', { method: 'POST', deps: {} })
+  assert.equal(noPicker.payload.ok, false)
+  assert.equal(noPicker.payload.error.code, 'picker-unavailable')
+
+  const browseOnly = await call(createMockSource(), '/pick-directory', {
+    method: 'POST',
+    deps: { getDirectoryPicker: () => fakePicker('C:/tmp', 'browse') },
+  })
+  assert.equal(browseOnly.payload.error.code, 'picker-unavailable')
+  assert.ok(String(browseOnly.payload.error.message).includes('browse'), '要说清是哪种能力')
+})
+
+await check('resolvePickedDirectory：是库就用、父级找 .exp、都没有就明说新建', () => {
+  const bare = tempDir()
+  const withLib = tempDir()
+  fs.writeFileSync(path.join(withLib, 'exp-lib.legacy.json'), '{}', 'utf8')
+  assert.equal(resolvePickedDirectory(withLib).path, withLib)
+  assert.equal(resolvePickedDirectory('').path, '')
+  const fresh = resolvePickedDirectory(bare)
+  assert.equal(fresh.path, bare)
+  assert.ok(fresh.note.includes('新建'), `空目录该提示会新建：${fresh.note}`)
 })
 
 fs.rmSync(testHome, { recursive: true, force: true })

@@ -484,6 +484,58 @@ export function buildConsolidate(source, body = {}) {
   return source.consolidate({ intent, context: Array.isArray(body.context) ? body.context.map(String) : [] })
 }
 
+/** 一个目录「是经验库」的判定文件：分片布局 / 旧单文件 / 迁移留档 / 分片目录。 */
+const LIBRARY_MARKERS = ['manifest.json', 'exp-lib.json', 'exp-lib.legacy.json', 'buckets']
+
+/** 这个目录里有没有经验库的痕迹。 */
+function looksLikeLibrary(dir) {
+  try {
+    return LIBRARY_MARKERS.some((name) => fs.existsSync(path.join(dir, name)))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 把「人选的文件夹」翻成「经验库根」。
+ *
+ * 经验库根就是含 `exp-lib.json` / `manifest.json` 的那个目录。人选到它的父级
+ * （例如 `C:/Users/yh/WorkDeepSeek`）时，别在他那儿另起一份空库——顺手用里面的 `.exp`。
+ */
+export function resolvePickedDirectory(picked) {
+  const dir = String(picked || '').trim()
+  if (dir === '') return { path: '', note: '' }
+  if (looksLikeLibrary(dir)) return { path: dir, note: '' }
+  const nested = path.join(dir, '.exp')
+  if (looksLikeLibrary(nested)) return { path: nested, note: '用的是该文件夹下的 .exp' }
+  return { path: dir, note: '这里还没有经验库，选它等于从这个文件夹新建一份空库' }
+}
+
+/**
+ * 在宿主屏幕上弹系统自带的选目录窗口，返回人选的那个路径（取消则 null）。
+ *
+ * 用的是宿主自己的 `ctx.directoryPicker`（桌面版是 Windows 的 IFileOpenDialog，
+ * 跟「选工作区目录」是同一个窗口）。远程浏览器那种组合只有 browse 能力，
+ * 这里如实拒绝，让界面退回手填路径，不假装弹出过窗口。
+ *
+ * @param deps - `getDirectoryPicker()`：可选，返回宿主的目录选择服务。
+ * @param signal - 调用方生命周期；中止就关掉窗口。
+ */
+export async function pickDirectory(deps = {}, signal) {
+  const picker = typeof deps.getDirectoryPicker === 'function' ? deps.getDirectoryPicker() : null
+  if (picker === null || picker === undefined) {
+    throw codedError('picker-unavailable', '这个宿主没有系统目录选择器（桌面版才有），请手动填路径')
+  }
+  const capability = typeof picker.capability === 'function' ? picker.capability() : null
+  if (capability === null || capability === undefined || capability.kind !== 'native') {
+    const kind = capability && capability.kind ? String(capability.kind) : '未知'
+    throw codedError('picker-unavailable', `当前目录选择器是 ${kind} 版，打不开系统窗口，请手动填路径`)
+  }
+  const picked = await capability.pick(signal)
+  if (picked === null || picked === undefined || String(picked).trim() === '') return { path: null, canceled: true, note: '' }
+  return { canceled: false, ...resolvePickedDirectory(picked) }
+}
+
 /**
  * `/skills/import` 的 data：把一条外部技能文本导进来。
  *
@@ -878,6 +930,17 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/validate') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       return json(res, 200, { ok: true, data: buildValidate(active) })
+    }
+    if (route === '/pick-directory') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      // 窗口是模态的：请求挂着等人选完；页面关了就把窗口一起收掉。
+      // 听的是 res 的 close，不是 req 的——Node 16 起 req 的 close 在请求体收完就会发，
+      // 那会立刻把窗口关掉。
+      const controller = typeof AbortController === 'function' ? new AbortController() : null
+      if (controller !== null && typeof res.on === 'function') {
+        res.on('close', () => { if (res.writableEnded !== true) controller.abort() })
+      }
+      return json(res, 200, { ok: true, data: await pickDirectory(deps, controller === null ? undefined : controller.signal) })
     }
     if (route === '/settings') {
       if (method === 'POST') {
