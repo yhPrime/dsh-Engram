@@ -131,6 +131,60 @@ check('recall note 按码点截断：emoji 不产生孤立代理项', () => {
   const note = result.candidates[0].evidence[0].note
   assert.doesNotMatch(note, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
 })
+check('findActiveSession：按 cwd 过滤，别的窗口后写不夺身份', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-sess-'))
+  const mk = (ws, id, cwd, mtime) => {
+    const dir = path.join(root, ws, id)
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'session.v4.jsonl')
+    fs.writeFileSync(file, `${JSON.stringify({ type: 'session', data: { cwd } })}\n`)
+    fs.utimesSync(file, mtime, mtime)
+  }
+  const old = new Date(Date.now() - 60000)
+  const now = new Date()
+  mk('ws-a', 'session-A', path.join(root, 'work-a'), old)
+  mk('ws-b', 'session-B', path.join(root, 'work-b'), now)
+  assert.equal(findActiveSession({ sessionsRoot: root, cwd: path.join(root, 'work-a') }).sessionId, 'session-A')
+  assert.equal(findActiveSession({ sessionsRoot: root, cwd: path.join(root, 'work-b') }).sessionId, 'session-B')
+})
+
+check('findActiveSession：裸 UUID 子会话目录也能识别', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-sub-'))
+  const dir = path.join(root, 'ws', '55764309-e6eb-4934-87f3-cf515d1f1cdb')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'session.v4.jsonl'), `${JSON.stringify({ type: 'session', data: { cwd: path.join(root, 'work-a') } })}\n`)
+  assert.equal(findActiveSession({ sessionsRoot: root, cwd: path.join(root, 'work-a') }).sessionId, '55764309-e6eb-4934-87f3-cf515d1f1cdb')
+})
+
+check('findActiveSession：优先含本次 exp_recall intent 的会话', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-intent-'))
+  const mk = (id, lines, mtime) => {
+    const dir = path.join(root, 'ws', id)
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'session.v4.jsonl')
+    fs.writeFileSync(file, [`${JSON.stringify({ type: 'session', data: { cwd: path.join(root, 'work-a') } })}`, ...lines.map((line) => JSON.stringify(line))].join('\n') + '\n')
+    fs.utimesSync(file, mtime, mtime)
+  }
+  mk('session-other', [], new Date())
+  mk('session-mine', [{ type: 'tool/call', data: { name: 'exp_recall', arguments: JSON.stringify({ intent: '给研学课 PPT 插页' }), turn: 3 } }], new Date(Date.now() - 60000))
+  const active = findActiveSession({ sessionsRoot: root, cwd: path.join(root, 'work-a'), tool: 'exp_recall', intent: '给研学课 PPT 插页' })
+  assert.equal(active.sessionId, 'session-mine')
+})
+
+check('recent 按会话过滤：不把别的会话的最近记录带出来', () => {
+  const now = new Date().toISOString()
+  const base = { outcome: 'success', G: 1, GOutcome: 1, verdict: 'decided', typeId: 'ty_other', typeName: '未分类', ts: now, lastSeenAt: now }
+  const store = {
+    version: 1,
+    types: [{ id: 'ty_other', name: '未分类' }],
+    experiences: [
+      { ...base, id: 'ex_a', intent: 'A 的任务', action: 'A 做法', sessionId: 'sess-A' },
+      { ...base, id: 'ex_b', intent: 'B 的任务', action: 'B 做法', sessionId: 'sess-B' },
+    ],
+  }
+  const result = rankExperiences(store, '随便什么', 3, { sessionId: 'sess-B' })
+  assert.ok((result.recent || []).every((item) => item.id === 'ex_b'), JSON.stringify(result.recent))
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

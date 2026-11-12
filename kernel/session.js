@@ -107,7 +107,9 @@ export function listSessionFiles(options = {}) {
     const base = path.join(root, workspace.name)
     let sessions = []
     try {
-      sessions = fs.readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith('session-'))
+      // 子代理会话目录是裸 UUID（首事件 origin:subagent），不能只认 session- 前缀；
+      // 真正的判据是「目录里有会话文件」（下面的 SESSION_FILE_NAMES 检查）。
+      sessions = fs.readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory())
     } catch {
       continue
     }
@@ -200,9 +202,31 @@ function parseArguments(raw) {
  * 找到就返回 `{sessionId, turn, cwd, userText}`；找不到返回 null（调用方降级为只记时间）。
  */
 export function findActiveSession(options = {}) {
-  // 当前会话 = 最近有写入的会话文件。recall 用它拿会话身份；别按意图去猜，否则会认错会话。
-  const [item] = listSessionFiles(options)
-  if (item === undefined) return null
+  // 当前会话 = 本工作区里最近有写入的会话文件。必须按 cwd 过滤：别的 DSH 窗口后写不能顶掉身份。
+  // 子代理会话目录是裸 UUID，listSessionFiles 已按「目录里有会话文件」收录。
+  const cwd = String(options.cwd || '').trim()
+  const target = cwd === '' ? '' : path.resolve(cwd)
+  let candidates = listSessionFiles(options)
+  if (target !== '') candidates = candidates.filter((item) => cachedCwd(item.file) === target)
+  if (candidates.length === 0) return null
+  // 并行窗口/父子会话同时写时，优先「最近一次 exp_* tool/call 与本次 intent 一致」的会话。
+  const tool = String(options.tool || '').trim()
+  const intent = String(options.intent || '').trim()
+  if (tool !== '' && intent !== '') {
+    const hit = candidates.find((item) => {
+      const events = readSessionEvents(item.file)
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index]
+        if (!event || event.type !== 'tool/call' || !event.data) continue
+        if (String(event.data.name || '') !== tool) continue
+        const args = parseArguments(event.data.arguments)
+        if (String(args.intent || '').trim() === intent) return true
+      }
+      return false
+    })
+    if (hit !== undefined) return { sessionId: hit.sessionId, file: hit.file, cwd: cachedCwd(hit.file) }
+  }
+  const [item] = candidates
   return { sessionId: item.sessionId, file: item.file, cwd: cachedCwd(item.file) }
 }
 

@@ -138,7 +138,7 @@ export function buildTools(defineTool, config = {}) {
       let activeSession = null
       if (config.autoBind !== false) {
         try {
-          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot })
+          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: config.cwd || process.cwd(), tool: 'exp_record', intent: args.intent })
         } catch {
           activeSession = null
         }
@@ -302,7 +302,7 @@ export function buildTools(defineTool, config = {}) {
       let activeSession = null
       if (config.autoBind !== false) {
         try {
-          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot })
+          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot, cwd: config.cwd || process.cwd(), tool: 'exp_recall', intent: args.intent })
         } catch {
           activeSession = null
         }
@@ -334,7 +334,7 @@ export function buildTools(defineTool, config = {}) {
         clusterId = type.id
       }
       const recallLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || Number(config.recallLimitDefault) || 3)))
-      const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false })
+      const result = rankExperiences(store, String(args.intent || ''), recallLimit, { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: config.recent !== false, sessionId: sessionId || '' })
       // 相似度低于 0.20 且判 weak：不展示噪声候选（无关任务时避免「1 条沾边候选」被当推荐）。
       if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
       result.pendingSkills = pendingSkills

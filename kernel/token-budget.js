@@ -18,7 +18,8 @@ const CUT_TEXT = 240
 function cut(text, max) {
   const value = String(text === undefined || text === null ? '' : text).replace(/\s+/gu, ' ').trim()
   if (value === '') return ''
-  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`
+  // 按码点截断：UTF-16 slice 会把 emoji 劈成孤立代理项。
+  return value.length <= max ? value : `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
 }
 
 function round(value, digits = 4) {
