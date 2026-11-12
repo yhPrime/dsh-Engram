@@ -210,6 +210,11 @@ function safeUsage(source, limit) {
 }
 
 /** 安全取固化技能：读不到 / 读坏都当空。 */
+function metaOf(source) {
+  const src = source && typeof source === 'object' ? source : {}
+  return { id: src.id, mode: src.mode, label: src.label, readOnly: src.readOnly === true }
+}
+
 function readOf(source) {
   if (!source || typeof source.read !== 'function') return {}
   try {
@@ -252,7 +257,7 @@ export function buildState(source) {
   return {
     app: APP_NAME,
     version: pluginVersion(),
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     dataDir: String(read.dataDir || ''),
     file: String(read.file || ''),
     exists: Boolean(read.exists),
@@ -280,20 +285,20 @@ export function buildState(source) {
 export function buildExperiences(source, params) {
   const read = readOf(source)
   const store = read.store && typeof read.store === 'object' ? read.store : emptyStore()
-  const query = String(params.get('query') || '').trim()
+  const query = String((params && typeof params.get === 'function' ? params.get('query') : '') || '').trim()
   const meta = {
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     notice: String(read.notice || ''),
   }
   if (query !== '') {
-    const limit = numberParam(params.get('limit'), 8, 50)
-    if (typeof source.recall === 'function') {
+    const limit = numberParam(params && typeof params.get === 'function' ? params.get('limit') : null, 8, 50)
+    if (source && typeof source.recall === 'function') {
       const recalled = source.recall({ intent: query, limit })
       return { ...meta, ...recalled, query }
     }
     return { ...meta, ...recallOf(store, query, limit) }
   }
-  return { ...meta, ...listOf(store, params) }
+  return { ...meta, ...listOf(store, params || new URLSearchParams()) }
 }
 
 /** `/experience` 的 data；找不到返回 null。 */
@@ -376,7 +381,7 @@ export function buildSkills(source) {
   const tree = buildSkillTree(rows)
   tree.sort((left, right) => treeOrderOf(right) - treeOrderOf(left) || left.name.localeCompare(right.name, 'zh'))
   return {
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     notice: String(read.notice || ''),
     total: rows.length,
     summary: skillSummaryOf(rows),
@@ -473,7 +478,7 @@ export function buildSettings(source) {
   const read = readOf(source)
   const extra = typeof source.settings === 'function' ? source.settings() : {}
   return {
-    source: { id: source.id, mode: source.mode, label: source.label, readOnly: source.readOnly === true },
+    source: metaOf(source),
     dataDir: String(read.dataDir || ''),
     file: String(read.file || ''),
     exists: Boolean(read.exists),

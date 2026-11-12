@@ -27,7 +27,7 @@ import {
   upsertExperience,
   writeStore,
 } from './store.js'
-import { findRecordBinding, userMessageForRecord } from './session.js'
+import { findActiveSession, findRecordBinding, userMessageForRecord } from './session.js'
 import { measure, slimRecall, slimReceipt } from './token-budget.js'
 import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
@@ -133,14 +133,24 @@ export function buildTools(defineTool, config = {}) {
           binding = null
         }
       }
-      const sessionId = binding === null ? undefined : binding.sessionId
+      // 认不出唯一 turn 时至少用「最近写入的会话」兜底，保证 pending/回填有归属；
+      // 一个会话都读不到 → undefined，后续 strict 路径不显示 pending、回填一律拒绝。
+      let activeSession = null
+      if (config.autoBind !== false) {
+        try {
+          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot })
+        } catch {
+          activeSession = null
+        }
+      }
+      const sessionId = binding !== null ? binding.sessionId : (activeSession === null ? undefined : activeSession.sessionId)
       // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。
       // 只允许回填本会话自己的待判定（以前 B 会话能改 A 会话的行）。
       const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
-        ? resolveVerdicts(store, args.verdicts, { sessionId })
+        ? resolveVerdicts(store, args.verdicts, { sessionId, requireSession: config.autoBind !== false })
         : []
       // 待判定队列在写入本条之前取：刚记的这条不算「提醒过一次」，下一轮才出现。
-      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId })
+      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
       const result = upsertExperience(store, {
         intent: args.intent,
         action: args.action,
@@ -288,18 +298,19 @@ export function buildTools(defineTool, config = {}) {
       return withStoreLock(dataDir, () => {
       const store = readStore(dataDir)
       // 召回也要拿到当前会话：pending 只发本会话的，回填也只能结自己的账。
-      let binding = null
+      // 召回用「最近写入的会话」认身份：按意图去猜会把 B 的召回认成 A 的会话，泄漏 A 的 pending。
+      let activeSession = null
       if (config.autoBind !== false) {
         try {
-          binding = findRecordBinding({ intent: args.intent }, { sessionsRoot: config.sessionsRoot })
+          activeSession = findActiveSession({ sessionsRoot: config.sessionsRoot })
         } catch {
-          binding = null
+          activeSession = null
         }
       }
-      const sessionId = binding === null ? undefined : binding.sessionId
+      const sessionId = activeSession === null ? undefined : activeSession.sessionId
       // 回填（0.13.0）：召回时顺手把上一条 pending 结掉，模型不必为判定新开一次调用。
       const verdictResults = Array.isArray(args.verdicts) && args.verdicts.length > 0
-        ? resolveVerdicts(store, args.verdicts, { sessionId })
+        ? resolveVerdicts(store, args.verdicts, { sessionId, requireSession: config.autoBind !== false })
         : []
       // 技能优先：高确定技能命中时只返回技能本身，不再列具体经验。
       // 只拿还没全局注册的技能：注册过的交给 DSH 当普通技能用，经验库不再排序它
@@ -328,7 +339,7 @@ export function buildTools(defineTool, config = {}) {
       if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
       result.pendingSkills = pendingSkills
       // 待判定：随回执带出（≤2 条）。
-      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId })
+      const pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
       if (verdictResults.some((item) => item.ok) || pendingOut.rows.length > 0 || pendingOut.skipped.length > 0) writeStore(dataDir, store)
       const pending = config.pendingReceipt === false
         ? []

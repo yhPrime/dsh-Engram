@@ -199,10 +199,18 @@ function parseArguments(raw) {
  * 在最近几个会话里找 `tool/call`（name=exp_record，intent/action 与本次入参一致），
  * 找到就返回 `{sessionId, turn, cwd, userText}`；找不到返回 null（调用方降级为只记时间）。
  */
+export function findActiveSession(options = {}) {
+  // 当前会话 = 最近有写入的会话文件。recall 用它拿会话身份；别按意图去猜，否则会认错会话。
+  const [item] = listSessionFiles(options)
+  if (item === undefined) return null
+  return { sessionId: item.sessionId, file: item.file, cwd: cachedCwd(item.file) }
+}
+
 export function findRecordBinding(input = {}, options = {}) {
   const intent = String(input.intent || '').trim()
   const action = String(input.action || '').trim()
-  const limit = Math.max(1, Math.trunc(Number(options.scan) || 2))
+  const limit = Math.max(1, Math.trunc(Number(options.scan) || 3))
+  const matches = []
   for (const item of listSessionFiles(options).slice(0, limit)) {
     const events = readSessionEvents(item.file)
     if (events.length === 0) continue
@@ -216,16 +224,20 @@ export function findRecordBinding(input = {}, options = {}) {
       matched = event
     }
     if (matched === null) continue
-    const turn = Number(matched.data.turn)
-    return {
-      sessionId: item.sessionId,
-      file: item.file,
-      cwd: cachedCwd(item.file, events),
-      turn: Number.isFinite(turn) ? turn : null,
-      userText: firstUserMessageAfterTurn(events, turn),
-    }
+    matches.push({ item, matched, events })
   }
-  return null
+  if (matches.length === 0) return null
+  // 两会话同参且写入时间几乎相同：无法唯一归属 → 宁可不绑（别张冠李戴）。
+  if (matches.length > 1 && Math.abs(matches[0].item.mtime - matches[1].item.mtime) < 5000) return null
+  const { item, matched, events } = matches[0]
+  const turn = Number(matched.data.turn)
+  return {
+    sessionId: item.sessionId,
+    file: item.file,
+    cwd: cachedCwd(item.file, events),
+    turn: Number.isFinite(turn) ? turn : null,
+    userText: firstUserMessageAfterTurn(events, turn),
+  }
 }
 
 /** 某条经验绑定的 turn 之后的第一条用户原话（读不到返回 ''）。 */

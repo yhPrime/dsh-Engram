@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { createSkill, readSkillBySlug } from '../skills.js'
+import { createSkill, readSkillBySlug, validateSkill } from '../skills.js'
 import { buildTools } from '../tools.js'
 
 let passed = 0
@@ -58,6 +58,16 @@ check('技能命中分支也带 recent（复验发现）', () => {
   assert.ok(recalled.skill, `应命中技能，实际 mode=${recalled.mode}`)
   assert.ok(Array.isArray(recalled.recent))
   assert.ok(recalled.recent.some((item) => item.id === archived.id), JSON.stringify(recalled.recent))
+})
+check('pending 技能不抬 uses/helped，账本自检通过（复验发现）', () => {
+  const before = readSkillBySlug(dir, 'sonner-toast').meta.confidence
+  const usesBefore = Number(before.uses) || 0
+  const helpedBefore = Number(before.helped) || 0
+  call('exp_record', { intent: 'Sonner toast 关闭按钮的位置怎么调', action: '按技能调位置', skillId: 'skill:sonner-toast' })
+  const skill = readSkillBySlug(dir, 'sonner-toast')
+  assert.equal(Number(skill.meta.confidence.uses) || 0, usesBefore, 'pending 不应抬 uses')
+  assert.equal(Number(skill.meta.confidence.helped) || 0, helpedBefore, 'pending 不应记 helped')
+  assert.deepEqual(validateSkill(skill), [])
 })
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)

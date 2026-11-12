@@ -702,10 +702,12 @@ export const RECALL_NOTE_LIMIT = 300
 
 function truncateNote(raw) {
   const text = String(raw || '')
-  if (text.length <= RECALL_NOTE_LIMIT) return text
+  // 按码点截断：UTF-16 下 slice 会把 emoji 劈出孤立代理项。
+  const chars = Array.from(text)
+  if (chars.length <= RECALL_NOTE_LIMIT) return text
   const head = Math.floor(RECALL_NOTE_LIMIT * 0.65)
   const tail = RECALL_NOTE_LIMIT - head - 1
-  return `${text.slice(0, head)}…${text.slice(-tail)}`
+  return `${chars.slice(0, head).join('')}…${chars.slice(-tail).join('')}`
 }
 
 /** 证据质量：(加权平均 G + 1) / 2，映射到 [0,1]，负回报会被压到 0.2 以下。 */
@@ -1444,6 +1446,8 @@ export function pendingRows(store, limit = 2, options = {}) {
   const max = Math.max(1, Math.min(5, Math.trunc(Number(limit) || 2)))
   // 会话归属（0.13.0）：带 sessionId 时只返回本会话的待判定，别把别的会话的原始意图带出来。
   const sessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : ''
+  // 认不出会话（strict）时宁可不显示：否则会把别的会话的 pending 泄漏出去。
+  if (options.strict === true && sessionId === '') return []
   return (Array.isArray(store.experiences) ? store.experiences : [])
     .filter((item) => item && !item.deleted_at && !item.superseded_by && !item.retired_at && item.verdict === 'pending')
     .filter((item) => sessionId === '' || item.sessionId === sessionId)
@@ -1462,7 +1466,7 @@ export function pendingTasks(store, limit = 2, options = {}) {
   const now = new Date().toISOString()
   const rows = []
   const skipped = []
-  for (const item of pendingRows(store, max + 1, { sessionId: options.sessionId })) {
+  for (const item of pendingRows(store, max + 1, { sessionId: options.sessionId, strict: options.strict })) {
     const reminders = (Number(item.pendingReminders) || 0) + 1
     if (reminders > ttl) {
       item.verdict = 'skipped'
@@ -1497,6 +1501,10 @@ export function resolveVerdicts(store, list = [], options = {}) {
     entries.push(raw)
   }
   const sessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : ''
+  // requireSession：工具路径认不出会话就一律拒绝回填（UI/运维仍可显式回填）。
+  if (options.requireSession === true && sessionId === '') {
+    return entries.map((raw) => ({ id: String((raw && raw.id) || '').trim(), ok: false, error: '无法确定会话，不能回填' }))
+  }
   const now = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()
   const results = []
   for (const raw of entries) {

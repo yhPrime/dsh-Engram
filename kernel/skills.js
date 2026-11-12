@@ -84,7 +84,8 @@ export function assertSafeRelPath(value) {
 export function pathIsLink(target) {
   try {
     if (fs.lstatSync(target).isSymbolicLink()) return true
-    return fs.readlinkSync(target) !== ''
+    // Windows junction：lstat 报目录、readlink 抛 EINVAL；用 native realpath 解析后与自身不同来判定。
+    return path.resolve(fs.realpathSync.native(target)) !== path.resolve(String(target))
   } catch {
     return false
   }
@@ -498,6 +499,8 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
     if (stat.size > MAX_ATTACH_FILE_BYTES) throw new Error(`单个附件不能超过 2MB：${raw}`)
     const name = safeAttachName(resolved)
     const rel = `${SCRIPTS_DIRNAME}/${name}`
+    // 同一次 attach 里同名文件会互相覆盖（只留最后一份），明确拒绝；跨调用替换是允许的。
+    if (added.some((item) => item.path === rel)) throw new Error(`同一次 attach 里有同名附件：${rel}（改名或分两次调用）`)
     const index = files.findIndex((item) => item.path === rel)
     const oldBytes = index >= 0 ? Number(files[index].bytes) || 0 : 0
     // 同名附件是替换不是新增：预算要减去旧的一份，否则 3×1.5MB 同名文件会误撞 8MB 上限。
@@ -580,7 +583,7 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
     // 已存在但账本没记（或记的是别处）：只有 realpath 指向同一技能才认领，否则绝不覆盖。
     let same = false
     try {
-      same = path.resolve(fs.realpathSync(target)) === path.resolve(fs.realpathSync(skill.dir))
+      same = path.resolve(fs.realpathSync.native(target)) === path.resolve(fs.realpathSync.native(skill.dir))
     } catch {
       same = false
     }
@@ -622,6 +625,10 @@ export function unregisterSkillFromDsh(dataDir, slug) {
     removed = true
   } else {
     // 链接/junction：只删本体（递归会顺着 junction 删掉经验库源目录）。删不掉就报错并保留登记。
+    // 目标若已被替换成普通文件/目录，绝不能当链接删掉（那是用户的东西）。
+    if (!pathIsLink(target)) {
+      throw new Error(`目标已不是链接：${target}（登记已保留，确认后手动处理再重试）`)
+    }
     removed = removeLinkOnly(target)
     if (!removed) {
       throw new Error(`无法删除全局链接：${target}（登记已保留，可稍后重试或手动删除）`)
@@ -1481,9 +1488,12 @@ function applySkillOutcomeUnlocked(dataDir, slug, result, options = {}) {
   if (skill === null) return { action: 'missing', slug }
   const now = new Date().toISOString()
   const confidence = skill.meta.confidence
-  confidence.uses = (Number(confidence.uses) || 0) + 1
-  if (result === 'helped') confidence.helped = (Number(confidence.helped) || 0) + 1
-  else if (result === 'hurt') confidence.hurt = (Number(confidence.hurt) || 0) + 1
+  // neutral（含 pending 未判定）只更新时间，不抬 uses：uses 必须恒等于 helped + hurt。
+  if (result === 'helped' || result === 'hurt') {
+    confidence.uses = (Number(confidence.uses) || 0) + 1
+    if (result === 'helped') confidence.helped = (Number(confidence.helped) || 0) + 1
+    else confidence.hurt = (Number(confidence.hurt) || 0) + 1
+  }
   confidence.lastUsedAt = now
   if (result === 'helped') {
     for (const entry of Object.values(skill.meta.obstacles)) {

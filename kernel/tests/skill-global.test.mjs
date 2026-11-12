@@ -8,7 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const skills = await import('../skills.js')
-const { createSkill, forgetSkill, globalRegistrationOf, listSkills, readSkillBySlug, registerSkillGlobally, unregisterSkillFromDsh } = skills
+const { attachSkillFiles, createSkill, forgetSkill, globalRegistrationOf, listSkills, readSkillBySlug, registerSkillGlobally, unregisterSkillFromDsh } = skills
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-global-'))
 const dataDir = path.join(root, 'exp')
@@ -107,6 +107,37 @@ await check('忘记技能：删掉技能目录；注册着的先取消注册，�
   assert.equal(listSkills(dataDir).length, 0)
 })
 
+await check('目标被换成普通文件：取消注册必须报错并保留登记、文件不删', () => {
+  createSkill(dataDir, { slug: 'global-demo', name: '全局演示', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })
+  const out = registerSkillGlobally(dataDir, 'global-demo', { root: globalRoot })
+  fs.rmdirSync(out.targetDir)
+  fs.writeFileSync(out.targetDir, 'not-a-link', 'utf8')
+  assert.throws(() => unregisterSkillFromDsh(dataDir, 'global-demo'), /目标已不是链接/)
+  assert.equal(fs.readFileSync(out.targetDir, 'utf8'), 'not-a-link', '普通文件被删了')
+  assert.ok(globalRegistrationOf(readSkillBySlug(dataDir, 'global-demo')) !== null, '登记丢了')
+  fs.unlinkSync(out.targetDir)
+})
+
+await check('链接在、登记丢（崩溃窗口）：再注册不误报占用', () => {
+  createSkill(dataDir, { slug: 'global-demo', name: '全局演示', description: '测试', body: '# 何时用\n测试', typeName: '代码 / 插件' })
+  const out = registerSkillGlobally(dataDir, 'global-demo', { root: globalRoot })
+  const metaFile = path.join(dataDir, 'skills', 'global-demo', 'skill.json')
+  const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'))
+  delete meta.globalRegistered
+  fs.writeFileSync(metaFile, JSON.stringify(meta), 'utf8')
+  const again = registerSkillGlobally(dataDir, 'global-demo', { root: globalRoot })
+  assert.equal(again.targetDir, out.targetDir)
+  assert.ok(globalRegistrationOf(readSkillBySlug(dataDir, 'global-demo')) !== null, '应重新登记')
+})
+
+await check('同一次 attach 同名附件：明确报错而不是静默覆盖', () => {
+  createSkill(dataDir, { slug: 'dup-files', name: 'dup-files', description: '同名测试', body: '# t' })
+  const dirA = path.join(root, 'a'); const dirB = path.join(root, 'b')
+  fs.mkdirSync(dirA, { recursive: true }); fs.mkdirSync(dirB, { recursive: true })
+  fs.writeFileSync(path.join(dirA, 'same.txt'), 'one', 'utf8')
+  fs.writeFileSync(path.join(dirB, 'same.txt'), 'two', 'utf8')
+  assert.throws(() => attachSkillFiles(dataDir, 'dup-files', [path.join(dirA, 'same.txt'), path.join(dirB, 'same.txt')]), /同名附件/)
+})
 fs.rmSync(root, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)

@@ -4,9 +4,13 @@
  * Run: node tests/session-isolation.test.mjs
  */
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 import { pendingBrief } from '../brief.js'
-import { rankExperiences, resolveVerdicts, upsertExperience } from '../store.js'
+import { findActiveSession } from '../session.js'
+import { pendingTasks, rankExperiences, resolveVerdicts, upsertExperience } from '../store.js'
 
 let passed = 0
 let failed = 0
@@ -84,6 +88,49 @@ check('老化：180 天旧条不压当天新条', () => {
   assert.match(firstAction, /新做法/, `top1=${firstAction}`)
 })
 
+check('requireSession：认不出会话时回填一律拒绝', () => {
+  const store = newStore()
+  const a = upsertExperience(store, { intent: '导出 PDF', action: '嵌字体', sessionId: 'sess-A', verdict: 'pending' }).experience
+  const denied = resolveVerdicts(store, [{ id: a.id, outcome: 'success' }], { requireSession: true })
+  assert.equal(denied[0].ok, false)
+  assert.match(denied[0].error, /无法确定会话/)
+})
+
+check('strict：认不出会话时不显示 pending', () => {
+  const store = newStore()
+  upsertExperience(store, { intent: '导出 PDF', action: '嵌字体', sessionId: 'sess-A', verdict: 'pending' })
+  assert.equal(pendingTasks(store, 2, { strict: true }).rows.length, 0)
+  assert.equal(pendingTasks(store, 2, { sessionId: 'sess-A', strict: true }).rows.length, 1)
+})
+
+check('findActiveSession：返回最近写入的会话', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engram-sess-'))
+  const mk = (id, mtime) => {
+    const dir = path.join(root, 'ws', `session-${id}`)
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'session.v4.jsonl.zstd')
+    fs.writeFileSync(file, 'x')
+    fs.utimesSync(file, mtime, mtime)
+  }
+  mk('older', new Date(Date.now() - 60000))
+  mk('newer', new Date())
+  assert.equal(findActiveSession({ sessionsRoot: root }).sessionId, 'session-newer')
+})
+check('recall note 按码点截断：emoji 不产生孤立代理项', () => {
+  const now = new Date().toISOString()
+  const store = {
+    version: 1,
+    types: [{ id: 'ty_other', name: '未分类' }],
+    experiences: [{
+      id: 'ex_emoji', intent: '给研学课 PPT 插页', action: '套模板', outcome: 'success',
+      G: 1, GOutcome: 1, verdict: 'decided', typeId: 'ty_other', typeName: '未分类',
+      hits: 3, ts: now, lastSeenAt: now, note: '😀'.repeat(400),
+    }],
+  }
+  const result = rankExperiences(store, '给研学课 PPT 插页', 3)
+  const note = result.candidates[0].evidence[0].note
+  assert.doesNotMatch(note, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

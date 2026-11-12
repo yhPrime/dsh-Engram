@@ -6,7 +6,8 @@
  */
 import assert from 'node:assert/strict'
 
-import { buildPending, buildUsageSummary, buildVerdicts } from '../shell.js'
+import { buildPending, buildSkills, buildState, buildUsageSummary, buildVerdicts, buildExperiences } from '../shell.js'
+import { detailOf, visibleOf } from '../data-source.js'
 
 let passed = 0
 let failed = 0
@@ -54,6 +55,18 @@ check('buildUsageSummary：默认值 + 透传', () => {
   assert.equal(buildUsageSummary(source).chars, 900)
 })
 
+check('build* 对 null 源不抛 TypeError', () => {
+  assert.doesNotThrow(() => buildState(null))
+  assert.doesNotThrow(() => buildExperiences(null, null))
+  assert.doesNotThrow(() => buildSkills(null))
+  assert.doesNotThrow(() => buildPending(null))
+  assert.doesNotThrow(() => buildUsageSummary(null))
+})
+
+check('null 行不崩：visibleOf/detailOf 过滤', () => {
+  assert.deepEqual(visibleOf({ experiences: [null, {}, { id: 'a', deleted_at: null }] }).length, 2)
+  assert.equal(detailOf({ experiences: [null] }, 'a'), null)
+})
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)
