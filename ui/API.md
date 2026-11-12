@@ -477,3 +477,52 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 
 ### GET /graph&#10;→ { nodes, edges, summary, notice, updatedAt }。节点 kind：root/type/experience/skill/suite；边 kind：root/type/derived/suite。套件：总技能是 `skill:*` 节点（带 childCount），无根技能的套件是 `suite:*` 组节点（带 count）；`suite` 边表示「父技能/组 → 子技能」，关系图按这条边把子技能摆在父节点周围。`summary.suites` 是套件树根数。供「关系图」页渲染。
 
+## 0.15.0 增量（UI P0 契约对齐）
+
+> 相对上面 v1 文档的增量；字段只增不删。
+
+### GET /state
+- `usage.byDay`：最近 7 天（含今天）、本地日期升序、零填充；每项 `{ date: 'YYYY-MM-DD', count, chars }`。
+- `usage.today` 仍是原有的 UTC 截断口径（未改，兼容）。
+
+### GET /experiences
+- 行新增：`context: string[]`、`dimensions: string[]`、`expectedG: number|null`、`verdict: string`、`retrievals: number`。
+- 顶层新增：`storeError: null | { code: 'store-unreadable', message, file }`（读分片失败时给；行仍为空数组，页面显示横幅）。
+
+### GET /experience
+- 热档读失败时返回 HTTP 503、`error.code = 'store-unreadable'`；缺 `id` 仍 400。
+
+### GET /graph
+- 顶层新增：`storeError`（同 `/experiences`），读失败时 `nodes/edges` 为空但不 500。
+
+### GET /usage
+- 每行新增：`chars: number`（该次回执字符数；0.13 前的历史行可能为 0）。
+
+### GET /cold
+查询参数：`offset`（默认 0）、`limit`（默认 50，上限 500）、`query`（大小写不敏感，匹配 intent/action/id/typeName）、`year`（UTC 年，与 manifest.cold 分年一致）。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "source": { "id": "live", "mode": "live", "label": "真实数据", "readOnly": false },
+    "notice": "",
+    "exists": true,
+    "total": 2,
+    "offset": 0,
+    "limit": 50,
+    "years": [{ "year": 2026, "count": 2, "bytes": 4096 }],
+    "rows": [{ "id": "ex_...", "intent": "...", "action": "...", "typeName": "PPT / 课件", "G": -0.6, "outcome": "failed", "lastSeenAt": "2026-01-08T09:30:00.000Z" }],
+    "error": null
+  }
+}
+```
+
+- `exists` = manifest 里登记了冷档年档（`years.length > 0`）；空库为 `false`。
+- 冷档文件缺失/坏行：HTTP 500 `cold-unreadable`，不把「丢了」显示成「没有」。
+- 冷档只读：没有反馈/编辑/删除接口。
+
+### POST /recall
+- 新增透传：`all`、`cold`、`cluster`、`detail`、`mark`、`verdicts`（`undefined` 不传，保持内核默认值）。
+- 冷档查询：`{ intent, cold: true }`，回执带 `cold: true`；冷档模式只读、不写盘。
+

@@ -150,6 +150,85 @@ check('skills 走 engine.listSkills 并映射成界面行', () => {
   assert.ok(Array.isArray(skills[0].body) === false && typeof skills[0].body === 'string')
 })
 
+/** 在已迁移的分片库上手工登记一份冷档（模拟容量安全阀触发后的形态）。 */
+function writeColdFixture(dataDir, rows) {
+  fs.mkdirSync(path.join(dataDir, 'cold'), { recursive: true })
+  const rel = 'cold/2026-a.jsonl'
+  fs.writeFileSync(path.join(dataDir, rel), rows.map((row) => JSON.stringify(row)).join('\n') + '\n', 'utf8')
+  const manifestFile = path.join(dataDir, 'manifest.json')
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+  manifest.cold = { years: [{ year: 2026, files: [{ file: rel, count: rows.length, bytes: fs.statSync(path.join(dataDir, rel)).size }] }] }
+  fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+}
+
+check('hot()：坏库给 {store, error}，不再静默当空库', () => {
+  const dataDir = newDataDir()
+  fs.mkdirSync(dataDir, { recursive: true })
+  fs.writeFileSync(path.join(dataDir, 'exp-lib.json'), '{ 这不是 JSON', 'utf8')
+  const source = createLiveSource({ dataDir })
+  const hot = source.hot()
+  assert.deepEqual(hot.store.experiences, [], '坏档仍要给可渲染的空 store')
+  assert.equal(hot.error.code, 'store-unreadable')
+  assert.ok(hot.error.message.length > 0)
+  assert.ok(String(hot.error.file).endsWith('manifest.json'), `error.file 应是 manifest 路径：${hot.error.file}`)
+})
+
+check('coldRows：分页/检索/年份；无冷档返回空结构', () => {
+  const dataDir = newDataDir()
+  const engine = createEngine({ dataDir })
+  engine.record({ intent: '热档一条', action: '普通记录', outcome: 'success', type: '代码 / 插件' })
+  const source = createLiveSource({ dataDir })
+  assert.deepEqual(source.coldRows(), { total: 0, rows: [], years: [] })
+  writeColdFixture(dataDir, [
+    { id: 'ex_cold_1', intent: '旧任务一：给课件插页', action: '复制相邻页', typeName: 'PPT / 课件', outcome: 'failed', G: -0.6, lastSeenAt: '2026-01-08T09:30:00.000Z' },
+    { id: 'ex_cold_2', intent: '旧任务二：整理文档', action: '逐段复述', typeName: '文档 / 教案', outcome: 'corrected', G: -0.4, lastSeenAt: '2026-01-05T14:10:00.000Z' },
+  ])
+  const all = source.coldRows()
+  assert.equal(all.total, 2)
+  assert.equal(all.years[0].year, 2026)
+  assert.equal(all.years[0].count, 2)
+  assert.deepEqual(all.rows.map((row) => row.id), ['ex_cold_1', 'ex_cold_2'])
+  assert.equal(all.rows[0].action, '复制相邻页')
+  assert.equal(all.rows[0].G, -0.6)
+  assert.equal(all.rows[0].outcome, 'failed')
+  assert.equal(all.rows[0].lastSeenAt, '2026-01-08T09:30:00.000Z')
+
+  const page = source.coldRows({ offset: 1, limit: 1 })
+  assert.equal(page.total, 2)
+  assert.deepEqual(page.rows.map((row) => row.id), ['ex_cold_2'])
+  assert.equal(source.coldRows({ year: 2026 }).total, 2)
+  assert.equal(source.coldRows({ year: 2025 }).total, 0)
+  assert.equal(source.coldRows({ query: '文档' }).total, 1)
+  assert.equal(source.coldRows({ query: 'PPT' }).total, 1)
+  assert.equal(source.coldRows({ query: '完全没有' }).total, 0)
+})
+
+check('usage.byDay：按本地日期聚合 7 天、chars 求和', () => {
+  const dataDir = newDataDir()
+  fs.mkdirSync(dataDir, { recursive: true })
+  const source = createLiveSource({ dataDir })
+  const now = new Date()
+  const keyOf = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  const past = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 3, 10, 0, 0)
+  const rows = [
+    { at: now.toISOString(), tool: 'exp_recall', ok: true, chars: 120 },
+    { at: now.toISOString(), tool: 'exp_record', ok: true, chars: 80 },
+    { at: past.toISOString(), tool: 'exp_feedback', ok: true, chars: 30 },
+    { at: new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30).toISOString(), tool: 'exp_recall', chars: 999 },
+  ]
+  fs.writeFileSync(path.join(dataDir, 'usage.jsonl'), rows.map((row) => JSON.stringify(row)).join('\n') + '\n', 'utf8')
+  const usage = buildState(source).usage
+  assert.equal(usage.byDay.length, 7)
+  assert.equal(usage.byDay[6].date, keyOf(now))
+  assert.equal(usage.byDay[6].count, 2)
+  assert.equal(usage.byDay[6].chars, 200)
+  assert.equal(usage.byDay[3].date, keyOf(past))
+  assert.equal(usage.byDay[3].count, 1)
+  assert.equal(usage.byDay[3].chars, 30)
+  // 30 天前那行不进 7 日窗口，但仍在 total 里
+  assert.equal(usage.total, 4)
+})
+
 console.log('')
 console.log(`结果：通过 ${passed} 项，失败 ${failed} 项`)
 if (failed > 0) process.exit(1)

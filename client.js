@@ -32,159 +32,283 @@ window.__ModuleLoader__.load({
 
     const PANEL_CSS = `
 .eng-app, .eng-app *, .eng-app *::before, .eng-app *::after { box-sizing: border-box; }
-.eng-app { --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45; display: flex; width: 100%; max-width: 100%; box-sizing: border-box; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; container-type: inline-size; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
-.eng-rail { width: 208px; flex: 0 0 208px; display: flex; flex-direction: column; gap: 3px; padding: 16px 12px; overflow-y: auto; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2)); }
-.eng-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
-.eng-brand-mark { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); }
-.eng-brand-name { font-size: 14px; font-weight: 650; letter-spacing: .2px; }
-.eng-brand-sub { margin-top: 1px; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); }
+.eng-app {
+  /* == 1. tokens（P1/S1）：只声明不引用，必须排在 .eng-app 最前 ==
+     间距七档：4/8/12/16/20/24/32；不要再写 5/6/7/9/10/14/15/17/18px 当间距。 */
+  --eng-s-1: 4px; --eng-s-2: 8px; --eng-s-3: 12px; --eng-s-4: 16px;
+  --eng-s-5: 20px; --eng-s-6: 24px; --eng-s-7: 32px;
+  /* 固定尺寸 */
+  --eng-rail-w: 208px; --eng-detail-w: 360px; --eng-content-max: 1240px; --eng-top-h: 56px;
+  --eng-btn-h: 30px; --eng-btn-h-sm: 26px; --eng-ctrl-h-sm: 26px; --eng-badge-h: 20px;
+  --eng-chip-h: 24px; --eng-kbd-h: 18px; --eng-dot: 7px; --eng-icon: 16px; --eng-icon-sm: 14px;
+  --eng-hairline: 1px;
+  /* 字号/行高/字重 */
+  --eng-fs-display: 26px; --eng-lh-display: 1.15;
+  --eng-fs-h1: 16px; --eng-lh-h1: 1.35;
+  --eng-fs-h2: 14px; --eng-lh-h2: 1.4;
+  --eng-fs-body: 13px; --eng-lh-body: 1.5;
+  --eng-fs-sm: 12px; --eng-lh-sm: 1.5;
+  --eng-fs-micro: 11px; --eng-lh-micro: 1.45;
+  --eng-fs-mono: 11px; --eng-lh-mono: 1.6;
+  --eng-fw-normal: 400; --eng-fw-medium: 500; --eng-fw-strong: 600; --eng-fw-heavy: 650;
+  /* 圆角 */
+  --eng-r-1: 6px; --eng-r-2: 8px; --eng-r-3: 10px; --eng-r-4: 12px; --eng-r-5: 14px; --eng-r-full: 999px;
+  /* 阴影：只有浮层用，卡片只用 1px 边框 */
+  --eng-shadow-1: 0 8px 24px rgba(0, 0, 0, .12);
+  --eng-shadow-2: 0 18px 48px rgba(0, 0, 0, .20);
+  --eng-shadow-3: 0 6px 18px rgba(0, 0, 0, .10);
+  /* 动效 */
+  --eng-dur-1: 90ms; --eng-dur-2: 140ms; --eng-dur-3: 180ms; --eng-dur-4: 240ms;
+  --eng-ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --eng-ease-emphasized: cubic-bezier(.16, 1, .3, 1);
+  --eng-stagger: 12ms;
+  /* 焦点环 */
+  --eng-focus-w: 2px; --eng-focus-offset: 1px;
+  /* 语义色：宿主 token 优先，插件色兜底；底色由前景色 color-mix 派生 */
+  --eng-ok: #1f9d63; --eng-warn: #c08312; --eng-bad: #d24b45;
+  --eng-tone-ok-fg: color-mix(in srgb, var(--dsw-alias-state-success-primary, var(--eng-ok)) 50%, var(--dsw-alias-label-primary));
+  --eng-tone-ok-bg: color-mix(in srgb, var(--eng-tone-ok-fg) 14%, transparent);
+  --eng-tone-warn-fg: color-mix(in srgb, var(--dsw-alias-state-warn-primary, var(--eng-warn)) 50%, var(--dsw-alias-label-primary));
+  --eng-tone-warn-bg: color-mix(in srgb, var(--eng-tone-warn-fg) 14%, transparent);
+  --eng-tone-bad-fg: color-mix(in srgb, var(--dsw-alias-state-error-primary, var(--eng-bad)) 50%, var(--dsw-alias-label-primary));
+  --eng-tone-bad-bg: color-mix(in srgb, var(--eng-tone-bad-fg) 14%, transparent);
+  /* 默认皮肤：白底 + DSH 蓝强调 + 灰点缀；链接 token 自带亮/暗两套值。 */
+  --eng-accent: var(--dsw-alias-link, #4176e6);
+  --eng-accent-text: color-mix(in srgb, var(--eng-accent) 75%, var(--dsw-alias-label-primary));
+  --eng-accent-soft: color-mix(in srgb, var(--eng-accent) 12%, transparent);
+  --eng-accent-fill: var(--dsw-alias-brand-primary-new-colorprimary-new-color, #4176e6);
+  --eng-accent-strong: color-mix(in srgb, var(--eng-accent-fill) 80%, #000);
+  --eng-tone-brand-fg: var(--eng-accent-text);
+  --eng-tone-brand-bg: var(--eng-accent-soft);
+  --eng-tone-muted-fg: var(--dsw-alias-label-secondary, currentColor);
+  --eng-tone-muted-bg: color-mix(in srgb, var(--eng-tone-muted-fg) 12%, transparent);
+  /* 主题自适应叠加色（浅色压暗、深色提亮） */
+  --eng-ink-6: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent);
+  --eng-ink-8: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
+  --eng-ink-14: color-mix(in srgb, var(--dsw-alias-label-primary) 14%, transparent);
+  --eng-hover: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8));
+  --eng-zebra: color-mix(in srgb, var(--dsw-alias-label-secondary) 5%, transparent);
+  /* 密度（默认舒适档；compact 覆盖块紧跟其后） */
+  --eng-row-h: 36px; --eng-row-py: 8px; --eng-card-pad: var(--eng-s-4);
+  --eng-ctrl-h: 32px; --eng-gap: var(--eng-s-4); --eng-block-gap: var(--eng-s-5);
+  /* 主按钮文字色：JS 按强调色亮度覆写；默认白字（蓝底） */
+  --eng-on-brand: #fff;
+  /* 骨架屏 */
+  --eng-skeleton-base: color-mix(in srgb, var(--dsw-alias-label-secondary) 10%, transparent);
+  --eng-skeleton-hi: color-mix(in srgb, var(--dsw-alias-label-secondary) 18%, transparent);
+  /* 布局硬约束与最终属性放最后 */
+  display: flex; width: 100%; max-width: 100%; box-sizing: border-box;
+  height: 100%; max-height: 100%; min-height: 0; overflow: hidden;
+  container-type: inline-size; container-name: eng;
+  background: var(--dsw-alias-bg-base, var(--dsw-alias-bg-layer-1));
+  color: var(--dsw-alias-label-primary);
+  font: var(--eng-fs-body)/var(--eng-lh-body) ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.eng-app[data-density="comfortable"] { --eng-row-h: 36px; --eng-row-py: 8px; --eng-card-pad: var(--eng-s-4); --eng-ctrl-h: 32px; --eng-gap: var(--eng-s-4); --eng-block-gap: var(--eng-s-5); }
+.eng-app[data-density="compact"] { --eng-row-h: 30px; --eng-row-py: 5px; --eng-card-pad: var(--eng-s-3); --eng-ctrl-h: 28px; --eng-gap: var(--eng-s-3); --eng-block-gap: var(--eng-s-4); }
+.eng-rail { width: var(--eng-rail-w); flex: 0 0 var(--eng-rail-w); display: flex; flex-direction: column; gap: 3px; padding: var(--eng-s-4) var(--eng-s-3); overflow-y: auto; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-specific-sidebar-fill, color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2))); }
+.eng-brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 16px; }
+.eng-brand-mark { width: 30px; height: 30px; border-radius: var(--eng-r-3); display: grid; place-items: center; color: var(--eng-accent-text); background: var(--eng-accent-soft); }
+.eng-brand-name { font-size: var(--eng-fs-h2); font-weight: 650; letter-spacing: .2px; }
+.eng-brand-sub { margin-top: 1px; font-size: var(--eng-fs-micro); letter-spacing: .16em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); }
 .eng-nav { display: flex; flex-direction: column; gap: 2px; }
-.eng-nav-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; text-align: left; cursor: pointer; }
-.eng-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.eng-nav-item[data-active="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }
-.eng-nav-item:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-.eng-nav-count { margin-left: auto; font-size: 11px; opacity: .72; font-variant-numeric: tabular-nums; }
-.eng-rail-foot { margin-top: auto; padding: 12px 10px 2px; border-top: 1px solid var(--dsw-alias-border-l1); font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.eng-nav-item { display: flex; align-items: center; gap: var(--eng-s-2); width: 100%; min-height: 32px; padding: var(--eng-s-1) var(--eng-s-3); border: 0; border-radius: var(--eng-r-2); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; text-align: left; cursor: pointer; }
+.eng-nav-item:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); color: var(--dsw-alias-label-primary); }
+.eng-nav-item[data-active="true"] { background: var(--eng-accent-soft); color: var(--eng-accent-text); font-weight: 600; }
+.eng-nav-item:focus-visible { outline: 2px solid var(--eng-accent-text); outline-offset: 1px; }
+.eng-nav-count { margin-left: auto; font-size: var(--eng-fs-micro); opacity: .72; font-variant-numeric: tabular-nums; }
+.eng-rail-foot { margin-top: auto; padding: var(--eng-s-3) var(--eng-s-3) 2px; border-top: 1px solid var(--dsw-alias-border-l1); font-size: var(--eng-fs-micro); line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.eng-nav-group + .eng-nav-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--dsw-alias-border-l1); }
+.eng-nav-group-label { padding: var(--eng-s-2) var(--eng-s-3) var(--eng-s-1); font-size: var(--eng-fs-micro); font-weight: var(--eng-fw-strong); letter-spacing: .08em; color: var(--dsw-alias-label-secondary); opacity: .8; }
+.eng-nav-item { position: relative; }
+.eng-nav-item[data-active="true"]::before { content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--eng-accent-text); }
 .eng-main { flex: 1 1 auto; min-width: 0; width: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.eng-top { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 86%, transparent); backdrop-filter: blur(10px); }
-.eng-title { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .1px; }
-.eng-sub { margin-top: 2px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.eng-top { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-3); padding: var(--eng-s-3) var(--eng-s-6); border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-base, var(--dsw-alias-bg-layer-1)) 86%, transparent); backdrop-filter: blur(10px); }
+.eng-title { margin: 0; font-size: var(--eng-fs-h1); line-height: var(--eng-lh-h1); font-weight: var(--eng-fw-heavy); letter-spacing: .1px; }
+.eng-sub { margin-top: 2px; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
 .eng-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.eng-modal-mask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(0, 0, 0, .34); }
-.eng-modal { width: min(660px, 100%); max-height: min(760px, 88vh); overflow: auto; padding: 18px 20px 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 14px; background: var(--dsw-alias-bg-layer-2); box-shadow: 0 18px 48px rgba(0, 0, 0, .2); }
-.eng-modal-title { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
-.eng-progress-text { font-size: 13px; line-height: 1.6; margin: 6px 0 10px; }
-.eng-progress-track { height: 8px; border-radius: 999px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.18)); overflow: hidden; }
-.eng-progress-meta { margin: 6px 0 10px; font-size: 12px; opacity: 0.72; }
-.eng-progress-list { max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 6px 0; }
-.eng-progress-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; font-size: 12px; }
-.eng-progress-item[data-state="running"] { background: var(--dsw-alias-bg-module, rgba(128,128,128,0.12)); }
-.eng-progress-item[data-state="failed"] { outline: 1px solid var(--dsw-alias-state-error, rgba(200,60,60,0.45)); }
-.eng-progress-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.45)); }
-.eng-progress-item[data-state="running"] .eng-progress-dot { background: var(--dsw-alias-brand-primary, currentColor); }
-.eng-progress-item[data-state="done"] .eng-progress-dot { background: var(--dsw-alias-state-success, rgba(40,160,90,0.9)); }
-.eng-progress-item[data-state="failed"] .eng-progress-dot { background: var(--dsw-alias-state-error, rgba(200,60,60,0.9)); }
+.eng-modal { animation: eng-modal-in var(--eng-dur-4) var(--eng-ease-emphasized); }
+@keyframes eng-modal-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes eng-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.eng-modal-mask { animation: eng-fade-in var(--eng-dur-2) var(--eng-ease-standard); }
+.eng-modal-mask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: var(--eng-s-5); background: rgba(0, 0, 0, .34); }
+.eng-modal { width: min(660px, 100%); max-height: min(760px, 88vh); overflow: auto; padding: var(--eng-s-5); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-5); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-2); }
+.eng-modal-title { margin: 0 0 4px; font-size: var(--eng-fs-h2); font-weight: 650; }
+.eng-progress-text { font-size: var(--eng-fs-body); line-height: 1.6; margin: 4px 0 8px; }
+.eng-progress-track { height: 8px; border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.18)); overflow: hidden; }
+.eng-progress-meta { margin: 4px 0 8px; font-size: var(--eng-fs-sm); opacity: 0.72; }
+.eng-progress-list { max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 4px 0; }
+.eng-progress-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: var(--eng-r-2); font-size: var(--eng-fs-sm); }
+.eng-progress-item[data-state="running"] { background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.12)); }
+.eng-progress-item[data-state="failed"] { outline: 1px solid var(--dsw-alias-state-error-primary, rgba(200,60,60,0.45)); }
+.eng-progress-dot { width: 7px; height: 7px; border-radius: var(--eng-r-full); flex-shrink: 0; background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.45)); }
+.eng-progress-item[data-state="running"] .eng-progress-dot { background: var(--eng-accent); }
+.eng-progress-item[data-state="done"] .eng-progress-dot { background: var(--dsw-alias-state-success-primary, rgba(40,160,90,0.9)); }
+.eng-progress-item[data-state="failed"] .eng-progress-dot { background: var(--dsw-alias-state-error-primary, rgba(200,60,60,0.9)); }
 .eng-progress-name { flex: 0 1 auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eng-progress-state { flex-shrink: 0; opacity: 0.8; }
-.eng-progress-tag { flex-shrink: 0; padding: 1px 6px; border-radius: 999px; font-size: 11px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.14)); }
+.eng-progress-tag { flex-shrink: 0; padding: 1px 4px; border-radius: var(--eng-r-full); font-size: var(--eng-fs-micro); background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.14)); }
 .eng-progress-tag-soft { opacity: 0.75; }
-.eng-progress-error { flex-shrink: 0; font-size: 11px; }
-.eng-session { margin-top: 10px; max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: var(--dsw-alias-bg-module, rgba(128,128,128,0.10)); }
-.eng-session-msg { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; }
+.eng-progress-error { flex-shrink: 0; font-size: var(--eng-fs-micro); }
+.eng-session { margin-top: 8px; max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px; border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.10)); }
+.eng-session-msg { display: flex; gap: 8px; font-size: var(--eng-fs-sm); line-height: 1.5; }
 .eng-session-role { flex: 0 0 64px; opacity: 0.7; text-align: right; }
 .eng-session-text { flex: 1 1 auto; word-break: break-word; }
 .eng-session-msg[data-role="system"] .eng-session-text { opacity: 0.75; }
 .eng-session-msg[data-bad="true"] .eng-session-text { text-decoration: line-through; opacity: 0.8; }
-.eng-progress-bar { height: 100%; border-radius: 999px; background: var(--dsw-alias-brand-primary, currentColor); transition: width 180ms ease; }
-.eng-modal-warn { margin: 12px 0 14px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; line-height: 1.65; color: var(--dsw-alias-label-secondary); }
+.eng-progress-bar { height: 100%; border-radius: var(--eng-r-full); background: var(--eng-accent); transition: width 180ms ease; }
+.eng-modal-warn { margin: 12px 0 12px; padding: 8px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); font-size: var(--eng-fs-sm); line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
 .eng-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-.eng-git-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-interactive-bg-hover); font-size: 12px; }
+/* P3 命令面板 / 快捷键表 / Toast / 页面入场 */
+.eng-palette { width: min(560px, 100%); max-height: min(620px, 84vh); display: flex; flex-direction: column; gap: var(--eng-s-2); }
+.eng-palette-input { height: 36px; font-size: var(--eng-fs-body); }
+.eng-palette-list { display: flex; flex-direction: column; gap: 2px; max-height: 400px; overflow: auto; }
+.eng-palette-item { display: flex; align-items: center; gap: var(--eng-s-3); padding: var(--eng-s-2) var(--eng-s-3); border: 0; border-radius: var(--eng-r-2); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.eng-palette-item[data-active="true"] { background: var(--eng-hover); }
+.eng-palette-group { flex: 0 0 64px; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
+.eng-palette-label { flex: 1 1 auto; }
+.eng-palette-foot { display: flex; align-items: center; gap: var(--eng-s-2); padding-top: var(--eng-s-2); border-top: 1px solid var(--dsw-alias-border-l1); font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
+.eng-shortcut-list { display: flex; flex-direction: column; gap: var(--eng-s-2); max-height: 50vh; overflow: auto; }
+.eng-shortcut-row { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: var(--eng-s-3); align-items: center; font-size: var(--eng-fs-sm); }
+.eng-toast-host { position: fixed; right: var(--eng-s-4); bottom: var(--eng-s-4); z-index: 2147483000; display: flex; flex-direction: column; gap: var(--eng-s-2); pointer-events: none; }
+.eng-toast { pointer-events: auto; padding: var(--eng-s-2) var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); font-size: var(--eng-fs-sm); animation: eng-toast-in var(--eng-dur-3) var(--eng-ease-emphasized); }
+.eng-toast[data-tone="bad"] { border-color: color-mix(in srgb, var(--eng-tone-bad-fg) 45%, var(--dsw-alias-border-l1)); color: var(--eng-tone-bad-fg); }
+.eng-toast[data-tone="ok"] { border-color: color-mix(in srgb, var(--eng-tone-ok-fg) 45%, var(--dsw-alias-border-l1)); color: var(--eng-tone-ok-fg); }
+@keyframes eng-toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes eng-page-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.eng-fill { animation: eng-page-in var(--eng-dur-3) var(--eng-ease-standard); }
+.eng-git-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); font-size: var(--eng-fs-sm); }
 /* 「添加技能」的拖拽落区：虚线框 + 中间提示，拖进来时高亮 */
-.eng-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; margin: 14px 0 12px; padding: 26px 18px; border: 1.5px dashed var(--dsw-alias-border-l2, var(--dsw-alias-border-l1)); border-radius: 14px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent); text-align: center; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
-.eng-dropzone:hover { border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 55%, var(--dsw-alias-border-l2, var(--dsw-alias-border-l1))); }
-.eng-dropzone[data-dragging="true"] { border-color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
-.eng-dropzone-title { font-size: 15px; font-weight: 650; letter-spacing: .2px; }
-.eng-dropzone-sub { font-size: 12px; line-height: 1.7; color: var(--dsw-alias-label-secondary); }
-.eng-dropzone-actions { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-.eng-dropzone-link { padding: 0; border: 0; background: none; font: inherit; font-size: 12px; color: var(--dsw-alias-brand-primary); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-.eng-dropzone-file { margin-top: 4px; padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--dsw-alias-label-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent); }
-.eng-fixed-target { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; }
-.eng-fixed-target code { padding: 3px 8px; border-radius: 6px; background: var(--dsw-alias-interactive-bg-hover); }
-.eng-req { margin: 10px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.9; color: var(--dsw-alias-label-secondary); }
-.eng-content { flex: 1 1 auto; width: 100%; max-width: min(1180px, 100%); min-height: 0; margin: 0 auto; padding: clamp(12px, 2.4vw, 24px); overflow-y: auto; overflow-x: auto; }
+.eng-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; margin: 12px 0 12px; padding: 26px 16px; border: 1.5px dashed var(--dsw-alias-border-l2, var(--dsw-alias-border-l1)); border-radius: var(--eng-r-5); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent); text-align: center; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.eng-dropzone:hover { border-color: color-mix(in srgb, var(--eng-accent) 55%, var(--dsw-alias-border-l2, var(--dsw-alias-border-l1))); }
+.eng-dropzone[data-dragging="true"] { border-color: var(--eng-accent); background: var(--eng-accent-soft); }
+.eng-dropzone-title { font-size: var(--eng-fs-h2); font-weight: 650; letter-spacing: .2px; }
+.eng-dropzone-sub { font-size: var(--eng-fs-sm); line-height: 1.7; color: var(--dsw-alias-label-secondary); }
+.eng-dropzone-actions { display: flex; align-items: center; gap: 8px; font-size: var(--eng-fs-sm); }
+.eng-dropzone-link { padding: 0; border: 0; background: none; font: inherit; font-size: var(--eng-fs-sm); color: var(--eng-accent-text); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.eng-dropzone-file { margin-top: 4px; padding: 3px 8px; border-radius: var(--eng-r-full); font-size: var(--eng-fs-sm); color: var(--dsw-alias-label-primary); background: var(--eng-accent-soft); }
+.eng-fixed-target { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: var(--eng-fs-sm); }
+.eng-fixed-target code { padding: 3px 8px; border-radius: var(--eng-r-1); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-req { margin: 8px 0 0; padding-left: 16px; font-size: var(--eng-fs-sm); line-height: 1.9; color: var(--dsw-alias-label-secondary); }
+.eng-content { flex: 1 1 auto; width: 100%; max-width: min(var(--eng-content-max), 100%); min-height: 0; margin: 0 auto; padding: clamp(var(--eng-s-3), 2.4vw, var(--eng-s-6)); overflow-y: auto; overflow-x: auto; }
 .eng-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .eng-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
-.eng-card { min-width: 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); }
-.eng-kpi { display: flex; flex-direction: column; gap: 4px; padding: 15px 17px; }
-.eng-kpi-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); }
-.eng-kpi-value { font-size: 26px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.eng-kpi-unit { margin-left: 4px; font-size: 11px; font-weight: 400; color: var(--dsw-alias-label-secondary); }
-.eng-section { margin-top: 18px; }
-.eng-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.eng-section-title { margin: 0; font-size: 13px; font-weight: 650; }
-.eng-muted { color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.eng-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; cursor: pointer; }
-.eng-btn:hover { border-color: color-mix(in srgb, var(--dsw-alias-label-secondary) 45%, var(--dsw-alias-border-l1)); background: var(--dsw-alias-interactive-bg-hover); }
+.eng-card { min-width: 0; border: 1px solid color-mix(in srgb, var(--dsw-alias-border-l1) 70%, var(--dsw-alias-label-secondary) 30%); border-radius: var(--eng-r-4); background: var(--dsw-alias-bg-layer-1); box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+.eng-kpi { display: flex; flex-direction: column; gap: var(--eng-s-1); padding: var(--eng-card-pad); }
+.eng-kpi-label { font-size: var(--eng-fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); }
+.eng-kpi-value { font-size: var(--eng-fs-display); line-height: var(--eng-lh-display); font-weight: var(--eng-fw-heavy); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.eng-kpi-unit { margin-left: 4px; font-size: var(--eng-fs-micro); font-weight: 400; color: var(--dsw-alias-label-secondary); }
+.eng-section { margin-top: 16px; }
+.eng-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.eng-section-title { margin: 0; font-size: var(--eng-fs-body); font-weight: 650; }
+.eng-muted { color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-sm); }
+.eng-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--eng-s-1); height: var(--eng-btn-h); padding: 0 var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-2); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; transition: background var(--eng-dur-1) var(--eng-ease-standard), border-color var(--eng-dur-1) var(--eng-ease-standard), transform var(--eng-dur-1) var(--eng-ease-standard); }
+.eng-btn:active:not(:disabled) { transform: scale(.98); }
+.eng-btn:hover { border-color: color-mix(in srgb, var(--dsw-alias-label-secondary) 45%, var(--dsw-alias-border-l1)); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
 .eng-btn:disabled { opacity: .45; cursor: not-allowed; }
-.eng-btn-primary { border-color: transparent; background: var(--dsw-alias-brand-primary); color: #fff; }
-.eng-btn-primary:hover { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 86%, #000); }
-.eng-btn-danger { color: var(--eng-bad); }
-.eng-btn-sm { height: 26px; padding: 0 9px; font-size: 11px; }
-.eng-input, .eng-select, .eng-textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; padding: 7px 10px; }
-.eng-input:focus, .eng-select:focus, .eng-textarea:focus { outline: 2px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent); outline-offset: 0; border-color: var(--dsw-alias-brand-primary); }
+.eng-btn-primary { border-color: transparent; background: var(--eng-accent-strong); color: var(--eng-on-brand); }
+.eng-btn-primary:hover { background: color-mix(in srgb, var(--eng-accent-strong) 85%, #000); }
+.eng-btn-danger { color: var(--eng-tone-bad-fg); }
+.eng-btn-sm { height: var(--eng-btn-h-sm); padding: 0 var(--eng-s-2); font-size: var(--eng-fs-micro); }
+.eng-input, .eng-select, .eng-textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-2); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--eng-fs-sm); padding: var(--eng-s-1) var(--eng-s-2); min-height: var(--eng-ctrl-h); }
+.eng-input:focus, .eng-select:focus, .eng-textarea:focus { outline: 2px solid var(--eng-accent-text); outline-offset: 0; border-color: var(--eng-accent-text); }
 .eng-textarea { min-height: 84px; resize: vertical; line-height: 1.55; }
-.eng-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
-.eng-label { font-size: 11px; font-weight: 600; color: var(--dsw-alias-label-secondary); letter-spacing: .03em; }
-.eng-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; }
+.eng-field { display: flex; flex-direction: column; gap: var(--eng-s-1); margin-bottom: var(--eng-s-3); }
+.eng-label { font-size: var(--eng-fs-micro); font-weight: var(--eng-fw-strong); color: var(--dsw-alias-label-secondary); letter-spacing: .03em; }
+.eng-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.eng-record { display: flex; flex-direction: column; gap: var(--eng-s-4); padding: var(--eng-s-5); }
+.eng-form-group { padding-top: var(--eng-s-3); border-top: 1px solid var(--dsw-alias-border-l1); }
+.eng-record > .eng-form-group:first-of-type { padding-top: 0; border-top: 0; }
+.eng-form-group-title { margin-bottom: var(--eng-s-2); font-size: var(--eng-fs-h2); font-weight: var(--eng-fw-strong); cursor: pointer; }
+.eng-receipt { padding: var(--eng-s-3); border: 1px solid color-mix(in srgb, var(--eng-tone-ok-fg) 30%, var(--dsw-alias-border-l1)); border-radius: var(--eng-r-3); background: var(--eng-tone-ok-bg); }
+.eng-receipt-title { margin-bottom: var(--eng-s-1); color: var(--eng-tone-ok-fg); font-weight: var(--eng-fw-strong); }
 .eng-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.eng-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.eng-badge { display: inline-flex; align-items: center; gap: var(--eng-s-1); height: var(--eng-badge-h); padding: 0 var(--eng-s-2); border-radius: var(--eng-r-full); font-size: var(--eng-fs-micro); font-weight: var(--eng-fw-strong); white-space: nowrap; color: var(--eng-tone-muted-fg); background: var(--eng-tone-muted-bg); }
+.eng-badge[data-tone="ok"] { color: var(--eng-tone-ok-fg); background: var(--eng-tone-ok-bg); }
+.eng-badge[data-tone="warn"] { color: var(--eng-tone-warn-fg); background: var(--eng-tone-warn-bg); }
+.eng-badge[data-tone="bad"] { color: var(--eng-tone-bad-fg); background: var(--eng-tone-bad-bg); }
+.eng-badge[data-tone="brand"] { color: var(--eng-tone-brand-fg); background: var(--eng-tone-brand-bg); }
+.eng-badge[data-tone="muted"] { color: var(--eng-tone-muted-fg); background: var(--eng-tone-muted-bg); }
 .eng-list { display: flex; flex-direction: column; }
-.eng-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 92px 96px; gap: 10px; align-items: center; padding: 9px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); cursor: pointer; }
+.eng-list > * { animation: eng-list-in var(--eng-dur-3) var(--eng-ease-standard) both; }
+.eng-list > *:nth-child(1) { animation-delay: 0ms; }
+.eng-list > *:nth-child(2) { animation-delay: var(--eng-stagger); }
+.eng-list > *:nth-child(3) { animation-delay: calc(var(--eng-stagger) * 2); }
+.eng-list > *:nth-child(4) { animation-delay: calc(var(--eng-stagger) * 3); }
+.eng-list > *:nth-child(5) { animation-delay: calc(var(--eng-stagger) * 4); }
+.eng-list > *:nth-child(6) { animation-delay: calc(var(--eng-stagger) * 5); }
+.eng-list > *:nth-child(n+7) { animation-delay: calc(var(--eng-stagger) * 6); }
+@keyframes eng-list-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.eng-row, .eng-table tbody tr { content-visibility: auto; contain-intrinsic-size: auto 36px; }
+.eng-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 92px 96px; gap: var(--eng-s-3); align-items: center; min-height: var(--eng-row-h); padding: var(--eng-row-py) var(--eng-s-3); border-bottom: 1px solid var(--dsw-alias-border-l1); cursor: pointer; }
 .eng-row:last-child { border-bottom: 0; }
-.eng-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.eng-row[data-on="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); }
+.eng-row:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-row[data-on="true"] { background: var(--eng-accent-soft); }
 .eng-row-main { min-width: 0; }
 .eng-row-intent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 560; }
-.eng-row-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--dsw-alias-label-secondary); }
-.eng-mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11px; }
-.eng-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.eng-table th { padding: 8px 10px; text-align: left; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
-.eng-table td { padding: 8px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
+.eng-row-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
+.eng-mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: var(--eng-fs-mono); font-variant-numeric: tabular-nums; }
+.eng-table { width: 100%; border-collapse: collapse; font-size: var(--eng-fs-sm); }
+.eng-table th { padding: 8px 8px; text-align: left; font-size: var(--eng-fs-micro); font-weight: 600; letter-spacing: .05em; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-table td { padding: 8px 8px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
 .eng-table tr:last-child td { border-bottom: 0; }
-.eng-scroll .eng-table thead th { position: sticky; top: 0; z-index: 1; background: var(--dsw-alias-bg-layer-2); }
-.eng-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: 10px; font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
-.eng-tip:hover, .eng-tip:focus-visible { color: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); outline: none; }
+.eng-scroll .eng-table thead th { position: sticky; top: 0; z-index: 1; background: var(--dsw-alias-bg-layer-1); }
+.eng-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-micro); font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
+.eng-tip:hover, .eng-tip:focus-visible { color: var(--eng-accent-text); border-color: var(--eng-accent); outline: none; }
 /* 悬浮说明挂在 <body> 上（position: fixed）：宽度按视口上限收，左右上下再夹回视口内，
    不会被面板的 overflow 容器裁掉半截，也不会把长句子排出屏幕。 */
-.eng-tip-layer { position: fixed; z-index: 2147483000; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); background: var(--dsw-alias-bg-layer-2, #ffffff); color: var(--dsw-alias-label-primary, #1f2329); font: 11px/1.55 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0,0,0,.2); pointer-events: none; }
-.eng-subnav { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
-.eng-subnav-item { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
-.eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.eng-subnav-item[data-active="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; margin-bottom: 10px; }
-.eng-git-repo { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
-.eng-git-repo:last-child { border-bottom: 0; }.eng-empty { padding: 28px 16px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.eng-banner { margin-bottom: 14px; padding: 9px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.eng-tip-layer { position: fixed; z-index: 2147483000; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 8px 8px; border-radius: var(--eng-r-2); border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); background: var(--dsw-alias-bg-layer-2, #ffffff); color: var(--dsw-alias-label-primary, #1f2329); font: 11px/1.55 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0,0,0,.2); pointer-events: none; }
+.eng-subnav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+.eng-subnav-item { padding: 4px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; }
+.eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); color: var(--dsw-alias-label-primary); }
+.eng-subnav-item[data-active="true"] { border-color: transparent; background: var(--eng-accent-soft); color: var(--eng-accent-text); font-weight: 600; }.eng-git-repos { max-height: 240px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); margin-bottom: 8px; }
+.eng-git-repo { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-git-repo:last-child { border-bottom: 0; }.eng-empty { padding: var(--eng-s-7) var(--eng-s-4); text-align: center; color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-sm); }
+.eng-banner { margin-bottom: 12px; padding: 8px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-sm); }
 .eng-banner-bad { border-color: color-mix(in srgb, var(--eng-bad) 40%, var(--dsw-alias-border-l1)); color: var(--eng-bad); }
-.eng-detail { padding: 16px; }
-.eng-detail-title { font-size: 14px; font-weight: 650; margin: 0 0 4px; }
+.eng-detail { padding: var(--eng-s-4); animation: eng-detail-in var(--eng-dur-3) var(--eng-ease-standard); }
+@keyframes eng-detail-in { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: translateX(0); } }
+.eng-detail-title { font-size: var(--eng-fs-h2); font-weight: 650; margin: 0 0 4px; }
 /* 技能详情上面的管理卡：两颗胶囊一行放这，详情卡在它下面 */
-.eng-skill-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; }
-.eng-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 10px; font-size: 12px; }
+.eng-skill-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; }
+.eng-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 4px 8px; font-size: var(--eng-fs-sm); }
 .eng-kv dt { color: var(--dsw-alias-label-secondary); }
 .eng-kv dd { margin: 0; word-break: break-word; }
-.eng-pre { margin: 0; padding: 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; background: var(--dsw-alias-bg-layer-1); font-family: ui-monospace, Consolas, monospace; font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-.eng-chipbar { display: flex; gap: 6px; flex-wrap: wrap; }
-.eng-chip { padding: 3px 9px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; cursor: pointer; }
-.eng-chip[data-on="true"] { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; }
+.eng-pre { margin: 0; padding: var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-layer-2); font-family: ui-monospace, Consolas, monospace; font-size: var(--eng-fs-mono); line-height: var(--eng-lh-mono); white-space: pre-wrap; word-break: break-word; }
+.eng-chipbar { display: flex; gap: 4px; flex-wrap: wrap; }
+.eng-chip { padding: 3px 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-micro); cursor: pointer; }
+.eng-chip[data-on="true"] { border-color: transparent; background: var(--eng-accent-soft); color: var(--eng-accent-text); font-weight: 600; }
 .eng-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .eng-toolbar .eng-input { width: min(220px, 100%); }
 .eng-toolbar .eng-select { width: min(140px, 100%); }
-.eng-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+.eng-pager { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--dsw-alias-border-l1); }
+.eng-pager .eng-muted { margin-right: auto; }
+.eng-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
 .eng-stack { display: flex; flex-direction: column; gap: 12px; }
-.eng-skill-row { padding: 10px 14px; display: flex; gap: 12px; align-items: center; cursor: pointer; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-skill-row { padding: 8px 12px; display: flex; gap: 12px; align-items: center; cursor: pointer; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-skill-row:last-child { border-bottom: 0; }
-.eng-skill-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.eng-skill-row[data-on="true"] { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 9%, transparent); }
+.eng-skill-row:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-skill-row[data-on="true"] { background: var(--eng-accent-soft); }
 .eng-skill-name { font-weight: 620; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.eng-skill-desc { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
+.eng-skill-desc { font-size: var(--eng-fs-sm); color: var(--dsw-alias-label-secondary); margin-top: 2px; }
 /* 技能套件树：chevron 只负责展开/收起，行本身负责选中详情 */
 .eng-tree-row { padding-top: 8px; padding-bottom: 8px; align-items: flex-start; }
-.eng-tree-toggle { flex: 0 0 18px; width: 18px; height: 18px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 10px; line-height: 1; cursor: pointer; }
-.eng-tree-toggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.eng-tree-toggle:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-.eng-suite-tag { display: inline-flex; align-items: center; height: 18px; margin-left: 8px; padding: 0 7px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 10px; font-weight: 500; cursor: pointer; vertical-align: middle; }
-.eng-suite-tag:hover { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); }
+.eng-tree-toggle { flex: 0 0 18px; width: 18px; height: 18px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-micro); line-height: 1; cursor: pointer; }
+.eng-tree-toggle:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); color: var(--dsw-alias-label-primary); }
+.eng-tree-toggle:focus-visible { outline: 2px solid var(--eng-accent-text); outline-offset: 1px; }
+.eng-suite-tag { display: inline-flex; align-items: center; height: 18px; margin-left: 8px; padding: 0 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-micro); font-weight: 500; cursor: pointer; vertical-align: middle; }
+.eng-suite-tag:hover { border-color: var(--eng-accent); color: var(--eng-accent-text); }
 .eng-suite-tag[data-static="true"] { cursor: default; }
-.eng-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
-.eng-crumb button { padding: 0; border: 0; background: none; color: var(--dsw-alias-brand-primary); font: inherit; font-size: 11px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.eng-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 4px; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
+.eng-crumb button { padding: 0; border: 0; background: none; color: var(--eng-accent-text); font: inherit; font-size: var(--eng-fs-micro); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .eng-crumb button:hover { color: var(--dsw-alias-label-primary); }
 .eng-crumb-sep { opacity: .5; }
-.eng-nav-sep { height: 1px; margin: 10px 8px; background: var(--dsw-alias-border-l1); }
+.eng-nav-sep { height: 1px; margin: 8px 8px; background: var(--dsw-alias-border-l1); }
 @container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
-@container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
+@container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 8px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 4px 8px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 12px; } .eng-top { padding: 8px 12px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
-@media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 10px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 6px 9px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 14px; } .eng-top { padding: 10px 14px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) { .eng-app { flex-direction: column; } .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); } .eng-brand { padding: 0 8px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 4px 8px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 12px; } .eng-top { padding: 8px 12px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } }
 /* 选中技能时详情卡置顶；管理卡再压它上面（order -2 < -1）。
    注意：这两条是全局的——之前只给详情 -1、没管管理卡，管理卡就掉到详情下面去了。 */
 .eng-split[data-open="true"] .eng-stack > .eng-skill-actions { order: -2; }
@@ -210,24 +334,76 @@ window.__ModuleLoader__.load({
   .eng-content[data-fill="true"] > .eng-fill > .eng-split > * { max-height: none; overflow: visible; }
 }
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
-.eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 12px; background: transparent; }
+.eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: var(--eng-r-4); background: transparent; }
 .eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
 .eng-content-full { padding: 0; max-width: none; overflow: hidden; display: flex; }
 .eng-content-full .eng-graph-canvas-wrap { flex: 1 1 auto; height: 100%; min-height: 0; aspect-ratio: auto; border-radius: 0; }
-.eng-graph-detail { position: absolute; right: 14px; bottom: 14px; z-index: 2; width: min(320px, 72%); padding: 12px 14px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.14); }
-.eng-graph-detail-title { font-size: 13px; font-weight: 650; margin: 0 0 6px; word-break: break-word; }
-.eng-graph-detail-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.eng-graph-detail { position: absolute; right: 14px; bottom: 14px; z-index: 2; width: min(320px, 72%); padding: 12px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.14); }
+.eng-graph-detail-title { font-size: var(--eng-fs-body); font-weight: 650; margin: 0 0 4px; word-break: break-word; }
+.eng-graph-detail-meta { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
 /* 关系图右上角配色胶囊：跟随主题 / 蓝紫星辰（dsh-codex-effort-slider 的渐变） */
-.eng-graph-pill { position: absolute; top: 14px; right: 14px; z-index: 3; display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent); backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(0,0,0,.10); }
-.eng-graph-pill button { border: 0; border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 12px; line-height: 1.2; color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; white-space: nowrap; }
-.eng-graph-pill button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
-.eng-graph-pill button[data-active="true"] { color: #fff; background: var(--dsw-alias-brand-primary); }
+.eng-graph-pill { position: absolute; top: 14px; right: 14px; z-index: 3; display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent); backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+.eng-graph-pill button { border: 0; border-radius: var(--eng-r-full); padding: 4px 12px; font: inherit; font-size: var(--eng-fs-sm); line-height: 1.2; color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; white-space: nowrap; }
+.eng-graph-pill button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-graph-pill button[data-active="true"] { color: #fff; background: var(--eng-accent-strong); }
 .eng-graph-pill button[data-tone="codex"][data-active="true"] { background: linear-gradient(90deg, #4d93f8 0%, #6d28d9 42%, #9333ea 74%, #c084fc 100%); }
 /* 左下角：画布深浅背景切换（与右上角配色胶囊同一套皮肤） */
 .eng-graph-pill-bottom { top: auto; right: auto; bottom: 14px; left: 14px; }
+.eng-graph-pill-top { top: 14px; right: auto; left: 14px; }
+.eng-graph-legend { position: absolute; left: 14px; top: 58px; z-index: 3; width: min(300px, 72%); display: flex; flex-direction: column; gap: var(--eng-s-2); padding: var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); }
+.eng-graph-legend-list { display: flex; flex-direction: column; gap: var(--eng-s-1); max-height: 200px; overflow: auto; }
+.eng-graph-legend-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) 40px; gap: var(--eng-s-2); align-items: center; font-size: var(--eng-fs-sm); }
+.eng-legend-dot { width: 7px; height: 7px; border-radius: var(--eng-r-full); background: var(--eng-accent); }
 .eng-graph-pill button[data-tone="light"] { color: #1f2430; }
 .eng-graph-pill button[data-tone="light"][data-active="true"] { color: #1f2430; background: #eef1f6; }
 .eng-graph-pill button[data-tone="dark"][data-active="true"] { color: #f4f6fb; background: #171b28; }
+.eng-warn-text { color: var(--eng-tone-warn-fg); }
+.eng-bad-text { color: var(--eng-tone-bad-fg); }
+/* P2 概览：7 日柱条 / 类型分布 / 存储格 / 待判定 */
+.eng-spark { display: flex; align-items: flex-end; gap: var(--eng-s-1); height: 52px; padding-top: var(--eng-s-2); }
+.eng-spark-col { flex: 1 1 0; display: flex; align-items: flex-end; height: 100%; min-width: 6px; }
+.eng-spark-bar { width: 100%; min-height: 2px; border-radius: var(--eng-r-1) var(--eng-r-1) 0 0; background: color-mix(in srgb, var(--eng-accent) 55%, transparent); }
+.eng-dist { display: flex; flex-direction: column; gap: var(--eng-s-2); }
+.eng-dist-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 40px; gap: var(--eng-s-2); align-items: center; font-size: var(--eng-fs-sm); }
+.eng-dist-track { height: 6px; border-radius: var(--eng-r-full); background: var(--eng-ink-8); overflow: hidden; }
+.eng-dist-fill { height: 100%; border-radius: inherit; background: var(--eng-accent); }
+.eng-section-card { padding: var(--eng-card-pad); }
+.eng-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--eng-s-2); margin-bottom: var(--eng-s-2); }
+.eng-section-head-pad { padding: var(--eng-s-3) var(--eng-s-3) var(--eng-s-1); margin-bottom: 0; }
+.eng-section-note { margin-top: var(--eng-s-2); }
+.eng-storage-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--eng-s-3); }
+@container eng (max-width: 680px) { .eng-storage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.eng-stat-main { margin-top: var(--eng-s-1); font-size: var(--eng-fs-h2); font-weight: var(--eng-fw-strong); line-height: var(--eng-lh-h2); }
+.eng-subsection { margin-top: var(--eng-s-3); padding-top: var(--eng-s-2); border-top: 1px solid var(--dsw-alias-border-l1); }
+.eng-subsection-head { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: var(--eng-s-1) 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.eng-subsection-body { margin-top: var(--eng-s-2); display: flex; flex-direction: column; gap: var(--eng-s-1); }
+.eng-cold-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--eng-s-2); align-items: center; font-size: var(--eng-fs-sm); }
+.eng-strong { font-weight: var(--eng-fw-strong); }
+.eng-row-button { width: 100%; border: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); background: transparent; color: inherit; font: inherit; text-align: left; }
+.eng-pending-row { display: flex; align-items: center; gap: var(--eng-s-2); }
+.eng-tabs { display: flex; gap: var(--eng-s-1); margin: var(--eng-s-3) 0 var(--eng-s-2); border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-tab { padding: var(--eng-s-1) var(--eng-s-2); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; }
+.eng-tab[data-active="true"] { color: var(--eng-accent-text); border-bottom-color: var(--eng-accent-text); font-weight: var(--eng-fw-strong); }
+.eng-tab-body { min-height: 120px; }
+.eng-timeline { display: flex; flex-direction: column; gap: var(--eng-s-2); }
+.eng-timeline-item { display: grid; grid-template-columns: 120px 90px minmax(0, 1fr); gap: var(--eng-s-2); align-items: center; font-size: var(--eng-fs-sm); }
+.eng-note { margin-top: var(--eng-s-3); display: flex; flex-direction: column; gap: var(--eng-s-1); }
+.eng-pre-json { max-height: 320px; overflow: auto; }
+.eng-detail-actions { margin-top: var(--eng-s-4); }
+/* 骨架 / 错误态 / Kbd（P1：S3 组件 + S7 三态） */
+.eng-skeleton { display: flex; flex-direction: column; gap: var(--eng-s-2); padding: var(--eng-s-3); }
+.eng-skeleton-row { height: 10px; border-radius: var(--eng-r-1); background: linear-gradient(90deg, var(--eng-skeleton-base) 0%, var(--eng-skeleton-hi) 50%, var(--eng-skeleton-base) 100%); background-size: 200% 100%; animation: eng-shimmer 1.2s linear infinite; }
+@keyframes eng-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.eng-error-state { display: flex; flex-direction: column; align-items: flex-start; gap: var(--eng-s-2); padding: var(--eng-s-4); border: 1px solid color-mix(in srgb, var(--eng-tone-bad-fg) 35%, var(--dsw-alias-border-l1)); border-radius: var(--eng-r-3); background: var(--eng-tone-bad-bg); }
+.eng-error-title { font-weight: var(--eng-fw-strong); color: var(--eng-tone-bad-fg); }
+.eng-kbd { display: inline-flex; align-items: center; height: var(--eng-kbd-h); padding: 0 var(--eng-s-1); border: 1px solid var(--dsw-alias-border-l1); border-bottom-width: 2px; border-radius: var(--eng-r-1); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-micro); font-family: inherit; }
+/* 焦点环：键盘可见，鼠标不打扰 */
+.eng-btn:focus-visible, .eng-row:focus-visible, .eng-skill-row:focus-visible, .eng-chip:focus-visible, .eng-input:focus-visible, .eng-select:focus-visible, .eng-textarea:focus-visible { outline: var(--eng-focus-w) solid var(--eng-accent-text); outline-offset: var(--eng-focus-offset); }
+/* 系统减弱动效：无位移、无 shimmer、无缩放（放在 PANEL_CSS 最后） */
+@media (prefers-reduced-motion: reduce) {
+  .eng-app *, .eng-app *::before, .eng-app *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  .eng-btn:active:not(:disabled) { transform: none; }
+}
 `
     function ensureStyles() {
       try {
@@ -241,13 +417,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const TONES = {
-      ok: { color: 'var(--eng-ok)', bg: 'color-mix(in srgb, var(--eng-ok) 14%, transparent)' },
-      warn: { color: 'var(--eng-warn)', bg: 'color-mix(in srgb, var(--eng-warn) 14%, transparent)' },
-      bad: { color: 'var(--eng-bad)', bg: 'color-mix(in srgb, var(--eng-bad) 14%, transparent)' },
-      muted: { color: 'var(--dsw-alias-label-secondary)', bg: 'color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent)' },
-      brand: { color: 'var(--dsw-alias-brand-primary)', bg: 'color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent)' },
-    }
+    const TONES = { ok: true, warn: true, bad: true, muted: true, brand: true }
 
     const OUTCOMES = {
       success: ['成功', 'ok'], accepted: ['通过', 'ok'], partial: ['部分', 'warn'],
@@ -265,6 +435,18 @@ window.__ModuleLoader__.load({
     function skillStateOf(value) {
       return SKILL_STATES[String(value || 'new')] || [String(value || '待验证'), 'muted']
     }
+    /** 主题强调色：默认皮肤的品牌色是黑白（中性），此时退回 DSH 蓝；有彩色主题则跟随主题。 */
+    function pickAccent(rgb, dark = false) {
+      const fallback = dark ? '#5686fe' : '#4176e6'
+      if (!Array.isArray(rgb) || rgb.length < 3) return fallback
+      const [r, g, b] = rgb.map((value) => Number(value))
+      if (![r, g, b].every((value) => Number.isFinite(value))) return fallback
+      const chroma = Math.max(r, g, b) - Math.min(r, g, b)
+      // 默认主题 brand-primary 是 #0f1115 / #f9fafb，chroma 只有个位数；彩色主题远高于 16。
+      if (chroma < 16) return fallback
+      return `#${[r, g, b].map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0')).join('')}`
+    }
+
     function fmtNumber(value) {
       const number = Number(value)
       if (!Number.isFinite(number)) return '—'
@@ -443,8 +625,8 @@ window.__ModuleLoader__.load({
     }
 
     function Badge(props) {
-      const tone = TONES[props.tone] || TONES.muted
-      return h('span', { className: 'eng-badge', style: { color: tone.color, background: tone.bg } }, props.children)
+      const tone = Object.prototype.hasOwnProperty.call(TONES, props.tone) ? props.tone : 'muted'
+      return h('span', { className: 'eng-badge', 'data-tone': tone }, props.children)
     }
     function Button(props) {
       const kind = props.kind === 'primary' ? 'eng-btn eng-btn-primary' : props.kind === 'danger' ? 'eng-btn eng-btn-danger' : 'eng-btn'
@@ -478,7 +660,7 @@ window.__ModuleLoader__.load({
       layer.setAttribute('role', 'tooltip')
       layer.textContent = text
       document.body.appendChild(layer)
-      // 说明层在 <body> 下，拿不到面板里那层 --dsw-alias-* 变量；从锚点算出来的值抄过来，
+      // 说明层在 <body> 下，拿不到面板里那层宿主 alias 变量；从锚点算出来的值抄过来，
       // 浅色/深色主题气泡都跟着面板走（抄不到就用 CSS 里的兜底色）。
       const readStyle = win.getComputedStyle || (document.defaultView && document.defaultView.getComputedStyle)
       if (typeof readStyle === 'function') {
@@ -532,14 +714,41 @@ window.__ModuleLoader__.load({
         onBlur: hideTipLayer,
       }, '?')
     }
+    let fieldSeq = 0
     function Field(props) {
+      const idRef = useRef(null)
+      if (idRef.current === null) {
+        fieldSeq += 1
+        idRef.current = `eng-field-${fieldSeq}`
+      }
+      const fieldId = idRef.current
+      const child = props.children
+      const linked = child !== null && typeof child === 'object' && !Array.isArray(child)
+        ? { ...child, props: { ...(child.props || {}), id: (child.props && child.props.id) || fieldId } }
+        : child
       return h('div', { className: 'eng-field', style: props.wide ? { gridColumn: '1 / -1' } : undefined },
-        props.label ? h('label', { className: 'eng-label' }, props.label, props.tip ? h(Tip, { text: props.tip }) : null) : null,
-        props.children,
+        props.label ? h('label', { className: 'eng-label', htmlFor: fieldId }, props.label, props.tip ? h(Tip, { text: props.tip }) : null) : null,
+        linked,
         props.hint ? h('span', { className: 'eng-muted' }, props.hint) : null)
     }
     function Empty(props) {
       return h('div', { className: 'eng-empty' }, props.children || '暂无数据')
+    }
+    /** 加载骨架：只在 >250ms 的等待里显示（调用方控制），不挡读屏。 */
+    function Skeleton(props) {
+      const rows = Math.max(1, Math.min(8, Number(props && props.rows) || 3))
+      return h('div', { className: 'eng-skeleton', 'aria-hidden': 'true' },
+        Array.from({ length: rows }).map((_, index) => h('div', { key: index, className: 'eng-skeleton-row', style: { width: `${Math.max(40, 100 - index * 8)}%` } })))
+    }
+    /** 错误态：标题 + 原因 + 重试；比一行 Banner 更适合整块内容读取失败。 */
+    function ErrorState(props) {
+      return h('div', { className: 'eng-error-state', role: 'alert' },
+        h('div', { className: 'eng-error-title' }, (props && props.title) || '读取失败'),
+        h('div', { className: 'eng-muted' }, (props && props.message) || '未知错误'),
+        props && typeof props.onRetry === 'function' ? h(Button, { small: true, onClick: props.onRetry }, '重试') : null)
+    }
+    function Kbd(props) {
+      return h('kbd', { className: 'eng-kbd' }, props.children)
     }
     /** 经验库自己的标记：双侧记忆弧 + 中心节点（侧栏、品牌位、卡片共用一套）。 */
     /** 经验库标记（B：记忆螺旋）——外圈收进内圈，中心一点；侧栏、面板头、卡片共用。 */
@@ -572,10 +781,11 @@ window.__ModuleLoader__.load({
         spark: 'M8 1.8l1.7 4.1 4.4.4-3.4 2.9 1 4.3L8 11.4l-3.7 2.1 1-4.3L1.9 6.3l4.4-.4L8 1.8Z',
         tag: 'M2 3h5.6l6.4 6.4-4.6 4.6L3 7.6V3Zm2.6 2.4h.01',
         clock: 'M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12Zm0-9v3.4l2.3 1.4',
+        archive: 'M2 3.5h12v2.5H2V3.5Zm1 3.5h10v6.5H3V7Zm3.5 2h3',
         graph: 'M3 3h3v3H3V3Zm7 7h3v3h-3v-3ZM3 13h3v3H3v-3Zm4-9h3M6 6l3 3m2 4h3M14 10l-3-3',
         gear: 'M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Zm5.4-2.2c0-.5-.1-.9-.2-1.3l1.5-1.1-1.4-2.4-1.8.7c-.6-.5-1.3-.9-2-1.2L9.2 1H6.8l-.3 1.7c-.7.3-1.4.7-2 1.2l-1.8-.7L1.3 5.6l1.5 1.1c-.1.4-.2.8-.2 1.3s.1.9.2 1.3L1.3 10.4l1.4 2.4 1.8-.7c.6.5 1.3.9 2 1.2l.3 1.7h2.4l.3-1.7c.7-.3 1.4-.7 2-1.2l1.8.7 1.4-2.4-1.5-1.1c.1-.4.2-.8.2-1.3Z',
       }
-      return h('svg', { width: 15, height: 15, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { flex: '0 0 auto', opacity: .9 } },
+      return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { flex: '0 0 auto', opacity: .9 } },
         h('path', { d: paths[props.name] || paths.overview }))
     }
 
@@ -602,106 +812,312 @@ window.__ModuleLoader__.load({
       return h('div', { className: `eng-banner${props.bad ? ' eng-banner-bad' : ''}` }, props.children)
     }
 
+    /** 轻量提示：组件树外也能调用（复制成功/失败），Console 统一收集成 Toast。 */
+    function toast(message, tone = 'ok') {
+      try {
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('eng-toast', { detail: { message: String(message), tone } }))
+      } catch { /* 无 window 的测试环境忽略 */ }
+    }
+
+    /** 顶部刷新：不重挂页面，通知各页自己 reload，保留选中与滚动。 */
+    function useRefreshEvent(reload) {
+      useEffect(() => {
+        if (typeof window === 'undefined') return undefined
+        const handler = () => { try { reload() } catch { /* 页面已卸载 */ } }
+        window.addEventListener('eng-refresh', handler)
+        return () => window.removeEventListener('eng-refresh', handler)
+      }, [reload])
+    }
+
+    /** 模态焦点生命周期：初始焦点、Tab 循环、Esc 关闭、关闭后还原。 */
+    function useModalFocus(ref, onClose, enabled = true) {
+      const closeRef = useRef(onClose)
+      closeRef.current = onClose
+      useEffect(() => {
+        if (!enabled || typeof document === 'undefined') return undefined
+        const node = ref.current
+        if (node === null) return undefined
+        const previous = document.activeElement
+        const focusables = () => [...node.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')].filter((item) => !item.disabled)
+        const first = focusables()[0]
+        if (first && typeof first.focus === 'function') first.focus()
+        const onKey = (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            if (typeof closeRef.current === 'function') closeRef.current()
+            return
+          }
+          if (event.key !== 'Tab') return
+          const items = focusables()
+          if (items.length === 0) return
+          const firstItem = items[0]
+          const lastItem = items[items.length - 1]
+          if (event.shiftKey && document.activeElement === firstItem) { event.preventDefault(); lastItem.focus() }
+          else if (!event.shiftKey && document.activeElement === lastItem) { event.preventDefault(); firstItem.focus() }
+        }
+        document.addEventListener('keydown', onKey)
+        return () => {
+          document.removeEventListener('keydown', onKey)
+          if (previous && typeof previous.focus === 'function') previous.focus()
+        }
+      }, [ref, enabled])
+    }
+
+    const SHORTCUTS = [
+      ['Ctrl / Cmd + K', '命令面板'],
+      ['?', '快捷键表'],
+      ['g 然后 o / e / r / n / s / t / u / ,', '跳概览 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置'],
+      ['j / k / Enter', '列表下移 / 上移 / 打开'],
+      ['Ctrl / Cmd + Enter', '表单提交'],
+      ['Shift + R', '刷新当前页'],
+      ['Esc', '关闭最上层'],
+    ]
+
+    function ShortcutsDialog(props) {
+      const modalRef = useRef(null)
+      useModalFocus(modalRef, props.onClose, true)
+      return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '快捷键' },
+        h('div', { className: 'eng-modal', ref: modalRef },
+          h('h3', { className: 'eng-modal-title' }, '快捷键'),
+          h('div', { className: 'eng-shortcut-list' }, SHORTCUTS.map(([keys, label]) => h('div', { key: keys, className: 'eng-shortcut-row' },
+            h(Kbd, null, keys), h('span', { className: 'eng-muted' }, label)))),
+          h('div', { className: 'eng-modal-actions' }, h(Button, { onClick: props.onClose }, '关闭'))))
+    }
+
+    function CommandPalette(props) {
+      const [query, setQuery] = useState('')
+      const [index, setIndex] = useState(0)
+      const inputRef = useRef(null)
+      const modalRef = useRef(null)
+      useModalFocus(modalRef, props.onClose, true)
+      const items = props.items.filter((item) => {
+        const needle = query.trim().toLowerCase()
+        return needle === '' || item.label.toLowerCase().includes(needle) || item.group.toLowerCase().includes(needle)
+      })
+      useEffect(() => { if (inputRef.current && typeof inputRef.current.focus === 'function') inputRef.current.focus() }, [])
+      useEffect(() => { setIndex(0) }, [query])
+      const run = (item) => { props.onClose(); if (item && typeof item.run === 'function') item.run() }
+      return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '命令面板' },
+        h('div', { className: 'eng-modal eng-palette', ref: modalRef },
+          h('input', {
+            ref: inputRef,
+            className: 'eng-input eng-palette-input',
+            placeholder: '输入命令，例如「记录」「刷新」「导入」…',
+            value: query,
+            onChange: (event) => setQuery(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === 'ArrowDown') { event.preventDefault(); setIndex(Math.min(items.length - 1, index + 1)) }
+              else if (event.key === 'ArrowUp') { event.preventDefault(); setIndex(Math.max(0, index - 1)) }
+              else if (event.key === 'Enter') { event.preventDefault(); run(items[index]) }
+              else if (event.key === 'Escape') { event.preventDefault(); props.onClose() }
+            },
+          }),
+          items.length === 0
+            ? h(Empty, null, '没有匹配的命令')
+            : h('div', { className: 'eng-palette-list', role: 'listbox' }, items.map((item, itemIndex) => h('button', {
+              key: item.id,
+              type: 'button',
+              role: 'option',
+              'aria-selected': itemIndex === index ? 'true' : 'false',
+              className: 'eng-palette-item',
+              'data-active': itemIndex === index ? 'true' : 'false',
+              onMouseEnter: () => setIndex(itemIndex),
+              onClick: () => run(item),
+            }, h('span', { className: 'eng-palette-group' }, item.group), h('span', { className: 'eng-palette-label' }, item.label)))),
+          h('div', { className: 'eng-palette-foot' }, h(Kbd, null, '↑↓'), '选择', h(Kbd, null, 'Enter'), '执行', h(Kbd, null, 'Esc'), '关闭')))
+    }
+
+    /** 7 日调用迷你柱条：只表达趋势，不替代图表库。 */
+    function Sparkline(props) {
+      const points = Array.isArray(props.points) ? props.points : []
+      const max = Math.max(1, ...points.map((point) => Number(point.count) || 0))
+      return h('div', { className: 'eng-spark', role: 'img', 'aria-label': props.label || '最近 7 天调用' },
+        points.map((point, index) => h('div', { key: index, className: 'eng-spark-col', title: `${point.date} · ${point.count} 次` },
+          h('div', { className: 'eng-spark-bar', style: { height: `${Math.round(((Number(point.count) || 0) / max) * 100)}%` } }))))
+    }
+
+    /** 数字 KPI：首次进场 400ms 计数；尊重 reduced-motion，非数字原样显示。 */
+    function Metric(props) {
+      const target = Number(props.value)
+      const numeric = props.value !== null && props.value !== '' && props.value !== undefined && Number.isFinite(target)
+      const [display, setDisplay] = useState(numeric ? 0 : props.value)
+      const fromRef = useRef(numeric ? 0 : 0)
+      useEffect(() => {
+        if (!numeric) { setDisplay(props.value); return undefined }
+        const reduce = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        if (reduce || typeof requestAnimationFrame !== 'function') { setDisplay(props.value); fromRef.current = target; return undefined }
+        const from = Number(fromRef.current) || 0
+        const started = Date.now()
+        let raf = 0
+        const tick = () => {
+          const progress = Math.min(1, (Date.now() - started) / 400)
+          const eased = 1 - Math.pow(1 - progress, 3)
+          setDisplay(Math.round(from + (target - from) * eased))
+          if (progress < 1) {
+            raf = requestAnimationFrame(tick)
+          } else {
+            fromRef.current = target
+          }
+        }
+        raf = requestAnimationFrame(tick)
+        return () => cancelAnimationFrame(raf)
+      }, [props.value, numeric, target])
+      return h('span', null, display === undefined || display === null ? '—' : String(display))
+    }
+
     function Overview(props) {
       const recent = useLoad(useCallback(() => request('/experiences?limit=6'), []))
+      const pending = useLoad(useCallback(() => request('/pending'), []))
+      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload() }, [recent.reload, pending.reload]))
+      const [coldOpen, setColdOpen] = useState(Boolean(props.state && props.state.cold && Number(props.state.cold.total) > 0))
+      const [notice, setNotice] = useState('')
       const state = props.state || {}
       const totals = state.totals || {}
       const usage = state.usage || {}
       const summary = state.skillSummary || {}
       const storage = state.storage !== null && typeof state.storage === 'object' ? state.storage : null
       const cold = state.cold !== null && typeof state.cold === 'object' ? state.cold : { years: [], total: 0, samples: [] }
-      // 有冷档时默认展开（示例数据/真触发安全阀后用户一眼能看到）；无冷档保持折叠。
-      const [coldOpen, setColdOpen] = useState(Number(cold.total) > 0)
       const legacy = storage !== null && storage.legacy !== null && typeof storage.legacy === 'object' ? storage.legacy : { exists: false, bytes: 0 }
+      const byDay = Array.isArray(usage.byDay) ? usage.byDay : []
+      const byCategory = state.stats && typeof state.stats === 'object' && state.stats.byCategory && typeof state.stats.byCategory === 'object' ? state.stats.byCategory : {}
+      const typeRows = Object.entries(byCategory).sort((left, right) => (Number(right[1]) || 0) - (Number(left[1]) || 0)).slice(0, 6)
+      const typeMax = Math.max(1, ...typeRows.map(([, value]) => Number(value) || 0))
+      const pendingRows = Array.isArray(pending.data) ? pending.data : []
       const kpis = [
         ['可见经验', totals.visible, '条'],
         ['固化技能', totals.skills, '个'],
         ['今日调用', usage.today, '次'],
         ['库大小', fmtBytes(state.bytes), ''],
       ]
+      const backfill = async (row, outcome) => {
+        setNotice('')
+        try {
+          await request('/verdicts', { method: 'POST', body: { verdicts: [{ id: row.id, outcome }] } })
+          await pending.reload()
+          if (typeof props.onChanged === 'function') props.onChanged()
+        } catch (error) {
+          setNotice(error && error.message ? error.message : String(error))
+        }
+      }
       const storageCell = (label, main, sub) => h('div', { key: label, style: { minWidth: 0 } },
         h('div', { className: 'eng-kpi-label' }, label),
-        h('div', { style: { marginTop: 4, fontSize: 14, fontWeight: 600, lineHeight: 1.4 } }, main),
-        sub ? h('div', { className: 'eng-muted', style: { marginTop: 2, fontSize: 11 } }, sub) : null)
+        h('div', { className: 'eng-stat-main' }, main),
+        sub ? h('div', { className: 'eng-muted' }, sub) : null)
       return h('div', { className: 'eng-fill' },
         h('div', { className: 'eng-scroll' },
-        h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
-          h('span', { className: 'eng-kpi-label' }, label),
-          h('span', { className: 'eng-kpi-value' }, value === undefined ? '—' : String(value), h('span', { className: 'eng-kpi-unit' }, unit))))),
-        h('div', { className: 'eng-card eng-section', style: { padding: 15 } },
-          h('h3', { className: 'eng-section-title', style: { marginBottom: 10 } }, '存储结构'),
-          storage === null
-            ? h('div', { className: 'eng-muted' }, '暂无存储信息')
-            : h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 } },
-              storageCell('manifest', fmtBytes(storage.manifestBytes), '分片索引'),
-              storageCell('分片', `${storage.bucketFiles || 0} 个`, fmtBytes(storage.bucketBytes)),
-              storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'),
-              storageCell('legacy', legacy.exists ? fmtBytes(legacy.bytes) : '无', legacy.exists ? '可删' : '已无旧库')),
-          storage !== null ? h('div', { className: 'eng-muted', style: { marginTop: 10, fontSize: 11 } },
-            `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件`,
-            legacy.exists ? '；legacy 为迁移前快照，仅用于回滚（可删）' : '') : null,
-          h('div', { style: { marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-l1)' } },
-            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }, onClick: () => setColdOpen((open) => !open) },
-              h('span', { style: { fontWeight: 600 } }, '冷档'),
-              h('span', { className: 'eng-muted' }, cold.error ? '读取失败' : (Number(cold.total) > 0 ? `${cold.total} 条 · ${coldOpen ? '收起' : '展开'}` : '暂无冷档'))),
-            cold.error
-              ? h(Banner, { bad: true }, `冷档读取失败：${cold.error}`)
-              : (Number(cold.total) || 0) === 0
-                ? h('div', { className: 'eng-muted', style: { marginTop: 8 } }, '暂无冷档（容量安全阀未触发）')
-                : coldOpen
-                  ? h('div', { style: { marginTop: 8 } },
-                    (cold.years || []).map((year) => h('div', { key: String(year.year), className: 'eng-muted', style: { marginTop: 4 } },
-                      `${year.year} 年 · ${year.count} 条 · ${fmtBytes(year.bytes)}`)),
-                    (cold.samples || []).length === 0
-                      ? null
-                      : h('div', { style: { marginTop: 6 } }, cold.samples.slice(0, 50).map((row) => h('div', { key: row.id, style: { padding: '4px 0', fontSize: 12 } },
-                        h('span', { className: 'eng-mono', style: { marginRight: 8 } }, `${row.id}\u00a0\u00a0`),
-                        h('span', null, row.intent || '（无意图）'),
-                        h('span', { className: 'eng-muted', style: { marginLeft: 8 } }, `${row.typeName || '未分类'} · ${fmtTime(row.lastSeenAt)}`)))))
-                  : null)),
-        h('div', { className: 'eng-cols eng-section' },
-          h('div', { className: 'eng-card' },
-            h('div', { style: { padding: '13px 15px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-              h('h3', { className: 'eng-section-title' }, '最近经验'),
-              h(Button, { small: true, onClick: () => props.onGo('experiences') }, '全部')),
-            recent.error ? h(Banner, { bad: true }, recent.error) : null,
-            recent.data && recent.data.rows && recent.data.rows.length > 0
-              ? h('div', { className: 'eng-list' }, recent.data.rows.slice(0, 6).map((row) => {
-                const [label, tone] = outcomeOf(row.outcome)
-                return h('div', { key: row.id, className: 'eng-row', style: { gridTemplateColumns: '60px minmax(0,1fr) 70px' }, onClick: () => props.onOpen(row.id) },
-                  h(Badge, { tone }, label),
-                  h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
-                  h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, `G ${fmtNumber(row.G)}`))
-              }))
-              : h(Empty, null, recent.loading ? '读取中…' : '还没有经验：去「记录」写第一条。')),
-          h('div', { className: 'eng-stack' },
-            h('div', { className: 'eng-card', style: { padding: 15 } },
-              h('h3', { className: 'eng-section-title', style: { marginBottom: 10 } }, '快捷操作'),
-              h('div', { className: 'eng-actions' },
-                h(Button, { kind: 'primary', onClick: () => props.onGo('record') }, '记录经验'),
-                h(Button, { onClick: () => props.onGo('recall') }, '检索召回'),
-                h(Button, { onClick: () => props.onGo('skills') }, '沉淀技能'))),
-            h('div', { className: 'eng-card', style: { padding: 15 } },
-              h('h3', { className: 'eng-section-title', style: { marginBottom: 10 } }, '技能状态'),
-              h('div', { className: 'eng-chipbar' }, ['solid', 'trial', 'risky', 'blocked', 'new'].map((key) => {
-                const [label, tone] = skillStateOf(key)
-                return h(Badge, { key, tone }, `${label} ${summary[key] || 0}`)
-              })),
-              h('div', { className: 'eng-muted', style: { marginTop: 10 } }, state.notice || `共 ${totals.types || 0} 个类型`))))))
+          h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
+            h('span', { className: 'eng-kpi-label' }, label),
+            h('span', { className: 'eng-kpi-value' }, h(Metric, { value }), h('span', { className: 'eng-kpi-unit' }, unit))))),
+          h('div', { className: 'eng-cols eng-section' },
+            h('div', { className: 'eng-card eng-section-card' },
+              h('div', { className: 'eng-section-head' },
+                h('h3', { className: 'eng-section-title' }, '最近 7 天调用'),
+                h('span', { className: 'eng-muted' }, `合计 ${byDay.reduce((sum, point) => sum + (Number(point.count) || 0), 0)} 次`)),
+              byDay.length === 0
+                ? h(Empty, null, '暂无调用记录')
+                : h(Sparkline, { points: byDay, label: '最近 7 天调用次数' })),
+            h('div', { className: 'eng-card eng-section-card' },
+              h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '类型分布')),
+              typeRows.length === 0 ? h(Empty, null, '还没有类型数据') : h('div', { className: 'eng-dist' },
+                typeRows.map(([name, value]) => h('div', { key: name, className: 'eng-dist-row' },
+                  h('span', { className: 'eng-row-intent', title: name }, name),
+                  h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round(((Number(value) || 0) / typeMax) * 100)}%` } })),
+                  h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(value))))))),
+          notice ? h(Banner, { bad: true }, notice) : null,
+          h('div', { className: 'eng-card eng-section eng-section-card' },
+            h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '存储结构')),
+            storage === null
+              ? h('div', { className: 'eng-muted' }, '暂无存储信息')
+              : h('div', { className: 'eng-storage-grid' },
+                storageCell('manifest', fmtBytes(storage.manifestBytes), '分片索引'),
+                storageCell('分片', `${storage.bucketFiles || 0} 个`, fmtBytes(storage.bucketBytes)),
+                storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'),
+                storageCell('legacy', legacy.exists ? fmtBytes(legacy.bytes) : '无', legacy.exists ? '可删' : '已无旧库')),
+            storage !== null ? h('div', { className: 'eng-muted eng-section-note' },
+              `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件`,
+              legacy.exists ? '；legacy 为迁移前快照，仅用于回滚（可删）' : '') : null,
+            h('div', { className: 'eng-subsection' },
+              h('button', { type: 'button', className: 'eng-subsection-head', 'aria-expanded': coldOpen ? 'true' : 'false', onClick: () => setColdOpen((open) => !open) },
+                h('span', { className: 'eng-strong' }, '冷档'),
+                h('span', { className: 'eng-muted' }, cold.error ? '读取失败' : (Number(cold.total) > 0 ? `${cold.total} 条 · ${coldOpen ? '收起' : '展开'}` : '暂无冷档'))),
+              cold.error
+                ? h(Banner, { bad: true }, `冷档读取失败：${cold.error}`)
+                : (Number(cold.total) || 0) === 0
+                  ? h('div', { className: 'eng-muted eng-subsection-body' }, '暂无冷档（容量安全阀未触发）')
+                  : coldOpen
+                    ? h('div', { className: 'eng-subsection-body' },
+                      (cold.years || []).map((year) => h('div', { key: String(year.year), className: 'eng-muted' },
+                        `${year.year} 年 · ${year.count} 条 · ${fmtBytes(year.bytes)}`)),
+                      (cold.samples || []).slice(0, 50).map((row) => h('div', { key: row.id, className: 'eng-cold-row' },
+                        h('span', { className: 'eng-mono' }, row.id),
+                        h('span', { className: 'eng-row-main' }, row.intent || '（无意图）'),
+                        h('span', { className: 'eng-muted' }, `${row.typeName || '未分类'} · ${fmtTime(row.lastSeenAt)}`))))
+                    : null)),
+          h('div', { className: 'eng-cols eng-section' },
+            h('div', { className: 'eng-card' },
+              h('div', { className: 'eng-section-head eng-section-head-pad' },
+                h('h3', { className: 'eng-section-title' }, '最近经验'),
+                h(Button, { small: true, onClick: () => props.onGo('experiences') }, '全部')),
+              recent.error ? h(Banner, { bad: true }, recent.error) : null,
+              recent.data && recent.data.rows && recent.data.rows.length > 0
+                ? h('div', { className: 'eng-list' }, recent.data.rows.slice(0, 6).map((row) => {
+                  const [label, tone] = outcomeOf(row.outcome)
+                  return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', style: { gridTemplateColumns: '60px minmax(0,1fr) 70px' }, onClick: () => props.onOpen(row.id) },
+                    h(Badge, { tone }, label),
+                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                    h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, `G ${fmtNumber(row.G)}`))
+                }))
+                : (recent.loading ? h(Skeleton, { rows: 4 }) : h(Empty, null, '还没有经验：去「记录」写第一条。'))),
+            h('div', { className: 'eng-stack' },
+              h('div', { className: 'eng-card eng-section-card' },
+                h('div', { className: 'eng-section-head' },
+                  h('h3', { className: 'eng-section-title' }, `待判定（${pendingRows.length}）`),
+                  h(Button, { small: true, onClick: () => props.onGo('usage') }, '全部')),
+                pending.error ? h(Banner, { bad: true }, pending.error) : null,
+                pendingRows.length === 0
+                  ? h('div', { className: 'eng-muted' }, pending.loading ? '读取中…' : '没有待判定的记录')
+                  : h('div', { className: 'eng-stack' }, pendingRows.slice(0, 3).map((row) => h('div', { key: row.id, className: 'eng-pending-row' },
+                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || row.action || '—'), row.brief ? h('div', { className: 'eng-row-sub' }, row.brief) : null),
+                    h('div', { className: 'eng-actions' },
+                      h(Button, { small: true, onClick: () => backfill(row, 'success') }, '成功'),
+                      h(Button, { small: true, onClick: () => backfill(row, 'corrected') }, '纠正'),
+                      h(Button, { small: true, onClick: () => backfill(row, 'failed') }, '失败')))))),
+              h('div', { className: 'eng-card eng-section-card' },
+                h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '快捷操作')),
+                h('div', { className: 'eng-actions' },
+                  h(Button, { kind: 'primary', onClick: () => props.onGo('record') }, '记录经验'),
+                  h(Button, { onClick: () => props.onGo('recall') }, '检索召回'),
+                  h(Button, { onClick: () => props.onGo('skills') }, '沉淀技能'))),
+              h('div', { className: 'eng-card eng-section-card' },
+                h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '技能状态')),
+                h('div', { className: 'eng-chipbar' }, ['solid', 'trial', 'risky', 'blocked', 'new'].map((key) => {
+                  const [label, tone] = skillStateOf(key)
+                  return h(Badge, { key, tone }, `${label} ${summary[key] || 0}`)
+                })),
+                h('div', { className: 'eng-muted eng-section-note' }, state.notice || `共 ${totals.types || 0} 个类型`))))))
     }
 
     function Experiences(props) {
       const [searchDraft, setSearchDraft] = useState('')
       const [type, setType] = useState('')
       const [outcome, setOutcome] = useState('')
-      const [selected, setSelected] = useState(null)
+      const [sort, setSort] = useState('recent')
+      const [pageSize, setPageSize] = useState(50)
+      const [page, setPage] = useState(0)
+      const [selected, setSelected] = useState(props.focusId || null)
+      const [sending, setSending] = useState(false)
+      const [notice, setNotice] = useState('')
       const detailRef = useRef(null)
+      useEffect(() => { if (props.focusId) setSelected(props.focusId) }, [props.focusId])
       const list = useLoad(useCallback(() => {
-        const params = new URLSearchParams({ limit: '100' })
+        const params = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize), sort })
         if (type !== '') params.set('type', type)
         if (outcome !== '') params.set('outcome', outcome)
         return request(`/experiences?${params.toString()}`)
-      }, [type, outcome]))
+      }, [type, outcome, sort, page, pageSize]))
+      // 换筛选/排序/页大小时回到第一页，避免停在越界页码。
+      useEffect(() => { setPage(0) }, [type, outcome, sort, pageSize])
+      useRefreshEvent(list.reload)
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
       // 窄面板下列表与详情会被压成一列：选中后把详情卡片滚进视野，否则看起来「点了没反应」。
       useEffect(() => {
@@ -711,35 +1127,98 @@ window.__ModuleLoader__.load({
       }, [selected, detail.data])
       const types = (props.state && props.state.types) || []
       const rows = (list.data && (list.data.rows || list.data.candidates)) || []
+      // j/k 在列表里移动选中；输入框/文本域里不拦截。
+      useEffect(() => {
+        if (typeof window === 'undefined') return undefined
+        const handler = (event) => {
+          const tag = event.target && event.target.tagName ? String(event.target.tagName) : ''
+          if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return
+          if (event.key !== 'j' && event.key !== 'k') return
+          if (rows.length === 0) return
+          const currentIndex = rows.findIndex((row) => row.id === selected)
+          const nextIndex = Math.max(0, Math.min(rows.length - 1, (currentIndex < 0 ? 0 : currentIndex + (event.key === 'j' ? 1 : -1))))
+          event.preventDefault()
+          setSelected(rows[nextIndex].id)
+        }
+        window.addEventListener('keydown', handler)
+        return () => window.removeEventListener('keydown', handler)
+      }, [rows, selected])
+      const total = list.data ? Number(list.data.total) || 0 : 0
+      const pages = Math.max(1, Math.ceil(total / pageSize))
+      const storeError = list.data && list.data.storeError
       const send = async (result) => {
-        if (selected === null) return
-        await request('/feedback', { method: 'POST', body: { id: selected, result } })
+        if (selected === null || sending) return
+        setSending(true)
+        setNotice('')
+        const detailSnapshot = detail.data
+        const listSnapshot = list.data
+        const target = result === 'helped' ? 1 : result === 'hurt' ? -1 : null
+        const optimisticG = (value) => target === null ? value : Math.round((Number(value) + 0.35 * (target - Number(value))) * 1e4) / 1e4
+        // 乐观更新：先改当前行与列表里的 G/计数，请求回来再用服务端结果覆盖。
+        if (detailSnapshot && detailSnapshot.row) {
+          const row = detailSnapshot.row
+          const feedback = { helped: 0, hurt: 0, neutral: 0, ...(row.feedback || {}) }
+          if (target !== null) feedback[result] = (Number(feedback[result]) || 0) + 1
+          detail.setData({ ...detailSnapshot, row: { ...row, G: optimisticG(row.G), feedback } })
+        }
+        if (listSnapshot && Array.isArray(listSnapshot.rows)) {
+          list.setData({ ...listSnapshot, rows: listSnapshot.rows.map((row) => row.id === selected ? { ...row, G: optimisticG(row.G) } : row) })
+        }
+        try {
+          await request('/feedback', { method: 'POST', body: { id: selected, result } })
+          await Promise.all([list.reload(), detail.reload()])
+          if (typeof props.onChanged === 'function') props.onChanged()
+        } catch (error) {
+          if (detailSnapshot !== undefined) detail.setData(detailSnapshot)
+          if (listSnapshot !== undefined) list.setData(listSnapshot)
+          setNotice(error && error.message ? error.message : String(error))
+        } finally {
+          setSending(false)
+        }
+      }
+      const assign = async (id, typeName) => {
+        await request('/type', { method: 'POST', body: { action: 'assign', id, name: typeName } })
         await Promise.all([list.reload(), detail.reload()])
         props.onChanged()
       }
       return h('div', { className: 'eng-fill' },
         list.error ? h(Banner, { bad: true }, list.error) : null,
+        storeError ? h(Banner, { bad: true }, `经验数据读取失败：${storeError.message}${storeError.file ? `（${storeError.file}）` : ''}`) : null,
+        notice ? h(Banner, { bad: true }, notice) : null,
         h('div', { className: 'eng-toolbar' },
           h('input', { className: 'eng-input', placeholder: '按意图检索（回车跳到检索页）…', value: searchDraft, onChange: (event) => setSearchDraft(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && searchDraft.trim() !== '') props.onSearch(searchDraft.trim()) } }),
           h('select', { className: 'eng-select', value: type, onChange: (event) => setType(event.target.value) },
             h('option', { value: '' }, '全部类型'), types.map((item) => h('option', { key: item.id, value: item.id }, item.name))),
           h('select', { className: 'eng-select', value: outcome, onChange: (event) => setOutcome(event.target.value) },
             h('option', { value: '' }, '全部结果'), Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0]))),
-          h('span', { className: 'eng-muted' }, `${list.data ? list.data.total : '—'} 条`),
+          h('select', { className: 'eng-select', style: { width: 120 }, value: sort, onChange: (event) => setSort(event.target.value) },
+            h('option', { value: 'recent' }, '最近'),
+            h('option', { value: 'g' }, 'G'),
+            h('option', { value: 'hits' }, '用过次数'),
+            h('option', { value: 'type' }, '类型')),
+          h('span', { className: 'eng-muted' }, `${total} 条`),
           h(Button, { small: true, disabled: searchDraft.trim() === '', onClick: () => props.onSearch(searchDraft.trim()) }, '检索'),
           h(Button, { small: true, disabled: list.loading, onClick: list.reload }, list.loading ? '刷新中…' : '刷新')),
         h('div', { className: 'eng-split', 'data-open': selected === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
-            rows.length === 0 ? h(Empty, null, list.loading ? '读取中…' : '没有符合条件的经验') : h('div', { className: 'eng-list' }, rows.map((row) => {
+            rows.length === 0
+              ? (list.loading ? h(Skeleton, { rows: 6 }) : list.error ? h(ErrorState, { message: list.error, onRetry: list.reload }) : h(Empty, null, '没有符合条件的经验'))
+              : h('div', { className: 'eng-list' }, rows.map((row) => {
               const [label, tone] = outcomeOf(row.outcome)
-              return h('div', { key: row.id, className: 'eng-row', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
+              return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
                 h(Badge, { tone }, label),
                 h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
                 h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
-            }))),
+            })),
+            h('div', { className: 'eng-pager' },
+              h('span', { className: 'eng-muted' }, `共 ${total} 条 · 第 ${page + 1}/${pages} 页`),
+              h('select', { className: 'eng-select', style: { width: 96 }, value: String(pageSize), onChange: (event) => setPageSize(Number(event.target.value)) },
+                [50, 100, 200].map((size) => h('option', { key: size, value: String(size) }, `${size} 条/页`))),
+              h(Button, { small: true, disabled: page <= 0, onClick: () => setPage(page - 1) }, '上一页'),
+              h(Button, { small: true, disabled: page + 1 >= pages, onClick: () => setPage(page + 1) }, '下一页'))),
           h('div', { className: 'eng-card eng-detail-card', ref: detailRef },
-            h(DetailPane, { selected, detail, send, onClose: () => setSelected(null) }))))
+            h(DetailPane, { key: selected === null ? 'empty' : selected, selected, detail, send, busy: sending, types, onAssign: assign, onClose: () => setSelected(null) }))))
     }
 
     /**
@@ -747,41 +1226,104 @@ window.__ModuleLoader__.load({
      * 也避免再出现「内联立即执行函数漏了调用、React 收到函数子节点渲染空白」那类事故。
      */
     function DetailPane(props) {
-      const { selected, detail, send, onClose } = props
+      const { selected, detail, send, onClose, busy } = props
+      const [assignTo, setAssignTo] = useState('')
+      const [pane, setPane] = useState('overview')
+      useEffect(() => { setAssignTo(''); setPane('overview') }, [selected])
       if (selected === null) return h(Empty, null, '选一条经验看详情')
-      if (detail && detail.error) return h(Banner, { bad: true }, detail.error)
+      if (detail && detail.error) return h(ErrorState, { title: '读取详情失败', message: detail.error, onRetry: detail.reload })
       const data = detail ? detail.data : null
       if (data === null || data === undefined || !data.row) return h(Empty, null, '读取中…')
       const row = data.row
       const [label, tone] = outcomeOf(row.outcome)
+      const life = row.lifecycle || {}
+      const lifeBits = [
+        life.supersededBy ? `被取代（${life.supersededBy}）` : '',
+        life.retiredAt ? `退休 ${fmtTime(life.retiredAt)}` : '',
+        life.deletedAt ? `删除 ${fmtTime(life.deletedAt)}` : '',
+      ].filter((item) => item !== '')
+      const events = Array.isArray(data.history) ? data.history : []
+      const feedbackLog = Array.isArray(data.feedbackLog) ? data.feedbackLog : []
+      const types = Array.isArray(props.types) ? props.types.filter((item) => item && item.system !== true) : []
+      const assignable = typeof props.onAssign === 'function' && types.length > 0
+      const copyJson = () => {
+        try {
+          if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+          toast('已复制 JSON')
+        } catch { /* 剪贴板不可用就算了 */ }
+      }
+      const tabs = [['overview', '概览'], ['history', `历史 ${events.length}`], ['feedback', `反馈 ${feedbackLog.length}`], ['raw', '原始']]
+      const body = pane === 'history'
+        ? (events.length === 0 ? h(Empty, null, '没有历史事件') : h('div', { className: 'eng-timeline' }, events.slice(-20).reverse().map((event, index) => h('div', { key: index, className: 'eng-timeline-item' },
+          h('span', { className: 'eng-mono' }, fmtTime(event && event.at)),
+          h('span', { className: 'eng-strong' }, (event && event.type) || '事件'),
+          h('span', { className: 'eng-muted' }, [event && event.result, event && event.reason, event && event.by].filter(Boolean).join(' · ') || '—')))))
+        : pane === 'feedback'
+          ? (feedbackLog.length === 0 ? h(Empty, null, '没有反馈记录') : h('div', { className: 'eng-timeline' }, feedbackLog.slice(-20).reverse().map((event, index) => h('div', { key: index, className: 'eng-timeline-item' },
+            h('span', { className: 'eng-mono' }, fmtTime(event && event.at)),
+            h(Badge, { tone: event && event.result === 'helped' ? 'ok' : event && event.result === 'hurt' ? 'bad' : 'muted' }, (event && event.result) || '反馈'),
+            h('span', { className: 'eng-muted' }, row.feedback ? `累计 有帮助 ${row.feedback.helped || 0} / 没帮上 ${row.feedback.hurt || 0}` : '—')))))
+          : pane === 'raw'
+            ? h('div', null,
+              h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Button, { small: true, onClick: copyJson }, '复制 JSON')),
+              h('pre', { className: 'eng-pre eng-pre-json' }, JSON.stringify(data, null, 2)))
+            : h('div', null,
+              h('dl', { className: 'eng-kv' },
+                h('dt', null, '做法'), h('dd', null, row.action || '—'),
+                h('dt', null, '类型'), h('dd', null, row.typeName || '—'),
+                h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
+                h('dt', null, '情境'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '无'),
+                Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dt', null, '维度') : null,
+                Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dd', null, row.dimensions.join('、')) : null,
+                row.expectedG === null || row.expectedG === undefined ? null : h('dt', null, '预期 G'),
+                row.expectedG === null || row.expectedG === undefined ? null : h('dd', null, `${fmtNumber(row.expectedG)}（误差 ${fmtNumber((Number(row.G) || 0) - Number(row.expectedG))}）`),
+                h('dt', null, '反馈'), h('dd', null, row.feedback ? `有帮助 ${row.feedback.helped || 0} / 没帮上 ${row.feedback.hurt || 0}` : '无'),
+                row.retrievals > 0 ? h('dt', null, '主动提取') : null,
+                row.retrievals > 0 ? h('dd', null, `${row.retrievals} 次`) : null,
+                h('dt', null, '判定'), h('dd', null, row.verdict === 'pending' ? '待判定' : (row.verdict || '—')),
+                h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
+              row.note ? h('div', { className: 'eng-note' }, h('div', { className: 'eng-label' }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null,
+              assignable ? h('div', { className: 'eng-actions', style: { marginTop: 12 } },
+                h('select', { className: 'eng-select', style: { width: 170 }, value: assignTo, onChange: (event) => setAssignTo(event.target.value) },
+                  h('option', { value: '' }, '改挂类型…'),
+                  types.map((item) => h('option', { key: item.id, value: item.name }, item.name))),
+                h(Button, { small: true, disabled: assignTo === '' || assignTo === row.typeName, onClick: () => props.onAssign(row.id, assignTo) }, '改挂')) : null)
       return h('div', { className: 'eng-detail' },
-        h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 } }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
+        h('div', { className: 'eng-actions' }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
         h('h3', { className: 'eng-detail-title' }, row.intent || '（无意图）'),
-        h('dl', { className: 'eng-kv' },
-          h('dt', null, '做法'), h('dd', null, row.action || '—'),
-          h('dt', null, '类型'), h('dd', null, row.typeName || '—'),
-          h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
-          h('dt', null, '情境'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '—'),
-          h('dt', null, '反馈'), h('dd', null, row.feedback ? `有帮助 ${row.feedback.helped || 0} / 没帮上 ${row.feedback.hurt || 0}` : '—'),
-          h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
-        row.note ? h('div', { style: { marginTop: 12 } }, h('div', { className: 'eng-label', style: { marginBottom: 5 } }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null,
-        h('div', { className: 'eng-actions', style: { marginTop: 14 } },
-          h(Button, { small: true, onClick: () => send('helped') }, '有帮助'),
-          h(Button, { small: true, onClick: () => send('hurt') }, '没帮上'),
-          h(Button, { small: true, onClick: () => send('neutral') }, '中性'),
-          h(Button, { small: true, onClick: () => onClose() }, '收起')))
+        lifeBits.length > 0 ? h('div', { className: 'eng-muted eng-warn-text' }, lifeBits.join(' · ')) : null,
+        h('div', { className: 'eng-tabs', role: 'tablist' }, tabs.map(([key, text]) => h('button', {
+          key, type: 'button', role: 'tab', className: 'eng-tab', 'data-active': pane === key ? 'true' : 'false', 'aria-selected': pane === key ? 'true' : 'false',
+          onClick: () => setPane(key),
+        }, text))),
+        h('div', { className: 'eng-tab-body' }, body),
+        h('div', { className: 'eng-actions eng-detail-actions' },
+          h(Button, { small: true, disabled: busy, onClick: () => send('helped') }, '有帮助'),
+          h(Button, { small: true, disabled: busy, onClick: () => send('hurt') }, '没帮上'),
+          h(Button, { small: true, disabled: busy, onClick: () => send('neutral') }, '中性'),
+          h(Button, { small: true, onClick: onClose }, '收起')))
     }
 
     function Recall(props) {
       const [intent, setIntent] = useState((props && props.seed) || '')
       const [context, setContext] = useState('')
+      const [cluster, setCluster] = useState('')
+      const [flags, setFlags] = useState({ all: false, cold: false, detail: false, mark: false })
       const [result, setResult] = useState(null)
       const [error, setError] = useState('')
       const [busy, setBusy] = useState(false)
+      const types = Array.isArray(props && props.types) ? props.types : []
+      const toggle = (key) => setFlags((previous) => ({ ...previous, [key]: !previous[key] }))
       const run = async () => {
         setBusy(true); setError('')
         try {
-          setResult(await request('/recall', { method: 'POST', body: { intent, context: context.trim() === '' ? [] : context.split(/[,，]/).map((item) => item.trim()).filter(Boolean), limit: 8 } }))
+          const body = { intent, context: context.trim() === '' ? [] : context.split(/[,，]/).map((item) => item.trim()).filter(Boolean), limit: 8 }
+          if (flags.all) body.all = true
+          if (flags.cold) body.cold = true
+          if (flags.detail) body.detail = true
+          if (flags.mark) body.mark = true
+          if (cluster !== '') body.cluster = cluster
+          setResult(await request('/recall', { method: 'POST', body }))
         } catch (caught) {
           setError(caught.message || String(caught))
         } finally {
@@ -796,8 +1338,32 @@ window.__ModuleLoader__.load({
           setError(caught.message || String(caught))
         }
       }
+      const backfill = async (id, outcome) => {
+        try {
+          await request('/verdicts', { method: 'POST', body: { verdicts: [{ id, outcome }] } })
+          await run()
+        } catch (caught) {
+          setError(caught.message || String(caught))
+        }
+      }
       const candidates = result ? (result.candidates || result.rows || []) : []
+      const recent = result && Array.isArray(result.recent) ? result.recent : []
+      const pendingRows = result && Array.isArray(result.pending) ? result.pending : []
+      const route = result && result.route !== null && typeof result.route === 'object' ? result.route : null
       const engineShape = candidates.some((item) => Array.isArray(item.evidence))
+      const copyResult = () => {
+        try {
+          const lines = []
+          if (result.brief) lines.push(`> ${result.brief}`)
+          if (result.skill) lines.push(`## 技能：${result.skill.name}\n${result.skill.body}`)
+          for (const candidate of candidates) {
+            lines.push(`## ${candidate.action || '（无做法）'}（Â ${fmtNumber(candidate.advantage)}，support ${candidate.support || 0}）`)
+            for (const evidence of candidate.evidence || []) lines.push(`- [${evidence.outcome}] G ${fmtNumber(evidence.G)} · ${evidence.intent || ''}${evidence.note ? ` — ${evidence.note}` : ''}`)
+          }
+          if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(lines.join('\n'))
+          toast('已复制检索结果')
+        } catch { /* 剪贴板不可用就算了 */ }
+      }
       return h('div', { className: 'eng-fill' },
         error ? h(Banner, { bad: true }, error) : null,
         h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 14 } },
@@ -805,31 +1371,73 @@ window.__ModuleLoader__.load({
             h(Field, { label: '意图', wide: true, hint: '走内核 JitRL 召回（技能模式优先返回技能正文）' },
               h('textarea', { className: 'eng-textarea', placeholder: '例如：把课件导出成 PDF，字体要嵌进去', value: intent, onChange: (event) => setIntent(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) run() } })),
             h(Field, { label: '情境（逗号分隔，可选）' }, h('input', { className: 'eng-input', placeholder: 'windows, powerpoint', value: context, onChange: (event) => setContext(event.target.value) }))),
+          h('details', { style: { marginTop: 8 } },
+            h('summary', { className: 'eng-label', style: { cursor: 'pointer' } }, '高级（全库 / 冷档 / 簇 / 明细 / 标记）'),
+            h('div', { className: 'eng-actions', style: { marginTop: 8 } },
+              [['all', '全库检索（忽略路由）'], ['cold', '只查冷档'], ['detail', '返回明细（不瘦身）'], ['mark', '记为主动提取']].map(([key, label]) =>
+                h('label', { key, className: 'eng-actions', style: { fontWeight: 400 } },
+                  h('input', { type: 'checkbox', checked: flags[key] === true, onChange: () => toggle(key) }),
+                  h('span', { className: 'eng-muted' }, label))),
+              h('select', { className: 'eng-select', style: { width: 160 }, value: cluster, onChange: (event) => setCluster(event.target.value) },
+                h('option', { value: '' }, '自动选簇'),
+                types.filter((item) => item && item.system !== true).map((item) => h('option', { key: item.id, value: item.name }, item.name))))),
           h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || intent.trim() === '', onClick: run }, busy ? '检索中…' : '检索'))),
         h('div', { className: 'eng-scroll' },
           result === null ? h(Empty, null, '输入意图后点「检索」，候选会出现在这里') : h('div', null,
           h('div', { className: 'eng-actions', style: { marginBottom: 12 } },
-            h(Badge, { tone: result.mode === 'skill' ? 'brand' : result.mode === 'advantage' ? 'ok' : 'muted' }, `mode=${result.mode}`),
+            h(Badge, { tone: result.mode === 'skill' || result.mode === 'skill-trial' ? 'brand' : result.mode === 'advantage' ? 'ok' : 'muted' }, `mode=${result.mode}`),
             h('span', { className: 'eng-muted' }, `候选 ${candidates.length} 组`),
-            result.pendingSkills ? h(Badge, { tone: 'warn' }, `待补提交 ${result.pendingSkills}`) : null),
+            result.cold ? h(Badge, { tone: 'warn' }, '冷档查询') : null,
+            result.weak ? h(Badge, { tone: 'warn' }, `相关度低${result.topSimilarity === undefined ? '' : ` ${fmtNumber(result.topSimilarity)}`}`) : null,
+            route ? h(Badge, { tone: route.fallback ? 'muted' : 'ok' }, route.fallback ? '回退全库' : `簇 ${route.name} · ${fmtNumber(route.score)}`) : null,
+            result.pendingSkills ? h(Badge, { tone: 'warn' }, `待补提交 ${result.pendingSkills}`) : null,
+            h(Button, { small: true, onClick: copyResult }, '复制结果')),
           result.brief ? h(Banner, null, result.brief) : null,
+          pendingRows.length > 0 ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
+            h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h('strong', null, `待判定（${pendingRows.length}）`), h('span', { className: 'eng-muted' }, '顺手回填，不用另开调用')),
+            h('div', { className: 'eng-stack' }, pendingRows.map((row) => h('div', { key: row.id, className: 'eng-row', style: { gridTemplateColumns: '120px minmax(0,1fr) auto' } },
+              h('span', { className: 'eng-mono' }, row.id),
+              h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-sub' }, row.brief || '—')),
+              h('div', { className: 'eng-actions' },
+                h(Button, { small: true, onClick: () => backfill(row.id, 'success') }, '成功'),
+                h(Button, { small: true, onClick: () => backfill(row.id, 'corrected') }, '纠正'),
+                h(Button, { small: true, onClick: () => backfill(row.id, 'failed') }, '失败')))))) : null,
           result.skill ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
-            h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Badge, { tone: 'brand' }, '高确定技能'), h('span', { className: 'eng-mono' }, result.skill.id)),
+            h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Badge, { tone: 'brand' }, result.mode === 'skill-trial' ? '试用技能' : '高确定技能'), h('span', { className: 'eng-mono' }, result.skill.id)),
             h('h3', { className: 'eng-detail-title' }, result.skill.name),
             h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, result.skill.description),
             h('pre', { className: 'eng-pre' }, result.skill.body)) : null,
+          recent.length > 0 ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
+            h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h('strong', null, '最近做过'), h('span', { className: 'eng-muted' }, '同一会话的最近两条')),
+            h('div', { className: 'eng-stack' }, recent.map((row) => {
+              const [label, tone] = outcomeOf(row.outcome)
+              return h('div', { key: row.id, className: 'eng-row', style: { gridTemplateColumns: '60px 64px minmax(0,1fr)', cursor: 'default' } },
+                h(Badge, { tone }, label),
+                h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
+                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.action || '—'} · sim ${fmtNumber(row.similarity)}`)))
+            }))) : null,
+          typeof result.induction === 'string' && result.induction !== '' ? h('details', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
+            h('summary', { className: 'eng-label', style: { cursor: 'pointer' } }, '归纳提示（原料，不是结论）'),
+            h('pre', { className: 'eng-pre', style: { marginTop: 8 } }, result.induction)) : null,
           candidates.length === 0 ? h(Empty, null, result.note || '没有相近候选') : h('div', { className: 'eng-stack' }, candidates.map((item, index) => engineShape
             ? h('div', { key: item.action || index, className: 'eng-card', style: { padding: 14 } },
                 h('div', { className: 'eng-actions', style: { marginBottom: 8 } },
                   h('strong', null, item.action || '（无做法）'),
                   h('span', { className: 'eng-mono' }, `Â ${fmtNumber(item.advantage)}`),
-                  h('span', { className: 'eng-muted' }, `Q ${fmtNumber(item.Q)} · V ${fmtNumber(item.V)} · support ${item.support || 0}`)),
+                  h('span', { className: 'eng-muted' }, `support ${item.support || 0} · sim ${fmtNumber(item.mean_similarity !== undefined ? item.mean_similarity : item.meanSimilarity)}`),
+                  item.typeName ? h('span', { className: 'eng-muted' }, item.typeName) : null),
                 h('div', { className: 'eng-stack' }, (item.evidence || []).map((evidence) => {
                   const [label, tone] = outcomeOf(evidence.outcome)
-                  return h('div', { key: evidence.id, className: 'eng-row', style: { gridTemplateColumns: '60px 70px minmax(0,1fr) auto', cursor: 'default' } },
+                  return h('div', { key: evidence.id, className: 'eng-row', style: { gridTemplateColumns: '60px 64px minmax(0,1fr) auto', cursor: 'default' } },
                     h(Badge, { tone }, label),
                     h('span', { className: 'eng-mono' }, `G ${fmtNumber(evidence.G)}`),
-                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-sub' }, `${evidence.id} · sim ${fmtNumber(evidence.similarity)}`), evidence.note ? h('div', { className: 'eng-row-sub' }, evidence.note) : null),
+                    h('div', { className: 'eng-row-main' },
+                      h('div', { className: 'eng-row-sub' }, `${evidence.id} · sim ${fmtNumber(evidence.similarity)}`),
+                      evidence.intent ? h('div', { className: 'eng-row-sub' }, evidence.intent) : null,
+                      evidence.note ? h('div', { className: 'eng-row-sub' }, evidence.note) : null,
+                      Array.isArray(evidence.context) && evidence.context.length > 0 ? h('div', { className: 'eng-row-sub' }, `情境：${evidence.context.join('、')}`) : null,
+                      Array.isArray(evidence.dimensions) && evidence.dimensions.length > 0 ? h('div', { className: 'eng-row-sub' }, `维度：${evidence.dimensions.join('、')}`) : null,
+                      evidence.lifecycle ? h('div', { className: 'eng-row-sub' }, `生命周期：${evidence.lifecycle.type || ''} ${fmtTime(evidence.lifecycle.at)}`) : null),
                     h('div', { className: 'eng-actions' },
                       h(Button, { small: true, onClick: () => feedback(evidence.id, 'helped') }, '有帮助'),
                       h(Button, { small: true, onClick: () => feedback(evidence.id, 'hurt') }, '没帮上')))
@@ -840,13 +1448,32 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—')))))))
     }
 
+    const EMPTY_RECORD = { intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', expectedG: '', expectedOutcome: '', skillId: '', blockedBy: '' }
+
     function Record() {
-      const [form, setForm] = useState({ intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', expectedG: '', expectedOutcome: '', skillId: '', blockedBy: '' })
+      const [form, setForm] = useState(() => {
+        try {
+          const raw = sessionStorage.getItem('eng:record-draft')
+          if (raw !== null) return { ...EMPTY_RECORD, ...JSON.parse(raw) }
+        } catch { /* 无 sessionStorage 或坏草稿就从头填 */ }
+        return { ...EMPTY_RECORD }
+      })
       const [receipt, setReceipt] = useState(null)
       const [error, setError] = useState('')
       const [busy, setBusy] = useState(false)
+      useEffect(() => {
+        try { sessionStorage.setItem('eng:record-draft', JSON.stringify(form)) } catch { /* 隐私模式忽略 */ }
+      }, [form])
       const update = (key) => (event) => setForm({ ...form, [key]: event.target.value })
+      const reset = () => {
+        setForm({ ...EMPTY_RECORD })
+        setReceipt(null)
+        setError('')
+        try { sessionStorage.removeItem('eng:record-draft') } catch { /* 忽略 */ }
+      }
+      const stepWarn = form.kind === 'step' && form.stepIndex !== '' && form.stepTotal !== '' && Number(form.stepIndex) > Number(form.stepTotal)
       const submit = async () => {
+        if (busy || form.intent.trim() === '' || form.action.trim() === '' || stepWarn) return
         setBusy(true); setError(''); setReceipt(null)
         try {
           const body = {
@@ -865,32 +1492,49 @@ window.__ModuleLoader__.load({
           if (form.skillId.trim() !== '') body.skillId = form.skillId.trim()
           if (form.blockedBy.trim() !== '') body.blockedBy = form.blockedBy.trim()
           setReceipt(await request('/record', { method: 'POST', body }))
+          try { sessionStorage.removeItem('eng:record-draft') } catch { /* 忽略 */ }
         } catch (caught) {
           setError(caught.message || String(caught))
         } finally {
           setBusy(false)
         }
       }
+      const group = (title, children, open = false) => h('details', { className: 'eng-form-group', open },
+        h('summary', { className: 'eng-form-group-title' }, title),
+        h('div', { className: 'eng-form-grid' }, children))
       return h('div', { className: 'eng-fill' },
-        h('div', { className: 'eng-card eng-scroll', style: { padding: 18 } },
-        error ? h(Banner, { bad: true }, error) : null,
-        receipt ? h(Banner, null, `已记录：action=${receipt.action}，id=${receipt.id}，G=${fmtNumber(receipt.G)}${receipt.skillWarning ? `；${receipt.skillWarning}` : ''}`) : null,
-        h('div', { className: 'eng-form-grid' },
-          h(Field, { label: '意图（做什么）', wide: true }, h('input', { className: 'eng-input', value: form.intent, onChange: update('intent'), placeholder: '例如：给研学课 PPT 插一页过渡页' })),
-          h(Field, { label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
-          h(Field, { label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
-          h(Field, { label: '类型' }, h('input', { className: 'eng-input', value: form.type, onChange: update('type'), placeholder: 'PPT / 课件' })),
-          h(Field, { label: '情境（逗号分隔）' }, h('input', { className: 'eng-input', value: form.context, onChange: update('context'), placeholder: 'windows, powerpoint' })),
-          h(Field, { label: '预期 G（可选）' }, h('input', { className: 'eng-input', type: 'number', step: '0.05', value: form.expectedG, onChange: update('expectedG'), placeholder: '0.8' })),
-          h(Field, { label: '预期结果（可选）' }, h('select', { className: 'eng-select', value: form.expectedOutcome, onChange: update('expectedOutcome') }, h('option', { value: '' }, '不设置'), ['accepted','success','partial','unknown','failed','corrected','aborted'].map((key) => h('option', { key, value: key }, OUTCOMES[key] ? OUTCOMES[key][0] : key)))),
-          h(Field, { label: '任务 id（可选）' }, h('input', { className: 'eng-input', value: form.taskId, onChange: update('taskId') })),
-          h(Field, { label: '粒度' }, h('select', { className: 'eng-select', value: form.kind, onChange: update('kind') }, h('option', { value: 'task' }, '整条任务'), h('option', { value: 'step' }, '任务步骤'))),
-          h(Field, { label: '步骤序号（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepIndex, onChange: update('stepIndex') })),
-          h(Field, { label: '步骤总数（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepTotal, onChange: update('stepTotal') })),
-          h(Field, { label: '技能 id（可选）' }, h('input', { className: 'eng-input', value: form.skillId, onChange: update('skillId'), placeholder: 'skill:<slug>' })),
-          h(Field, { label: '受阻描述（可选）' }, h('input', { className: 'eng-input', value: form.blockedBy, onChange: update('blockedBy'), placeholder: '页脚错位 第 3 行' })),
-          h(Field, { label: '备注', wide: true }, h('textarea', { className: 'eng-textarea', value: form.note, onChange: update('note') }))),
-        h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy || form.intent.trim() === '' || form.action.trim() === '', onClick: submit }, busy ? '提交中…' : '记录'))))
+        h('form', { className: 'eng-card eng-scroll eng-record', onSubmit: (event) => { event.preventDefault(); submit() } },
+          error ? h(Banner, { bad: true }, error) : null,
+          stepWarn ? h(Banner, { bad: true }, '步骤序号不能大于步骤总数') : null,
+          receipt ? h('div', { className: 'eng-receipt' },
+            h('div', { className: 'eng-receipt-title' }, '已记录'),
+            h('div', { className: 'eng-muted' }, `action=${receipt.action} · id=${receipt.id} · G=${fmtNumber(receipt.G)}${receipt.skillWarning ? ` · ${receipt.skillWarning}` : ''}`),
+            h('div', { className: 'eng-actions' }, h(Button, { small: true, onClick: reset }, '再记一条'))) : null,
+          group('必填（意图 / 做法 / 结果 / 类型）', [
+            h(Field, { key: 'intent', label: '意图（做什么）', wide: true }, h('input', { className: 'eng-input', value: form.intent, onChange: update('intent'), placeholder: '例如：给研学课 PPT 插一页过渡页' })),
+            h(Field, { key: 'action', label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
+            h(Field, { key: 'outcome', label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
+            h(Field, { key: 'type', label: '类型' }, h('input', { className: 'eng-input', value: form.type, onChange: update('type'), placeholder: 'PPT / 课件' })),
+            h(Field, { key: 'context', label: '情境（逗号分隔）' }, h('input', { className: 'eng-input', value: form.context, onChange: update('context'), placeholder: 'windows, powerpoint' })),
+          ], true),
+          group('任务与步骤（可选，记录多步任务时）', [
+            h(Field, { key: 'taskId', label: '任务 id' }, h('input', { className: 'eng-input', value: form.taskId, onChange: update('taskId') })),
+            h(Field, { key: 'kind', label: '粒度' }, h('select', { className: 'eng-select', value: form.kind, onChange: update('kind') }, h('option', { value: 'task' }, '整条任务'), h('option', { value: 'step' }, '任务步骤'))),
+            h(Field, { key: 'stepIndex', label: '步骤序号（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepIndex, onChange: update('stepIndex') })),
+            h(Field, { key: 'stepTotal', label: '步骤总数（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepTotal, onChange: update('stepTotal') })),
+          ]),
+          group('预期与技能（可选）', [
+            h(Field, { key: 'expectedG', label: '预期 G' }, h('input', { className: 'eng-input', type: 'number', step: '0.05', value: form.expectedG, onChange: update('expectedG'), placeholder: '0.8' })),
+            h(Field, { key: 'expectedOutcome', label: '预期结果' }, h('select', { className: 'eng-select', value: form.expectedOutcome, onChange: update('expectedOutcome') }, h('option', { value: '' }, '不设置'), ['accepted','success','partial','unknown','failed','corrected','aborted'].map((key) => h('option', { key, value: key }, OUTCOMES[key] ? OUTCOMES[key][0] : key)))),
+            h(Field, { key: 'skillId', label: '技能 id' }, h('input', { className: 'eng-input', value: form.skillId, onChange: update('skillId'), placeholder: 'skill:<slug>' })),
+            h(Field, { key: 'blockedBy', label: '受阻描述' }, h('input', { className: 'eng-input', value: form.blockedBy, onChange: update('blockedBy'), placeholder: '页脚错位 第 3 行' })),
+          ]),
+          group('备注', [
+            h(Field, { key: 'note', label: '为什么有效 / 踩了什么坑', wide: true }, h('textarea', { className: 'eng-textarea', value: form.note, onChange: update('note') })),
+          ]),
+          h('div', { className: 'eng-actions' },
+            h(Button, { kind: 'primary', disabled: busy || form.intent.trim() === '' || form.action.trim() === '' || stepWarn, onClick: submit }, busy ? '提交中…' : '记录'),
+            h(Button, { disabled: busy, onClick: reset }, '清空草稿'))))
     }
 
     /**
@@ -926,7 +1570,7 @@ window.__ModuleLoader__.load({
           h('textarea', { className: 'eng-textarea', rows: 2, value: notes, placeholder: '例如：需要 python-pptx 环境', onChange: (event) => setNotes(event.target.value) })),
         h('div', { style: { flex: '0 0 auto', paddingTop: 20 } },
           h(Button, { small: true, disabled: busy, onClick: save }, busy ? '保存中…' : '保存分类与便签')),
-        error ? h('div', { className: 'eng-muted', style: { color: 'var(--eng-bad)', flexBasis: '100%' } }, error) : null)
+        error ? h('div', { className: 'eng-muted eng-bad-text', style: { flexBasis: '100%' } }, error) : null)
     }
 
     /**
@@ -939,6 +1583,7 @@ window.__ModuleLoader__.load({
     function Skills(props) {
       const skills = useLoad(useCallback(() => request('/skills'), []))
       const validation = useLoad(useCallback(() => request('/validate'), []))
+      useRefreshEvent(skills.reload)
       const [selected, setSelected] = useState(null)
       const [intent, setIntent] = useState('')
       const [context, setContext] = useState('')
@@ -947,6 +1592,8 @@ window.__ModuleLoader__.load({
       const [confirmForget, setConfirmForget] = useState('')
       // 套件树展开状态：默认全收起，只记开着的 path
       const [openMap, setOpenMap] = useState(() => readSuiteOpen())
+      const [query, setQuery] = useState('')
+      const [status, setStatus] = useState('')
       const rows = skills.data ? skills.data.skills || [] : []
       const tree = useMemo(() => normalizeSkillTree(skills.data), [skills.data])
       const current = selected === null ? null : rowAtPath(rows, selected)
@@ -970,7 +1617,19 @@ window.__ModuleLoader__.load({
       const isSimple = isGroup === false && isChild === false && isRootSkill === false
       const allRegistered = skillCount > 0 && registeredCount >= skillCount
       // 只渲染展开路径上的节点：默认收起时就是顶层节点
+      const filtering = query.trim() !== '' || status !== ''
       const visible = useMemo(() => {
+        if (filtering) {
+          const needle = query.trim().toLowerCase()
+          return rows
+            .filter((row) => {
+              if (status !== '' && row.status !== status) return false
+              if (needle === '') return true
+              const haystack = [row.name, row.description, row.path, row.id, ...(Array.isArray(row.notes) ? row.notes : [])].join(' ').toLowerCase()
+              return haystack.includes(needle)
+            })
+            .map((row) => ({ node: { path: row.path || row.id, name: row.name, kind: 'skill', depth: 0, skillCount: 1, registeredCount: row.globalRegistered ? 1 : 0, children: [] }, depth: 0 }))
+        }
         const out = []
         const walk = (nodes, depth) => {
           for (const item of nodes) {
@@ -981,7 +1640,7 @@ window.__ModuleLoader__.load({
         }
         walk(tree, 0)
         return out
-      }, [tree, openMap])
+      }, [tree, openMap, filtering, rows, query, status])
       const toggleNode = (path) => {
         setOpenMap((previous) => {
           const next = { ...previous }
@@ -1212,9 +1871,15 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'eng-fill' },
         skills.error ? h(Banner, { bad: true }, skills.error) : null,
         notice ? h(Banner, null, notice) : null,
+        h('div', { className: 'eng-toolbar' },
+          h('input', { className: 'eng-input', placeholder: '搜技能名 / 描述 / 路径…', value: query, onChange: (event) => setQuery(event.target.value) }),
+          h('select', { className: 'eng-select', style: { width: 130 }, value: status, onChange: (event) => setStatus(event.target.value) },
+            h('option', { value: '' }, '全部状态'),
+            ['solid', 'trial', 'risky', 'blocked', 'new'].map((key) => h('option', { key, value: key }, SKILL_STATES[key] ? SKILL_STATES[key][0] : key))),
+          h('span', { className: 'eng-muted' }, filtering ? `${visible.length} 个匹配` : `共 ${rows.length} 个技能`)),
         h('div', { className: 'eng-split', 'data-open': node === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
-            visible.length === 0 ? h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀') : visible.map(({ node: item, depth }) => {
+            visible.length === 0 ? (skills.loading ? h(Skeleton, { rows: 5 }) : skills.error ? h(ErrorState, { message: skills.error, onRetry: skills.reload }) : h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀')) : visible.map(({ node: item, depth }) => {
               const row = rowAtPath(rows, item.path)
               const itemKind = item.kind === 'group' ? 'group' : 'skill'
               const itemCount = nodeSkillCountOf(item)
@@ -1229,8 +1894,10 @@ window.__ModuleLoader__.load({
                 key: item.path,
                 className: 'eng-skill-row eng-tree-row',
                 'data-on': selected === item.path ? 'true' : 'false',
+                tabIndex: 0,
                 style: { paddingLeft: 8 + depth * 18 },
                 onClick: () => { setSelected(item.path); setConfirmForget('') },
+                onKeyDown: (event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setSelected(item.path); setConfirmForget('') } },
               },
                 children.length > 0
                   ? h('button', {
@@ -1321,10 +1988,12 @@ window.__ModuleLoader__.load({
      * 复用 eng-modal 那套样式，不新造弹窗皮肤。
      */
     function PushConflictDialog(props) {
+      const modalRef = useRef(null)
+      useModalFocus(modalRef, props.onClose, true)
       const conflict = props.conflict || {}
       const ahead = Number(conflict.remoteAhead) > 0 ? Number(conflict.remoteAhead) : 1
       return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '推送前确认' },
-        h('div', { className: 'eng-modal', style: { width: 'min(520px, 100%)' } },
+        h('div', { className: 'eng-modal', ref: modalRef, style: { width: 'min(520px, 100%)' } },
           h('h3', { className: 'eng-modal-title' }, '远端有本机没有的提交'),
           h('div', { className: 'eng-muted', style: { lineHeight: 1.8, marginTop: 6 } },
             `这个仓库比本机多 ${ahead} 个提交（分支 ${conflict.branch || '—'}）。要继续推送，先选一种处置：`),
@@ -1352,6 +2021,7 @@ window.__ModuleLoader__.load({
       const [result, setResult] = useState(null)
       const fileInputRef = useRef(null)
       const dirInputRef = useRef(null)
+      const modalRef = useRef(null)
       // 浏览器选文件夹时一次可能读到多个 SKILL.md（套件），先攒起来再一次性提交
       const [contentsDraft, setContentsDraft] = useState([])
       // 套件的根目录名（来自 webkitRelativePath / 拖拽目录名）与可改的套件名
@@ -1359,6 +2029,7 @@ window.__ModuleLoader__.load({
       const [suiteName, setSuiteName] = useState('')
       // 套件批量导入进度：{ total, done, current }；非空时弹窗整体切成进度条视图
       const [progress, setProgress] = useState(null)
+      useModalFocus(modalRef, props.onClose, progress === null)
       const canSubmit = busy === false && (sourcePath.trim() !== '' || content.trim() !== '' || contentsDraft.length > 0)
       // 从 SKILL.md frontmatter 取名字，用于进度条显示
       const nameOfSkill = (text) => {
@@ -1554,7 +2225,7 @@ window.__ModuleLoader__.load({
         try {
           if (batch !== null) {
           const agg = { suite: true, count: 0, items: [] }
-          const rows = batch.map((item) => ({ name: item.name, path: pathForItem(item), state: "waiting", category: "", tags: [], error: "", model: "", classifier: "" }))
+          const rows = batch.map((item) => ({ name: item.name, path: pathForItem(item), state: "waiting", category: "", tags: [], error: "", model: "", classifier: "", note: "", skipped: 0 }))
           // 逐个导入：进度条前进一格，同时把该技能的分类结果写进下面的列表
           for (let index = 0; index < batch.length; index += 1) {
             rows[index].state = "running"
@@ -1570,6 +2241,8 @@ window.__ModuleLoader__.load({
               rows[index].tags = Array.isArray(item.tags) ? item.tags.slice(0, 3) : []
               rows[index].model = String(item.model || "")
               rows[index].classifier = String(item.classifier || "")
+              rows[index].note = String(item.note || "")
+              rows[index].skipped = item.package ? Number(item.package.skipped) || 0 : 0
               agg.count += Number(one.count) || 1
               agg.items.push(...(one.items || []))
             } catch (caught) {
@@ -1607,11 +2280,11 @@ window.__ModuleLoader__.load({
           if (row.state === 'waiting') continue
           messages.push({ role: 'user', text: `分类：${row.name}${row.path ? `（${row.path}）` : ''}` })
           if (row.state === 'failed') messages.push({ role: 'assistant', text: `失败：${row.error}`, bad: true })
-          else if (row.state === 'done') messages.push({ role: 'assistant', text: `${row.category === '' ? '未分类' : row.category}${row.tags.length > 0 ? ' · ' + row.tags.join(' / ') : ''}` })
+          else if (row.state === 'done') messages.push({ role: 'assistant', text: `${row.category === '' ? '未分类' : row.category}${row.tags.length > 0 ? ' · ' + row.tags.join(' / ') : ''}${row.classifier === 'local' ? '（本地关键词兜底）' : ''}${row.skipped > 0 ? ` · 跳过 ${row.skipped} 个文件` : ''}` })
           else messages.push({ role: 'assistant', text: '处理中…' })
         }
         return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '正在导入技能' },
-          h('div', { className: 'eng-modal' },
+          h('div', { className: 'eng-modal', ref: modalRef },
             h('h3', { className: 'eng-modal-title' }, '正在导入技能'),
             h('div', { className: 'eng-progress-text' }, progress.current === '' ? `已完成 ${progress.done}/${progress.total}` : `正在导入 ${Math.min(progress.done + 1, progress.total)}/${progress.total}：${progress.current}`),
             h('div', { className: 'eng-progress-track' }, h('div', { className: 'eng-progress-bar', style: { width: `${percent}%` } })),
@@ -1619,17 +2292,19 @@ window.__ModuleLoader__.load({
               h('span', { className: 'eng-progress-dot' }),
               h('span', { className: 'eng-progress-name', title: row.path || row.name }, row.path || row.name),
               h('span', { className: 'eng-progress-state' }, stateLabel(row.state)),
+              row.classifier === '' ? null : h('span', { className: 'eng-progress-tag eng-progress-tag-soft', title: row.note || '' }, row.classifier === 'session' ? '模型会话' : row.classifier === 'local' ? '本地关键词' : row.classifier),
               row.category === '' ? null : h('span', { className: 'eng-progress-tag' }, row.category),
               row.tags.length === 0 ? null : h('span', { className: 'eng-progress-tag eng-progress-tag-soft' }, row.tags.join(' / ')),
-              row.error === '' ? null : h('span', { className: 'eng-progress-error', style: { color: 'var(--eng-bad)' } }, row.error)))),
+              row.skipped > 0 ? h('span', { className: 'eng-progress-error eng-warn-text' }, `跳过 ${row.skipped} 个文件`) : null,
+              row.error === '' ? null : h('span', { className: 'eng-progress-error eng-bad-text' }, row.error)))),
             h('div', { className: 'eng-session' }, messages.map((message, index) => h('div', { className: 'eng-session-msg', 'data-role': message.role, 'data-bad': message.bad ? 'true' : 'false', key: index },
               h('span', { className: 'eng-session-role' }, message.role === 'user' ? '分类请求' : message.role === 'system' ? '会话' : '分类会话'),
               h('span', { className: 'eng-session-text' }, message.text))))))
       }
       return h('div', { className: 'eng-modal-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加技能' },
-        h('div', { className: 'eng-modal' },
+        h('div', { className: 'eng-modal', ref: modalRef },
           h('h3', { className: 'eng-modal-title' }, '添加技能'),
-          h('div', { className: 'eng-dropzone', 'data-dragging': dragging ? 'true' : 'false', role: 'button', tabIndex: 0, title: '拖入技能文件夹或 SKILL.md', onClick: () => { if (fileInputRef.current) fileInputRef.current.click() }, onDragOver: (event) => { event.preventDefault(); setDragging(true) }, onDragLeave: () => setDragging(false), onDrop: onDrop },
+          h('div', { className: 'eng-dropzone', 'data-dragging': dragging ? 'true' : 'false', role: 'button', tabIndex: 0, 'aria-label': '拖入技能文件夹或 SKILL.md', title: '拖入技能文件夹或 SKILL.md', onClick: () => { if (fileInputRef.current) fileInputRef.current.click() }, onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (fileInputRef.current) fileInputRef.current.click() } }, onDragOver: (event) => { event.preventDefault(); setDragging(true) }, onDragLeave: () => setDragging(false), onDrop: onDrop },
             h('div', { className: 'eng-dropzone-title' }, '拖拽技能到此处'),
             h('div', { className: 'eng-dropzone-actions' },
               h('button', { type: 'button', className: 'eng-dropzone-link', onClick: (event) => { event.stopPropagation(); if (dirInputRef.current) dirInputRef.current.click() } }, '选择文件夹'),
@@ -1645,7 +2320,7 @@ window.__ModuleLoader__.load({
               h('input', { className: 'eng-input', style: { width: 200 }, value: suiteName, placeholder: suiteRoot, onChange: (event) => setSuiteName(event.target.value) }),
               h('span', { className: 'eng-muted' }, `→ skills/${suiteName.trim() === '' ? suiteRoot : suiteName.trim()}/…`))
             : null,
-          h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, '文件夹需含 SKILL.md；套件按目录结构导入（保留子目录，套件名可改）；只复制正文，脚本用 exp_skill_attach 补；导入会用一次模型调用做分类。'),
+          h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, '文件夹需含 SKILL.md；套件按目录结构导入（保留子目录，套件名可改）；整包复制（跳过 .git/node_modules 等，超限文件记 skipped）；导入会用一次模型调用做分类，没有模型服务时退回本地关键词并如实标注。'),
           showAdvanced
             ? h('div', null,
               h('input', { className: 'eng-input', style: { marginTop: 8 }, value: categoriesDraft, placeholder: '分类（逗号分隔，可多个）', onChange: (event) => setCategoriesDraft(event.target.value) }),
@@ -1662,6 +2337,7 @@ window.__ModuleLoader__.load({
 
     function Types(props) {
       const types = useLoad(useCallback(() => request('/types'), []))
+      useRefreshEvent(types.reload)
       const [name, setName] = useState('')
       const [description, setDescription] = useState('')
       const [notice, setNotice] = useState('')
@@ -1670,6 +2346,11 @@ window.__ModuleLoader__.load({
       const [mergeInto, setMergeInto] = useState('')
       const rows = types.data ? types.data.types || [] : []
       const current = rows.find((row) => row.id === selected) || null
+      const closeManagement = () => { setSelected(''); setNewName(''); setMergeInto('') }
+      const mergeTarget = mergeInto === '' ? null : rows.find((row) => row.name === mergeInto) || null
+      const totalCount = rows.reduce((sum, row) => sum + (Number(row.count) || 0), 0)
+      const distRows = rows.filter((row) => !row.system && (Number(row.count) || 0) > 0).sort((left, right) => (Number(right.count) || 0) - (Number(left.count) || 0)).slice(0, 8)
+      const distMax = Math.max(1, ...distRows.map((row) => Number(row.count) || 0))
       const op = async (body) => {
         try {
           const out = await request('/type', { method: 'POST', body })
@@ -1688,16 +2369,27 @@ window.__ModuleLoader__.load({
             h(Field, { label: '新类型名称' }, h('input', { className: 'eng-input', value: name, onChange: (event) => setName(event.target.value) })),
             h(Field, { label: '描述（可选）' }, h('input', { className: 'eng-input', value: description, onChange: (event) => setDescription(event.target.value) }))),
           h(Button, { kind: 'primary', disabled: name.trim() === '', onClick: () => op({ action: 'create', name: name.trim(), description: description.trim() }) }, '新建类型')),
+        h('div', { className: 'eng-card eng-section-card', style: { marginBottom: 14 } },
+          h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '类型分布'), h('span', { className: 'eng-muted' }, `${totalCount} 条可见经验`)),
+          distRows.length === 0 ? h(Empty, null, '还没有类型数据') : h('div', { className: 'eng-dist' }, distRows.map((row) => h('div', { key: row.id, className: 'eng-dist-row' },
+            h('span', { className: 'eng-row-intent', title: row.name }, row.name),
+            h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round(((Number(row.count) || 0) / distMax) * 100)}%` } })),
+            h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(row.count || 0)))))),
         h('div', { className: 'eng-card eng-scroll' },
-          h('table', { className: 'eng-table' },
+          rows.length === 0
+            ? (types.loading ? h(Skeleton, { rows: 5 }) : types.error ? h(ErrorState, { message: types.error, onRetry: types.reload }) : h(Empty, null, '还没有类型'))
+            : h('table', { className: 'eng-table' },
             h('thead', null, h('tr', null, h('th', null, '名称'), h('th', null, 'id'), h('th', null, '条数'), h('th', null, '类型'))),
-            h('tbody', null, rows.map((row) => h('tr', { key: row.id, style: { cursor: row.system ? 'default' : 'pointer' }, onClick: () => { if (!row.system) { setSelected(row.id); setNewName(row.name); setMergeInto('') } } },
+            h('tbody', null, rows.map((row) => h('tr', { key: row.id, tabIndex: row.system ? -1 : 0, style: { cursor: row.system ? 'default' : 'pointer' }, onClick: () => { if (!row.system) { if (selected === row.id) closeManagement(); else { setSelected(row.id); setNewName(row.name); setMergeInto('') } } }, onKeyDown: (event) => { if (row.system) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (selected === row.id) closeManagement(); else { setSelected(row.id); setNewName(row.name); setMergeInto('') } } } },
               h('td', null, row.name),
               h('td', { className: 'eng-mono' }, row.id),
               h('td', null, String(row.count || 0)),
               h('td', null, row.system ? h('span', { className: 'eng-muted' }, '系统') : (selected === row.id ? h(Badge, { tone: 'brand' }, '管理中') : h('span', { className: 'eng-muted' }, '点击管理')))))))),
         current === null ? null : h('div', { className: 'eng-card eng-detail', style: { marginTop: 14 } },
           h('h3', { className: 'eng-detail-title' }, `管理：${current.name}`),
+          h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, '单条经验改挂类型：到「经验」页 → 详情 → 改挂类型（类型页没有经验列表，不在这里重选）。'),
+          mergeTarget === null ? null : h('div', { className: 'eng-muted', style: { marginBottom: 8 } },
+            `合并后：${current.name}（${current.count || 0} 条）+ ${mergeTarget.name}（${mergeTarget.count || 0} 条）→ ${mergeInto}（${(Number(current.count) || 0) + (Number(mergeTarget.count) || 0)} 条）；源类型「${current.name}」会删除。`),
           h('div', { className: 'eng-form-grid' },
             h(Field, { label: '新名称' }, h('input', { className: 'eng-input', value: newName, onChange: (event) => setNewName(event.target.value) })),
             h(Field, { label: '合并到' }, h('select', { className: 'eng-select', value: mergeInto, onChange: (event) => setMergeInto(event.target.value) },
@@ -1706,49 +2398,170 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-actions' },
             h(Button, { small: true, disabled: newName.trim() === '', onClick: () => op({ action: 'rename', name: current.name, newName: newName.trim() }) }, '改名'),
             h(Button, { small: true, disabled: mergeInto === '', onClick: () => op({ action: 'merge', names: [current.name, mergeInto], newName: mergeInto }) }, '合并'),
-            h(Button, { small: true, kind: 'danger', onClick: () => op({ action: 'delete', name: current.name }) }, '删除'))))
+            h(Button, { small: true, kind: 'danger', onClick: () => op({ action: 'delete', name: current.name }) }, '删除'),
+            h(Button, { small: true, onClick: closeManagement }, '收起管理'))))
     }
 
     function Usage() {
       const usage = useLoad(useCallback(() => request('/usage?limit=200'), []))
       const pending = useLoad(useCallback(() => request('/pending'), []))
       const summary = useLoad(useCallback(() => request('/usage-summary'), []))
+      useRefreshEvent(useCallback(() => { usage.reload(); pending.reload(); summary.reload() }, [usage.reload, pending.reload, summary.reload]))
+      const [openRow, setOpenRow] = useState(-1)
+      const [tool, setTool] = useState('')
       const rows = usage.data ? usage.data.rows || [] : []
       const pendingRows = Array.isArray(pending.data) ? pending.data : []
-      const stat = summary.data || { calls: 0, chars: 0, avgChars: 0, byTool: {} }
+      const stat = summary.data || { calls: 0, chars: 0, avgChars: 0, withChars: 0, byTool: {} }
+      const byTool = stat.byTool || {}
+      const toolRows = Object.entries(byTool).sort((left, right) => (Number(right[1]) || 0) - (Number(left[1]) || 0))
+      const toolMax = Math.max(1, ...toolRows.map(([, count]) => Number(count) || 0))
+      const byDay = (() => {
+        const dayKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+        const map = new Map()
+        const now = new Date()
+        for (let back = 6; back >= 0; back -= 1) {
+          const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back)
+          map.set(dayKey(date), { date: dayKey(date), count: 0, chars: 0 })
+        }
+        for (const row of rows) {
+          const at = new Date(String(row.at || ''))
+          if (Number.isNaN(at.getTime())) continue
+          const bucket = map.get(dayKey(at))
+          if (bucket === undefined) continue
+          bucket.count += 1
+          bucket.chars += Number(row.chars) || 0
+        }
+        return [...map.values()]
+      })()
+      const visibleRows = tool === '' ? rows : rows.filter((row) => row.tool === tool)
       const backfill = async (row, outcome) => {
         await request('/verdicts', { method: 'POST', body: { verdicts: [{ id: row.id, outcome }] } })
         await Promise.all([pending.reload(), summary.reload(), usage.reload()])
       }
       const error = usage.error || pending.error || summary.error
+      const kpis = [['调用次数', stat.calls, '次'], ['回执字符', stat.chars, ''], ['平均每次', stat.avgChars, '字'], ['有字符统计', `${stat.withChars || 0}/${stat.calls || 0}`, '']]
       return h('div', { className: 'eng-fill' },
         error ? h(Banner, { bad: true }, error) : null,
-        h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
-          h('div', { className: 'eng-detail-title' }, '经验库 token 账'),
-          h('div', { className: 'eng-muted' }, `最近 ${stat.calls} 次调用 · 回执合计 ${stat.chars} 字符 · 平均 ${stat.avgChars}/次`
-            + (stat.calls > 0 && !stat.chars ? '（历史记录没有字符统计，0.13 起才有）' : '')),
-          h('div', { className: 'eng-actions', style: { marginTop: 8 } },
-            Object.entries(stat.byTool || {}).map(([tool, count]) => h(Badge, { key: tool, tone: 'muted' }, `${tool} ${count}`)))),
-        h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
-          h('div', { className: 'eng-detail-title' }, `待判定（${pendingRows.length}）`),
+        h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
+          h('span', { className: 'eng-kpi-label' }, label),
+          h('span', { className: 'eng-kpi-value' }, h(Metric, { value }), h('span', { className: 'eng-kpi-unit' }, unit))))),
+        h('div', { className: 'eng-cols eng-section' },
+          h('div', { className: 'eng-card eng-section-card' },
+            h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '最近 7 天调用'), h('span', { className: 'eng-muted' }, `最近 ${stat.calls || 0} 次`)),
+            h(Sparkline, { points: byDay, label: '最近 7 天调用次数' })),
+          h('div', { className: 'eng-card eng-section-card' },
+            h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '按工具分布')),
+            toolRows.length === 0 ? h(Empty, null, '暂无调用') : h('div', { className: 'eng-dist' }, toolRows.map(([name, count]) => h('div', { key: name, className: 'eng-dist-row' },
+              h('span', { className: 'eng-row-intent', title: name }, name),
+              h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round(((Number(count) || 0) / toolMax) * 100)}%` } })),
+              h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(count))))))),
+        h('div', { className: 'eng-card eng-section-card eng-section' },
+          h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, `待判定（${pendingRows.length}）`)),
           pendingRows.length === 0
-            ? h(Empty, null, pending.loading ? '读取中…' : '没有待判定的记录')
-            : h('div', { className: 'eng-stack' }, pendingRows.map((row) => h('div', { key: row.id, className: 'eng-row', style: { gridTemplateColumns: '120px minmax(0,1fr) auto' } },
+            ? h('div', { className: 'eng-muted' }, pending.loading ? '读取中…' : '没有待判定的记录')
+            : h('div', { className: 'eng-stack' }, pendingRows.map((row) => h('div', { key: row.id, className: 'eng-pending-row' },
               h('span', { className: 'eng-mono' }, row.id),
-              h('div', { className: 'eng-row-main' },
-                h('div', { className: 'eng-row-intent' }, row.intent || row.action || '—'),
-                row.brief ? h('div', { className: 'eng-row-sub' }, row.brief) : null),
+              h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || row.action || '—'), row.brief ? h('div', { className: 'eng-row-sub' }, row.brief) : null),
               h('div', { className: 'eng-actions' },
                 h(Button, { small: true, onClick: () => backfill(row, 'success') }, '成功'),
                 h(Button, { small: true, onClick: () => backfill(row, 'corrected') }, '纠正'),
                 h(Button, { small: true, onClick: () => backfill(row, 'failed') }, '失败')))))),
-        h('div', { className: 'eng-card eng-scroll' }, rows.length === 0 ? h(Empty, null, usage.loading ? '读取中…' : '还没有调用记录') : h('table', { className: 'eng-table' },
-          h('thead', null, h('tr', null, h('th', null, '时间'), h('th', null, '工具'), h('th', null, '意图'), h('th', null, '结果'))),
-          h('tbody', null, rows.map((row, index) => h('tr', { key: index },
-            h('td', { className: 'eng-mono' }, fmtTime(row.at)),
-            h('td', null, row.tool || '—'),
-            h('td', null, row.intent || row.action || '—'),
-            h('td', null, row.feedback || (row.ok === false ? '失败' : 'ok'))))))))
+        h('div', { className: 'eng-card eng-scroll eng-section' },
+          h('div', { className: 'eng-toolbar', style: { padding: 'var(--eng-s-3)' } },
+            h('select', { className: 'eng-select', style: { width: 160 }, value: tool, onChange: (event) => { setTool(event.target.value); setOpenRow(-1) } },
+              h('option', { value: '' }, '全部工具'),
+              toolRows.map(([name]) => h('option', { key: name, value: name }, name))),
+            h('span', { className: 'eng-muted' }, `${visibleRows.length} 条`)),
+          visibleRows.length === 0
+            ? (usage.loading ? h(Skeleton, { rows: 6 }) : usage.error ? h(ErrorState, { message: usage.error, onRetry: usage.reload }) : h(Empty, null, '还没有调用记录'))
+            : h('table', { className: 'eng-table' },
+              h('thead', null, h('tr', null, h('th', null, '时间'), h('th', null, '工具'), h('th', null, '意图'), h('th', null, '字符'), h('th', null, '结果'))),
+              h('tbody', null, visibleRows.map((row, index) => [
+                  h('tr', { key: `r${index}`, tabIndex: 0, style: { cursor: 'pointer' }, onClick: () => setOpenRow(openRow === index ? -1 : index), onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setOpenRow(openRow === index ? -1 : index) } } },
+                  h('td', { className: 'eng-mono' }, fmtTime(row.at)),
+                  h('td', null, row.tool || '—'),
+                  h('td', null, row.intent || row.action || '—'),
+                  h('td', { className: 'eng-mono' }, row.chars === undefined || row.chars === null ? '—' : String(row.chars)),
+                  h('td', null, row.feedback || (row.ok === false ? '失败' : 'ok'))),
+                openRow === index ? h('tr', { key: `d${index}` },
+                  h('td', { colSpan: 5, className: 'eng-muted', style: { padding: '8px 12px', fontSize: 11 } },
+                    `op=${row.op || '—'} · limit=${row.limit === null || row.limit === undefined ? '—' : row.limit}`
+                    + ` · routeScore=${row.routeScore === null || row.routeScore === undefined ? '—' : fmtNumber(row.routeScore)}`
+                    + ` · ids=${Array.isArray(row.ids) && row.ids.length > 0 ? row.ids.join(', ') : '—'}`
+                    + (row.error ? ` · 错误：${row.error}` : ''))) : null])))))
+    }
+
+    /**
+     * 冷档（0.14 P2）：容量安全阀下沉的老经验，只读。
+     * 数据来自 GET /cold；不做反馈/编辑，避免把只读子集写回整库。
+     */
+    function Cold() {
+      const limit = 50
+      const [draft, setDraft] = useState('')
+      const [query, setQuery] = useState('')
+      const [year, setYear] = useState('')
+      const [page, setPage] = useState(0)
+      const [selected, setSelected] = useState(null)
+      const list = useLoad(useCallback(() => {
+        const params = new URLSearchParams({ offset: String(page * limit), limit: String(limit) })
+        if (query !== '') params.set('query', query)
+        if (year !== '') params.set('year', year)
+        return request(`/cold?${params.toString()}`)
+      }, [page, query, year]))
+      useRefreshEvent(list.reload)
+      useEffect(() => { setPage(0) }, [query, year])
+      const data = list.data || {}
+      const rows = Array.isArray(data.rows) ? data.rows : []
+      const years = Array.isArray(data.years) ? data.years : []
+      const total = Number(data.total) || 0
+      const pages = Math.max(1, Math.ceil(total / limit))
+      const current = selected === null ? null : rows.find((row) => row.id === selected) || null
+      const submit = () => { setQuery(draft.trim()); setPage(0) }
+      return h('div', { className: 'eng-fill' },
+        list.error ? h(Banner, { bad: true }, list.error) : null,
+        data.error ? h(Banner, { bad: true }, `冷档读取失败：${data.error}`) : null,
+        h(Banner, null, '冷档只读：容量安全阀触发后下沉的老经验，默认不参与召回；这里只查，不写回整库。'),
+        h('div', { className: 'eng-toolbar' },
+          h('input', {
+            className: 'eng-input',
+            placeholder: '按意图/做法/类型搜冷档（回车）…',
+            value: draft,
+            onChange: (event) => setDraft(event.target.value),
+            onKeyDown: (event) => { if (event.key === 'Enter') submit() },
+          }),
+          h('select', { className: 'eng-select', style: { width: 130 }, value: year, onChange: (event) => setYear(event.target.value) },
+            h('option', { value: '' }, '全部年份'),
+            years.map((item) => h('option', { key: item.year, value: String(item.year) }, `${item.year} 年 · ${item.count} 条`))),
+          h(Button, { small: true, onClick: submit }, '搜索'),
+          h(Button, { small: true, onClick: () => { setDraft(''); setQuery(''); setYear('') } }, '清空'),
+          h('span', { className: 'eng-muted' }, `${total} 条`)),
+        h('div', { className: 'eng-split', 'data-open': current === null ? 'false' : 'true' },
+          h('div', { className: 'eng-card' },
+            rows.length === 0
+              ? (list.loading ? h(Skeleton, { rows: 5 }) : list.error ? h(ErrorState, { message: list.error, onRetry: list.reload }) : h(Empty, null, '没有冷档记录（安全阀未触发）'))
+              : h('div', { className: 'eng-list' }, rows.map((row) => {
+              const [label, tone] = outcomeOf(row.outcome)
+              return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
+                h(Badge, { tone }, label),
+                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
+                h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt)))
+            })),
+            h('div', { className: 'eng-pager' },
+              h('span', { className: 'eng-muted' }, `共 ${total} 条 · 第 ${page + 1}/${pages} 页`),
+              h(Button, { small: true, disabled: page <= 0, onClick: () => setPage(page - 1) }, '上一页'),
+              h(Button, { small: true, disabled: page + 1 >= pages, onClick: () => setPage(page + 1) }, '下一页'))),
+          h('div', { className: 'eng-card eng-detail-card' },
+            current === null ? h(Empty, null, '选一条冷档看只读详情') : h('div', { className: 'eng-detail' },
+              h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Badge, { tone: 'muted' }, '冷档'), h('span', { className: 'eng-mono' }, `G ${fmtNumber(current.G)}`)),
+              h('h3', { className: 'eng-detail-title' }, current.intent || '（无意图）'),
+              h('dl', { className: 'eng-kv' },
+                h('dt', null, '做法'), h('dd', null, current.action || '—'),
+                h('dt', null, '类型'), h('dd', null, current.typeName || '—'),
+                h('dt', null, '结果'), h('dd', null, outcomeOf(current.outcome)[0]),
+                h('dt', null, '最后使用'), h('dd', null, fmtTime(current.lastSeenAt)),
+                h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, current.id)),
+              h('div', { className: 'eng-muted', style: { marginTop: 12, fontSize: 11 } }, '冷档条目只读：不可反馈、不可编辑、不可删除。')))))
     }
 
     const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
@@ -2183,11 +2996,23 @@ window.__ModuleLoader__.load({
       const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const canvasRef = useRef(null)
+      const fitRef = useRef(null)
+      const zoomRef = useRef(null)
       const [selection, setSelection] = useState(null)
+      const [paused, setPaused] = useState(false)
+      const [legendOpen, setLegendOpen] = useState(false)
+      const [simple, setSimple] = useState(false)
+      const viewData = useMemo(() => {
+        if (!simple || !graph.data) return graph.data
+        const nodes = (graph.data.nodes || []).filter((node) => node.kind !== 'experience')
+        const ids = new Set(nodes.map((node) => node.id))
+        const edges = (graph.data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target))
+        return { ...graph.data, nodes, edges }
+      }, [graph.data, simple])
       const stateRef = useRef({
         nodes: new Map(), edges: new Map(), dust: [],
         cam: { yaw: -0.42, pitch: -0.24, dist: 1420 },
-        selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false,
+        selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false, fit: null,
       })
       // 图上那个胶囊：手动切「跟随主题 / 蓝紫星辰」，写进 ui.graphPalette。
       const graphUi = (settings.data && settings.data.ui) || {}
@@ -2213,7 +3038,7 @@ window.__ModuleLoader__.load({
       }
       useEffect(() => {
         const canvas = canvasRef.current
-        if (!canvas || !graph.data) return undefined
+        if (!canvas || !viewData) return undefined
         const ui = (settings.data && settings.data.ui) || {}
         const theme = GRAPH_THEMES.includes(ui.graphTheme) ? ui.graphTheme : 'personal'
         const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
@@ -2233,7 +3058,7 @@ window.__ModuleLoader__.load({
             ringFill: forcedDark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
           }
         }
-        const rotation = Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04
+        const rotation = paused ? 0 : (Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04)
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
         const dustCount = Math.max(0, Math.min(240, Number(ui.graphDust) || 70))
@@ -2482,14 +3307,22 @@ window.__ModuleLoader__.load({
           cam.dist = Math.min(3200, Math.max(520, cam.dist * (event.deltaY > 0 ? 1.08 : 0.92)))
         }
         resize()
-        sync(graph.data)
-        const fitCamera = () => {
-          if (store.userZoom) return
+        sync(viewData)
+        const fitCamera = (immediate = false) => {
+          if (store.userZoom && !immediate) return
           let bound = 1
           for (const entry of store.nodes.values()) bound = Math.max(bound, Math.hypot(entry.x, entry.y, entry.z))
-          cam.dist = Math.max(900, Math.min(2800, bound * 2.9))
+          const target = Math.max(900, Math.min(2800, bound * 2.9))
+          if (immediate) {
+            cam.dist = target
+            store.fit = null
+          } else {
+            store.fit = { from: cam.dist, to: target, at: performance.now() }
+          }
         }
-        fitCamera()
+        fitCamera(true)
+        fitRef.current = () => { store.userZoom = false; fitCamera(false) }
+        zoomRef.current = (factor) => { store.userZoom = true; cam.dist = Math.min(3200, Math.max(520, cam.dist * factor)) }
         const refreshPalette = () => {
           if (paletteKey !== 'dsh') return
           palette = readDshGraphPalette(canvas)
@@ -2518,6 +3351,12 @@ window.__ModuleLoader__.load({
           last = now
           store.t += dt
           store.pulse += dt * 1.4
+          if (store.fit !== null) {
+            const progress = Math.min(1, (now - store.fit.at) / 420)
+            const eased = 1 - Math.pow(1 - progress, 3)
+            cam.dist = store.fit.from + (store.fit.to - store.fit.from) * eased
+            if (progress >= 1) store.fit = null
+          }
           if (rotation !== 0 && store.dragging === null) cam.yaw += rotation * dt
           const cx = width / 2
           const cy = height / 2
@@ -2704,12 +3543,43 @@ window.__ModuleLoader__.load({
           canvas.removeEventListener('pointerleave', onPointerLeave)
           canvas.removeEventListener('wheel', onWheel)
         }
-      }, [graph.data, settings.data])
+      }, [viewData, settings.data, paused])
       const surfaceStyle = surfaceNow === 'dark'
         ? { background: '#0b1020' }
         : surfaceNow === 'light' ? { background: '#f6f8fc' } : undefined
-      return h('div', { className: 'eng-graph-canvas-wrap', style: surfaceStyle },
+      const typeNodes = graph.data && Array.isArray(graph.data.nodes) ? graph.data.nodes.filter((node) => node.kind === 'type') : []
+      const graphSummary = graph.data && graph.data.summary ? graph.data.summary : null
+      const zoomBy = (factor) => { if (zoomRef.current) zoomRef.current(factor) }
+      return h('div', {
+        className: 'eng-graph-canvas-wrap',
+        style: surfaceStyle,
+        tabIndex: 0,
+        role: 'group',
+        'aria-label': '关系图；方向键平移，+/- 缩放，0 适配，空格暂停',
+        onKeyDown: (event) => {
+          if (event.key === '+' || event.key === '=') { zoomBy(0.9); event.preventDefault() }
+          else if (event.key === '-') { zoomBy(1.1); event.preventDefault() }
+          else if (event.key === '0') { if (fitRef.current) fitRef.current(); event.preventDefault() }
+          else if (event.key === ' ') { setPaused((value) => !value); event.preventDefault() }
+        },
+      },
         h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '3D 记忆海' }),
+        (graph.error || (graph.data && graph.data.storeError))
+          ? h('div', { style: { position: 'absolute', left: 14, top: 14, right: 14, zIndex: 3 } },
+            h(Banner, { bad: true }, graph.error || `经验数据读取失败：${graph.data.storeError.message}${graph.data.storeError.file ? `（${graph.data.storeError.file}）` : ''}`))
+          : null,
+        h('div', { className: 'eng-graph-pill eng-graph-pill-top', role: 'group', 'aria-label': '关系图视图' },
+          h('button', { type: 'button', title: '把镜头拉回全图（快捷键 0）', onClick: () => { if (fitRef.current) fitRef.current() } }, '适配视图'),
+          h('button', { type: 'button', 'data-active': paused ? 'true' : 'false', title: '暂停/继续自转（快捷键 空格）', onClick: () => setPaused((value) => !value) }, paused ? '继续旋转' : '暂停旋转'),
+          h('button', { type: 'button', 'data-active': simple ? 'true' : 'false', 'aria-pressed': simple ? 'true' : 'false', title: '隐藏经验节点，只看类型/技能/套件（大图更流畅）', onClick: () => setSimple((value) => !value) }, '精简视图'),
+          h('button', { type: 'button', 'data-active': legendOpen ? 'true' : 'false', 'aria-expanded': legendOpen ? 'true' : 'false', onClick: () => setLegendOpen((value) => !value) }, '图例')),
+        legendOpen ? h('div', { className: 'eng-graph-legend' },
+          h('div', { className: 'eng-strong' }, '图例'),
+          graphSummary ? h('div', { className: 'eng-muted' }, `${graphSummary.types} 类 · ${graphSummary.experiences} 条经验 · ${graphSummary.skills} 个技能 · ${graphSummary.suites} 个套件`) : null,
+          h('div', { className: 'eng-graph-legend-list' }, typeNodes.slice(0, 10).map((node) => h('div', { key: node.id, className: 'eng-graph-legend-row' },
+            h('span', { className: 'eng-legend-dot' }),
+            h('span', { className: 'eng-row-intent', title: node.label }, node.label || node.id),
+            h('span', { className: 'eng-mono' }, String(node.count || 0)))))) : null,
         h('div', { className: 'eng-graph-pill eng-graph-pill-bottom', role: 'group', 'aria-label': '关系图背景深浅' },
           [['theme', '跟随主题'], ['light', '浅色'], ['dark', '深色']].map(([key, label]) => h('button', {
             key,
@@ -2747,6 +3617,7 @@ window.__ModuleLoader__.load({
 
     function Settings(props) {
       const settings = useLoad(useCallback(() => request('/settings'), []))
+      useRefreshEvent(settings.reload)
       const validation = useLoad(useCallback(() => request('/validate'), []))
       const [rootInput, setRootInput] = useState('')
       const [notice, setNotice] = useState('')
@@ -2767,6 +3638,21 @@ window.__ModuleLoader__.load({
       const [pushConflict, setPushConflict] = useState(null)
       const repoInputRef = useRef(null)
       const [section, setSection] = useState(props && props.section ? String(props.section) : 'storage')
+      const [density, setDensity] = useState(() => {
+        try { return localStorage.getItem('eng:density') === 'compact' ? 'compact' : 'comfortable' } catch { return 'comfortable' }
+      })
+      // 密度只作用于本机显示：写 localStorage，并直接改根节点，不重载插件。
+      const saveDensity = (value) => {
+        const next = value === 'compact' ? 'compact' : 'comfortable'
+        setDensity(next)
+        try { localStorage.setItem('eng:density', next) } catch { /* 隐私模式忽略 */ }
+        try {
+          if (typeof document !== 'undefined') {
+            const root = document.querySelector('.eng-app')
+            if (root !== null) root.setAttribute('data-density', next)
+          }
+        } catch { /* 测试环境没有 document */ }
+      }
       const deviceStart = async () => {
         setGhBusy(true); setGhNotice('')
         try {
@@ -3105,6 +3991,8 @@ window.__ModuleLoader__.load({
       })
       if (settings.error) return h(Banner, { bad: true }, settings.error)
       const data = settings.data || {}
+      const storage = data.storage !== null && typeof data.storage === 'object' ? data.storage : null
+      const legacy = storage !== null && storage.legacy !== null && typeof storage.legacy === 'object' ? storage.legacy : null
       const spec = data.spec || { config: [], ui: [], git: [] }
       const nav = [['storage', '存储位置'], ['backup', '备份与账号'], ['kernel', '内核参数'], ['ui', '界面与关系图'], ['maintenance', '维护']]
       const subnav = h('div', { className: 'eng-subnav' }, nav.map(([id, label]) => h('button', {
@@ -3145,8 +4033,19 @@ window.__ModuleLoader__.load({
             h('dt', null, '生效目录'), h('dd', { className: 'eng-mono' }, data.dataDir || '—'),
             h('dt', null, '经验库文件'), h('dd', { className: 'eng-mono' }, data.file || '—'),
             h('dt', null, '大小'), h('dd', null, fmtBytes(data.bytes)),
-            h('dt', null, '版本'), h('dd', null, data.version || '—')))
-        ] : null,
+            h('dt', null, '版本'), h('dd', null, data.version || '—'))),
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, '存储结构'),
+          storage === null
+            ? h('div', { className: 'eng-muted' }, '暂无存储信息（还没读到 manifest）')
+            : h('div', null,
+              h('dl', { className: 'eng-kv' },
+                h('dt', null, 'manifest'), h('dd', { className: 'eng-mono' }, fmtBytes(storage.manifestBytes)),
+                h('dt', null, '分片'), h('dd', null, `${storage.bucketFiles || 0} 个文件 · ${fmtBytes(storage.bucketBytes)}`),
+                h('dt', null, '冷档'), h('dd', null, Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件 · ${fmtBytes(storage.coldBytes)}` : '暂无（安全阀未触发）'),
+                h('dt', null, 'legacy'), h('dd', null, legacy && legacy.exists ? `${fmtBytes(legacy.bytes)} · 迁移前快照，可删` : '无'),
+                h('dt', null, '总计'), h('dd', null, `${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件`))))
+      ] : null,
         section === 'backup' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, 'Git 同步'),
@@ -3239,6 +4138,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '界面与关系图'),
           h('div', { className: 'eng-form-grid' }, renderFields(spec.ui, uiDraft, setUiDraft)),
+          h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, '外观跟随 DSH 主题：白底 + 蓝强调 + 灰点缀；切换浅色 / 深色或换肤会自动生效。'),
+          h('div', { className: 'eng-field' },
+            h('label', { className: 'eng-label' }, '界面密度'),
+            h('select', { className: 'eng-select', value: density, onChange: (event) => saveDensity(event.target.value) },
+              h('option', { value: 'comfortable' }, '舒适（行 36px）'),
+              h('option', { value: 'compact' }, '紧凑（行 30px）')),
+            h('span', { className: 'eng-muted' }, '只改本机显示，保存后立即生效；字号与圆角不随密度变。')),
           h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ ui: uiDraft }) }, '保存数据源')))
         ] : null,
         section === 'kernel' ? [
@@ -3273,8 +4179,16 @@ window.__ModuleLoader__.load({
       ['record', '记录', 'plus'],
       ['skills', '技能', 'spark'],
       ['types', '类型', 'tag'],
+      ['cold', '冷档', 'archive'],
       ['usage', '使用记录', 'clock'],
       ['settings', '设置', 'gear'],
+    ]
+
+    const NAV_GROUPS = [
+      ['总览', ['overview', 'graph']],
+      ['数据', ['experiences', 'types', 'cold']],
+      ['动作', ['recall', 'record', 'skills']],
+      ['系统', ['usage', 'settings']],
     ]
 
     const PageBoundary = React.Component
@@ -3297,6 +4211,10 @@ window.__ModuleLoader__.load({
 
     function Console() {
       const [tab, setTab] = useState('overview')
+      const [focusId, setFocusId] = useState(null)
+      const [density] = useState(() => {
+        try { return localStorage.getItem('eng:density') === 'compact' ? 'compact' : 'comfortable' } catch { return 'comfortable' }
+      })
       const [recallSeed, setRecallSeed] = useState('')
       const rootRef = useRef(null)
       const [fitHeight, setFitHeight] = useState(null)
@@ -3308,6 +4226,9 @@ window.__ModuleLoader__.load({
       const [reloadToken, setReloadToken] = useState(0)
       // 「添加技能」弹层：只在技能页出现，放在顶部右侧、版本号左边。
       const [importOpen, setImportOpen] = useState(false)
+      const [paletteOpen, setPaletteOpen] = useState(false)
+      const [shortcutsOpen, setShortcutsOpen] = useState(false)
+      const [toasts, setToasts] = useState([])
       const loadState = useCallback(async () => {
         try {
           setState(await request('/state'))
@@ -3324,11 +4245,68 @@ window.__ModuleLoader__.load({
         try {
           await loadState()
           setRefreshedAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
-          setReloadToken((token) => token + 1)
+          // 不重挂页面：各页监听 eng-refresh 自己 reload，选中与滚动都保留。
+          if (typeof window !== 'undefined') window.dispatchEvent(new Event('eng-refresh'))
         } finally {
           setRefreshing(false)
         }
       }, [loadState])
+      useEffect(() => {
+        if (typeof window === 'undefined') return undefined
+        const handler = (event) => {
+          const detail = event && event.detail ? event.detail : {}
+          const id = `${Date.now()}-${Math.random()}`
+          const item = { id, message: String(detail.message || ''), tone: detail.tone === 'bad' ? 'bad' : 'ok' }
+          setToasts((previous) => [...previous, item].slice(-3))
+          setTimeout(() => setToasts((previous) => previous.filter((toastItem) => toastItem.id !== id)), 4000)
+        }
+        window.addEventListener('eng-toast', handler)
+        return () => window.removeEventListener('eng-toast', handler)
+      }, [])
+      const goRef = useRef(0)
+      useEffect(() => {
+        if (typeof window === 'undefined') return undefined
+        const handler = (event) => {
+          const tag = event.target && event.target.tagName ? String(event.target.tagName) : ''
+          const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(tag)
+          if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === 'k') {
+            event.preventDefault()
+            setPaletteOpen((open) => !open)
+            return
+          }
+          if (event.key === 'Escape') {
+            setPaletteOpen(false)
+            setShortcutsOpen(false)
+            return
+          }
+          if (typing) return
+          if (event.key === '?') {
+            event.preventDefault()
+            setShortcutsOpen(true)
+            return
+          }
+          if (event.shiftKey && String(event.key).toLowerCase() === 'r') {
+            event.preventDefault()
+            refreshAll()
+            return
+          }
+          if (String(event.key).toLowerCase() === 'g') {
+            goRef.current = Date.now()
+            return
+          }
+          if (Date.now() - goRef.current < 1200) {
+            const map = { o: 'overview', e: 'experiences', r: 'recall', n: 'record', s: 'skills', t: 'types', u: 'usage', ',': 'settings' }
+            const target = map[String(event.key).toLowerCase()]
+            if (target !== undefined) {
+              event.preventDefault()
+              goRef.current = 0
+              setTab(target)
+            }
+          }
+        }
+        window.addEventListener('keydown', handler)
+        return () => window.removeEventListener('keydown', handler)
+      }, [refreshAll])
       useEffect(() => {
         const measure = () => {
           const node = rootRef.current
@@ -3351,39 +4329,110 @@ window.__ModuleLoader__.load({
           if (observer !== null) observer.disconnect()
         }
       }, [])
+      // 主题强调色：默认皮肤用 DSH 蓝，彩色主题跟随 brand-primary；主题切换时重算。
+      useEffect(() => {
+        const node = rootRef.current
+        if (node === null || typeof document === 'undefined' || typeof getComputedStyle !== 'function') return undefined
+        const apply = () => {
+          try {
+            const probe = document.createElement('span')
+            probe.style.display = 'none'
+            node.appendChild(probe)
+            probe.style.color = 'var(--dsw-alias-brand-primary)'
+            const brand = (getComputedStyle(probe).color.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number)
+            const body = document.body
+            const isDark = Boolean(body && (body.hasAttribute('data-ds-dark-theme') || body.getAttribute('data-theme') === 'dark'))
+              || Boolean(document.documentElement && document.documentElement.getAttribute('data-theme') === 'dark')
+            const accent = pickAccent(brand, isDark)
+            node.style.setProperty('--eng-accent', accent)
+            node.style.setProperty('--eng-accent-fill', accent)
+            probe.style.color = 'var(--eng-accent-strong)'
+            const fill = (getComputedStyle(probe).color.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number)
+            probe.remove()
+            if (fill.length < 3) return
+            const [r, g, b] = fill.map((value) => {
+              const channel = value / 255
+              return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)
+            })
+            const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            node.style.setProperty('--eng-on-brand', lum > 0.19 ? '#0d0f12' : '#ffffff')
+          } catch {
+            // 拿不到主题色就保留 CSS 默认（DSH 蓝 + 白字）
+          }
+        }
+        apply()
+        if (typeof MutationObserver !== 'function') return undefined
+        const observers = []
+        const observe = (target, options) => {
+          if (target === null || target === undefined) return
+          const observer = new MutationObserver(apply)
+          observer.observe(target, options)
+          observers.push(observer)
+        }
+        // 主题可能改 html/body 的任意属性（如 data-dsh-cyrene / data-cyrene-skin），不能只盯 class/style。
+        observe(document.documentElement, { attributes: true })
+        observe(document.body, { attributes: true })
+        observe(document.head, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'style', 'media'] })
+        return () => { for (const observer of observers) observer.disconnect() }
+      }, [])
       const counts = {
         experiences: state ? state.totals.visible : null,
         skills: state ? state.totals.skills : null,
         types: state ? state.totals.types : null,
+        cold: state && state.cold ? Number(state.cold.total) || null : null,
         usage: state && state.usage ? state.usage.total : null,
       }
+      // 没有冷档就不占导航：安全阀未触发时「冷档」页没有意义。
+      const coldVisible = counts.cold !== null && counts.cold > 0
+      const navBlock = NAV_GROUPS.map(([label, ids]) => {
+        const items = ids
+          .map((id) => NAV.find((entry) => entry[0] === id))
+          .filter((entry) => entry !== undefined && (entry[0] !== 'cold' || coldVisible))
+        if (items.length === 0) return null
+        return h('div', { className: 'eng-nav-group', key: label },
+          h('div', { className: 'eng-nav-group-label' }, label),
+          items.map(navButton))
+      })
       const go = (next) => setTab(next)
       const content = (() => {
-        if (tab === 'overview') return h(Overview, { state, onGo: go, onOpen: (id) => { setTab('experiences') } })
+        if (tab === 'overview') return h(Overview, { state, onGo: go, onChanged: loadState, onOpen: (id) => { setFocusId(id); setTab('experiences') } })
         if (tab === 'graph') return h(Graph)
-        if (tab === 'experiences') return h(Experiences, { state, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
-        if (tab === 'recall') return h(Recall, { seed: recallSeed })
+        if (tab === 'experiences') return h(Experiences, { state, focusId, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
+        if (tab === 'recall') return h(Recall, { seed: recallSeed, types: state ? state.types : [] })
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
         if (tab === 'types') return h(Types, { onChanged: loadState })
+        if (tab === 'cold') return h(Cold)
         if (tab === 'usage') return h(Usage)
         return h(Settings, { onChanged: loadState })
       })()
       const source = state && state.source
-      const navButton = ([id, label, icon]) => h('button', {
-        key: id,
-        type: 'button',
-        className: 'eng-nav-item',
-        'data-active': tab === id ? 'true' : 'false',
-        onClick: () => setTab(id),
-      }, h(NavIcon, { name: icon }), label, counts[id] === null || counts[id] === undefined ? null : h('span', { className: 'eng-nav-count' }, String(counts[id])))
+      const paletteItems = [
+        ...NAV.filter(([id]) => id !== 'cold' || coldVisible).map(([id, label]) => ({ id: `go-${id}`, group: '前往', label, run: () => setTab(id) })),
+        { id: 'new-record', group: '动作', label: '记录经验', run: () => setTab('record') },
+        { id: 'recall', group: '动作', label: '检索召回', run: () => setTab('recall') },
+        { id: 'import-skill', group: '动作', label: '添加技能', run: () => { setTab('skills'); setImportOpen(true) } },
+        { id: 'refresh-page', group: '动作', label: '刷新当前页', run: () => { loadState(); if (typeof window !== 'undefined') window.dispatchEvent(new Event('eng-refresh')); toast('已刷新') } },
+        { id: 'reload-all', group: '工具', label: '重新加载全部页面', run: () => { loadState(); setReloadToken((token) => token + 1); toast('已重新加载') } },
+        { id: 'copy-dir', group: '工具', label: '复制数据目录', run: () => { try { if (state && typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(state.dataDir || ''); toast('已复制数据目录') } catch { toast('复制失败', 'bad') } } },
+        { id: 'shortcuts', group: '工具', label: '查看快捷键', run: () => setShortcutsOpen(true) },
+      ]
+      function navButton([id, label, icon]) {
+        return h('button', {
+          key: id,
+          type: 'button',
+          className: 'eng-nav-item',
+          'data-active': tab === id ? 'true' : 'false',
+          onClick: () => setTab(id),
+        }, h(NavIcon, { name: icon }), label, counts[id] === null || counts[id] === undefined ? null : h('span', { className: 'eng-nav-count' }, String(counts[id])))
+      }
       const brandMark = h(EngramGlyph, { size: 18 })
-      return h('div', { className: 'eng-app', ref: rootRef, style: fitHeight === null ? undefined : { height: `${fitHeight}px` } },
+      return h('div', { className: 'eng-app', 'data-density': density, ref: rootRef, style: fitHeight === null ? undefined : { height: `${fitHeight}px` } },
         h('aside', { className: 'eng-rail' },
           h('div', { className: 'eng-brand' },
             h('span', { className: 'eng-brand-mark' }, brandMark),
             h('div', null, h('div', { className: 'eng-brand-name' }, TITLE), h('div', { className: 'eng-brand-sub' }, 'ENG RAM'))),
-          h('nav', { className: 'eng-nav' }, NAV.map(navButton)),
+          h('nav', { className: 'eng-nav' }, navBlock),
           h('div', { className: 'eng-rail-foot' },
             h('div', { className: 'eng-mono', style: { marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: state ? state.dataDir : '' }, state ? state.dataDir : '读取中…'),
             source && source.mode === 'mock' ? h('div', null, '示例数据（非真实库）') : null)),
@@ -3412,11 +4461,14 @@ window.__ModuleLoader__.load({
               setImportOpen(false)
               const count = out && out.suite ? Number(out.count) || 0 : 1
               const firstPkg = out && Array.isArray(out.items) && out.items[0] ? out.items[0].package : null
-              setImportNotice(`已导入${count > 1 ? `技能套件 ${count} 个技能` : '技能'}${firstPkg ? `（含 ${firstPkg.fileCount} 个文件）` : ''}，列表已刷新`)
+              setImportNotice(`已导入${count > 1 ? `技能套件 ${count} 个技能` : '技能'}${firstPkg ? `（含 ${firstPkg.fileCount} 个文件${firstPkg.skipped > 0 ? `，跳过 ${firstPkg.skipped} 个` : ''}）` : ''}，列表已刷新`)
               refreshAll()
             },
           })
-          : null)
+          : null,
+        paletteOpen ? h(CommandPalette, { items: paletteItems, onClose: () => setPaletteOpen(false) }) : null,
+        shortcutsOpen ? h(ShortcutsDialog, { onClose: () => setShortcutsOpen(false) }) : null,
+        h('div', { className: 'eng-toast-host', 'aria-live': 'polite' }, toasts.map((item) => h('div', { key: item.id, className: 'eng-toast', 'data-tone': item.tone, role: 'status' }, item.message))))
     }
 
     /**
@@ -3464,9 +4516,9 @@ window.__ModuleLoader__.load({
         padding: '6px',
         margin: '0',
         border: 'none',
-        borderRadius: 'var(--dsw-radius-sm)',
-        background: hover && state !== 'busy' ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
-        color: state === 'err' ? 'var(--dsw-alias-label-error, #d24b45)' : state === 'busy' ? 'var(--dsw-alias-label-tertiary)' : hover ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-tertiary)',
+        borderRadius: 'var(--dsw-radius-sm, 6px)',
+        background: hover && state !== 'busy' ? 'var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8))' : 'transparent',
+        color: state === 'err' ? 'var(--dsw-alias-state-error-primary, #d24b45)' : state === 'busy' ? 'var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary))' : hover ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary))',
         opacity: state === 'busy' ? 0.45 : 1,
         cursor: state === 'busy' ? 'default' : 'pointer',
         font: 'inherit',
@@ -3504,6 +4556,12 @@ window.__ModuleLoader__.load({
       Record,
       Types,
       Usage,
+      Cold,
+      pickAccent,
+      CommandPalette,
+      ShortcutsDialog,
+      toast,
+      useRefreshEvent,
       Graph,
       SaveExperienceAction,
       Tip,

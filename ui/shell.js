@@ -14,6 +14,7 @@ import { createLiveSource, resolveLiveDataDir } from './live.js'
 import { createMockSource } from './mock.js'
 import {
   FEEDBACK_ETA,
+  RECALL_PASSTHROUGH_KEYS,
   codedError,
   detailOf,
   emptyStore,
@@ -227,21 +228,40 @@ function readOf(source) {
 }
 
 /**
- * 取整库行（页面级）：live 的 read() 只给 manifest/storage（P3-A），行走 `hot()`；
- * mock / 老数据源仍在 read().store 里，保持兼容。
+ * 取整库行，并把「读失败」作为结构化错误带出来（X3）。
+ *
+ * 为什么不让 storeOf 自己抛：列表/关系图要照常渲染（空页 + 横幅），只有详情页需要 503。
+ * 所以这里统一成 `{ store, error }`：调用方自己决定是显示横幅还是回 503。
  */
-function storeOf(source) {
-  const read = readOf(source)
-  if (read.store && typeof read.store === 'object') return read.store
+function storeReadOf(source) {
   if (source && typeof source.hot === 'function') {
     try {
       const hot = source.hot()
-      if (hot && hot.store && typeof hot.store === 'object') return hot.store
-    } catch {
-      return emptyStore()
+      if (hot && hot.store && typeof hot.store === 'object') {
+        return { store: hot.store, error: hot.error === undefined ? null : hot.error }
+      }
+    } catch (error) {
+      return { store: emptyStore(), error: storeErrorOf(error, source) }
     }
   }
-  return emptyStore()
+  const read = readOf(source)
+  if (read.store && typeof read.store === 'object') return { store: read.store, error: null }
+  return { store: emptyStore(), error: null }
+}
+
+/** 把任意读取异常翻成统一错误形状（code/message/file）；不再向上抛。 */
+function storeErrorOf(error, source) {
+  const read = readOf(source)
+  return {
+    code: 'store-unreadable',
+    message: String((error && error.message) || error),
+    file: String(read.file || ''),
+  }
+}
+
+/** 取整库行（页面级）：live 的 read() 只给 manifest/storage（P3-A），行走 `hot()`。语义不变。 */
+function storeOf(source) {
+  return storeReadOf(source).store
 }
 
 function safeSkills(source) {
@@ -363,11 +383,12 @@ function typeListOf(source, read = readOf(source)) {
 /** `/experiences` 的 data。 */
 export function buildExperiences(source, params) {
   const read = readOf(source)
-  const store = storeOf(source)
+  const storeRead = storeReadOf(source)
   const query = String((params && typeof params.get === 'function' ? params.get('query') : '') || '').trim()
   const meta = {
     source: metaOf(source),
     notice: String(read.notice || ''),
+    storeError: storeRead.error,
   }
   if (query !== '') {
     const limit = numberParam(params && typeof params.get === 'function' ? params.get('limit') : null, 8, 50)
@@ -375,15 +396,16 @@ export function buildExperiences(source, params) {
       const recalled = source.recall({ intent: query, limit })
       return { ...meta, ...recalled, query }
     }
-    return { ...meta, ...recallOf(store, query, limit) }
+    return { ...meta, ...recallOf(storeRead.store, query, limit) }
   }
-  return { ...meta, ...listOf(store, params || new URLSearchParams()) }
+  return { ...meta, ...listOf(storeRead.store, params || new URLSearchParams()) }
 }
 
-/** `/experience` 的 data；找不到返回 null。 */
+/** `/experience` 的 data；找不到返回 null；坏档抛 store-unreadable（路由回 503）。 */
 export function buildExperience(source, id) {
-  const store = storeOf(source)
-  return detailOf(store, id)
+  const storeRead = storeReadOf(source)
+  if (storeRead.error !== null) throw codedError('store-unreadable', storeRead.error.message)
+  return detailOf(storeRead.store, id)
 }
 
 /** `/feedback` 的 data：delegates 到 data source（live 会抛 read-only）。 */
@@ -478,8 +500,12 @@ export function buildRecall(source, body = {}) {
   if (intent === '') throw codedError('intent-required', '缺少 intent')
   const limit = Math.max(1, Math.min(50, Math.trunc(Number(body.limit) || 8)))
   const context = Array.isArray(body.context) ? body.context.map(String) : []
-  if (typeof source.recall === 'function') return source.recall({ intent, limit, context })
-  return recallOf(storeOf(source), intent, limit)
+  const args = { intent, limit, context }
+  // A4：高级参数原样透传（undefined 不传，否则会覆盖内核默认值）。
+  for (const key of RECALL_PASSTHROUGH_KEYS) {
+    if (body[key] !== undefined) args[key] = body[key]
+  }
+  return source.recall(args)
 }
 
 export function buildRecord(source, body = {}) {
@@ -646,7 +672,8 @@ export function buildSettings(source) {
 /** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
 export function buildGraph(source) {
   const read = readOf(source)
-  const store = storeOf(source)
+  const storeRead = storeReadOf(source)
+  const store = storeRead.store
   const rows = visibleOf(store).map(rowOf)
   const types = typesOf(store)
   const skills = source && typeof source.skills === 'function' ? (source.skills() || []) : []
@@ -728,6 +755,7 @@ export function buildGraph(source) {
   const suiteRoots = skillTree.filter((node) => node.kind === 'group' || node.skillCount > 1).length
   return {
     notice: String(read.notice || ''),
+    storeError: storeRead.error,
     nodes,
     edges,
     summary: { types: types.length, experiences: rows.length, skills: skills.length, suites: suiteRoots },
@@ -820,6 +848,38 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (detail === null) return fail(res, 404, 'not-found', `没有这条经验：${id}`)
       return json(res, 200, { ok: true, data: detail })
     }
+    if (route === '/cold') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      const offset = numberParam(url.searchParams.get('offset'), 0, Number.MAX_SAFE_INTEGER)
+      const limit = numberParam(url.searchParams.get('limit'), 50, 500)
+      const query = String(url.searchParams.get('query') || '')
+      const yearRaw = url.searchParams.get('year')
+      const year = yearRaw === null || String(yearRaw).trim() === '' || !Number.isFinite(Number(yearRaw))
+        ? null
+        : Math.trunc(Number(yearRaw))
+      let result = { years: [], total: 0, rows: [] }
+      try {
+        if (active && typeof active.coldRows === 'function') result = active.coldRows({ offset, limit, query, year })
+      } catch (error) {
+        // 冷档文件缺失/坏行：明确 500，不把「丢了」显示成「没有」。
+        return fail(res, 500, 'cold-unreadable', String((error && error.message) || error))
+      }
+      const years = Array.isArray(result.years) ? result.years : []
+      return json(res, 200, {
+        ok: true,
+        data: {
+          source: metaOf(active),
+          notice: '',
+          exists: years.length > 0,
+          total: Number(result.total) || 0,
+          offset,
+          limit,
+          years,
+          rows: Array.isArray(result.rows) ? result.rows : [],
+          error: null,
+        },
+      })
+    }
     if (route === '/types') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       const read = active.read() || {}
@@ -845,6 +905,7 @@ export async function handleRequest(req, res, source, deps = {}) {
         limit: row.limit === undefined ? null : Number(row.limit),
         routeScore: row.route_score === undefined ? null : Number(row.route_score),
         ids: Array.isArray(row.ids) ? row.ids.map(String) : [],
+        chars: row.chars === undefined ? 0 : Number(row.chars) || 0,
       }))
       return json(res, 200, { ok: true, data: { rows } })
     }
@@ -1180,6 +1241,8 @@ export async function handleRequest(req, res, source, deps = {}) {
       ? 501
       : code === 'read-only' || code === 'not-feedbackable'
         ? 409
+      : code === 'store-unreadable'
+        ? 503
       : code === 'not-found'
         ? 404
         : code === 'internal'

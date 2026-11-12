@@ -19,6 +19,9 @@ import { statsEntries } from '../kernel/shard-store.js'
 /** 反馈 EMA 系数，与真实经验库一致。 */
 export const FEEDBACK_ETA = 0.35
 
+/** `/recall` 里原样透传给内核的高级参数（A4）：外壳与 live 共用同一份清单，避免漂移。 */
+export const RECALL_PASSTHROUGH_KEYS = ['all', 'cold', 'cluster', 'detail', 'mark', 'verdicts']
+
 /** 建一个空库（读不到数据时用它兜底，界面不崩）。 */
 export function emptyStore() {
   return { version: 1, types: [], experiences: [] }
@@ -88,6 +91,11 @@ export function rowOf(experience) {
     note: String(experience.note || ''),
     origin: String(experience.origin || 'manual'),
     kind: String(experience.kind || 'task'),
+    context: Array.isArray(experience.context) ? experience.context.map(String) : [],
+    dimensions: Array.isArray(experience.dimensions) ? experience.dimensions.map(String) : [],
+    expectedG: Number.isFinite(Number(experience.expectedG)) ? Number(experience.expectedG) : null,
+    verdict: String(experience.verdict || ''),
+    retrievals: Math.max(0, Math.trunc(Number(experience.retrievals) || 0)),
     taskId: String(experience.taskId || ''),
     stepIndex: Number.isFinite(Number(experience.stepIndex)) ? Number(experience.stepIndex) : null,
     stepTotal: Number.isFinite(Number(experience.stepTotal)) ? Number(experience.stepTotal) : null,
@@ -445,6 +453,13 @@ export function codedError(code, message) {
   return error
 }
 
+/** 本地日期键（YYYY-MM-DD）：按行 at 的本机年月日归类，不按 UTC 截断。 */
+function localDateKey(date) {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
 /** 用法日志摘要。 */
 export function usageSummary(rows) {
   const list = Array.isArray(rows) ? rows : []
@@ -455,9 +470,27 @@ export function usageSummary(rows) {
     byTool[tool] = (byTool[tool] || 0) + 1
   }
   const last = list.length > 0 ? list[list.length - 1] : null
+  // 最近 7 天（含今天）零填充、日期升序：没数据的那天也要有一格，sparkline 才不会把日期挤歪。
+  const byDay = []
+  const dayIndex = new Map()
+  const now = new Date()
+  for (let back = 6; back >= 0; back -= 1) {
+    const bucket = { date: localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - back)), count: 0, chars: 0 }
+    byDay.push(bucket)
+    dayIndex.set(bucket.date, bucket)
+  }
+  for (const row of list) {
+    const at = new Date(String(row.at || ''))
+    const bucket = Number.isNaN(at.getTime()) ? undefined : dayIndex.get(localDateKey(at))
+    if (bucket === undefined) continue
+    bucket.count += 1
+    const chars = Number(row.chars)
+    if (Number.isFinite(chars) && chars > 0) bucket.chars += chars
+  }
   return {
     total: list.length,
     today: list.filter((row) => String(row.at || '').slice(0, 10) === today).length,
+    byDay,
     byTool,
     lastAt: last === null ? '' : String(last.at || ''),
     lastTool: last === null ? '' : String(last.tool || ''),

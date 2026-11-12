@@ -92,6 +92,25 @@ function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'exp-ui-'))
 }
 
+/** 在已迁移的分片库上手工登记一份冷档（模拟容量安全阀触发后的形态）。 */
+function writeColdFixture(dataDir, rows) {
+  fs.mkdirSync(path.join(dataDir, 'cold'), { recursive: true })
+  const rel = 'cold/2026-a.jsonl'
+  fs.writeFileSync(path.join(dataDir, rel), rows.map((row) => JSON.stringify(row)).join('\n') + '\n', 'utf8')
+  const manifestFile = path.join(dataDir, 'manifest.json')
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+  manifest.cold = { years: [{ year: 2026, files: [{ file: rel, count: rows.length, bytes: fs.statSync(path.join(dataDir, rel)).size }] }] }
+  fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+}
+
+/** 只登记冷档、不落文件：用来验证「文件丢了」不能显示成「没有」。 */
+function registerColdWithoutFile(dataDir) {
+  const manifestFile = path.join(dataDir, 'manifest.json')
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'))
+  manifest.cold = { years: [{ year: 2026, files: [{ file: 'cold/2026-a.jsonl', count: 1, bytes: 10 }] }] }
+  fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+}
+
 async function mockCall(route, options) {
   return call(createMockSource(), route, options)
 }
@@ -839,6 +858,71 @@ await check('GET /pick-directory?probe=1：只回答能不能弹窗口，不弹�
   })
   assert.equal(browseOnly.payload.data.available, false)
   assert.ok(String(browseOnly.payload.data.message).includes('browse'))
+})
+
+await check('GET /cold：mock 与 live 同一套分页/检索/年份', async () => {
+  const mock = await call(createMockSource(), '/cold?limit=1')
+  assert.equal(mock.status, 200)
+  assert.equal(mock.payload.data.total, 2)
+  assert.equal(mock.payload.data.rows.length, 1)
+  for (const key of ['id', 'intent', 'action', 'typeName', 'G', 'outcome', 'lastSeenAt']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(mock.payload.data.rows[0], key), `冷档行缺少 ${key}`)
+  }
+
+  const dir = tempDir()
+  const source = createLiveSource({ dataDir: dir })
+  source.record({ intent: '冷档测试的热档一条', action: '普通记录', outcome: 'success', type: '代码 / 插件' })
+  writeColdFixture(dir, [
+    { id: 'ex_cold_1', intent: '旧任务一：给课件插页', action: '复制相邻页', typeName: 'PPT / 课件', outcome: 'failed', G: -0.6, lastSeenAt: '2026-01-08T09:30:00.000Z' },
+    { id: 'ex_cold_2', intent: '旧任务二：整理文档', action: '逐段复述', typeName: '文档 / 教案', outcome: 'corrected', G: -0.4, lastSeenAt: '2026-01-05T14:10:00.000Z' },
+  ])
+  const all = await call(source, '/cold')
+  assert.equal(all.status, 200)
+  assert.equal(all.payload.data.source.mode, 'live')
+  assert.equal(all.payload.data.exists, true)
+  assert.equal(all.payload.data.total, 2)
+  assert.deepEqual(all.payload.data.rows.map((row) => row.id), ['ex_cold_1', 'ex_cold_2'])
+  assert.equal(all.payload.data.rows[0].action, '复制相邻页')
+  assert.equal(all.payload.data.rows[0].G, -0.6)
+  assert.equal((await call(source, '/cold?offset=1&limit=1')).payload.data.rows[0].id, 'ex_cold_2')
+  assert.equal((await call(source, `/cold?query=${encodeURIComponent('文档')}`)).payload.data.total, 1)
+  assert.equal((await call(source, '/cold', { method: 'POST' })).status, 405)
+})
+
+await check('GET /cold：冷档登记了但文件缺失 → 500 cold-unreadable', async () => {
+  const dir = tempDir()
+  const source = createLiveSource({ dataDir: dir })
+  source.record({ intent: '登记冷档但文件丢了', action: '只改 manifest', outcome: 'success', type: '代码 / 插件' })
+  registerColdWithoutFile(dir)
+  const { status, payload } = await call(source, '/cold')
+  assert.equal(status, 500)
+  assert.equal(payload.ok, false)
+  assert.equal(payload.error.code, 'cold-unreadable')
+  assert.match(payload.error.message, /分片丢失|分片损坏/)
+})
+
+await check('X3 live 坏档：/experiences 带 storeError、/experience 503', async () => {
+  const dir = tempDir()
+  fs.writeFileSync(path.join(dir, 'exp-lib.json'), '{ 这不是 JSON', 'utf8')
+  const source = createLiveSource({ dataDir: dir })
+  const list = await call(source, '/experiences')
+  assert.equal(list.status, 200)
+  assert.equal(list.payload.data.storeError.code, 'store-unreadable')
+  assert.ok(String(list.payload.data.storeError.file).length > 0)
+  assert.equal(list.payload.data.rows.length, 0, '坏档要显示错误横幅，而不是「还没有经验」')
+  const detail = await call(source, '/experience?id=ex_x')
+  assert.equal(detail.status, 503)
+  assert.equal(detail.payload.error.code, 'store-unreadable')
+  const graph = await call(source, '/graph')
+  assert.equal(graph.status, 200)
+  assert.equal(graph.payload.data.storeError.code, 'store-unreadable')
+})
+
+await check('A4 /recall：mock 收到高级参数不报错', async () => {
+  const source = createMockSource()
+  const out = await call(source, '/recall', { method: 'POST', body: { intent: '把 PPT 导出成 PDF', all: true, cold: true, detail: true, mark: true } })
+  assert.equal(out.status, 200)
+  assert.ok(Array.isArray(out.payload.data.rows || out.payload.data.candidates))
 })
 
 fs.rmSync(testHome, { recursive: true, force: true })

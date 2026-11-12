@@ -66,6 +66,9 @@ export function createMockExperiences() {
       G: 1,
       GOutcome: 1,
       GSource: 'feedback',
+      expectedG: 0.9,
+      context: ['Windows / Office 2019', '课件交付'],
+      dimensions: ['排版', '字体'],
       note: '先导出再逐页看字体；中文标题用了思源黑体，导出后没掉字。分页问题集中在图片跨页，把图片和说明压到同一页就正常了。',
       origin: 'manual',
       kind: 'task',
@@ -221,6 +224,9 @@ export function createMockExperiences() {
       G: 0.8,
       GOutcome: 0.8,
       GSource: 'outcome',
+      expectedG: 0.7,
+      context: ['DSH 插件开发', '控制台面板'],
+      dimensions: ['接口设计', '前端接入'],
       note: '第 1 步：先定接口；第 2 步：前端接上；第 3 步：补空态与错误态。',
       origin: 'manual',
       kind: 'step',
@@ -535,8 +541,8 @@ export function createMockSource() {
     }],
     total: 2,
     samples: [
-      { id: 'ex_mock_cold_1', intent: '给研学课 PPT 插一页过渡页（旧版）', typeName: 'PPT / 课件', lastSeenAt: '2026-01-08T09:30:00.000Z' },
-      { id: 'ex_mock_cold_2', intent: '整理经验库文档的存储章节（旧版）', typeName: '文档 / 教案', lastSeenAt: '2026-01-05T14:10:00.000Z' },
+      { id: 'ex_mock_cold_1', intent: '给研学课 PPT 插一页过渡页（旧版）', action: '直接复制相邻页再改字', typeName: 'PPT / 课件', outcome: 'failed', G: -0.6, lastSeenAt: '2026-01-08T09:30:00.000Z' },
+      { id: 'ex_mock_cold_2', intent: '整理经验库文档的存储章节（旧版）', action: '按文件顺序逐段复述', typeName: '文档 / 教案', outcome: 'corrected', G: -0.4, lastSeenAt: '2026-01-05T14:10:00.000Z' },
     ],
   }
   return {
@@ -571,8 +577,43 @@ export function createMockSource() {
         },
       }
     },
+    /** 与 live 同形（X3）：示例数据永远读得到，error 恒为 null。 */
+    hot() {
+      return { store, error: null }
+    },
     cold() {
       return cold
+    },
+    /** 冷档分页（X2）：与 live 同一套 query/year/offset/limit，years 由样本聚合。 */
+    coldRows(args = {}) {
+      const query = String((args && args.query) || '').trim().toLowerCase()
+      const yearRaw = args === null || args === undefined ? null : args.year
+      const year = yearRaw === null || yearRaw === undefined || String(yearRaw).trim() === '' ? null : Math.trunc(Number(yearRaw))
+      const offset = Number.isFinite(Number(args && args.offset)) ? Math.max(0, Math.trunc(Number(args.offset))) : 0
+      const limit = Number.isFinite(Number(args && args.limit)) ? Math.max(0, Math.trunc(Number(args.limit))) : 50
+      const rows = cold.samples.map((row) => ({
+        id: String(row.id || ''),
+        intent: String(row.intent || ''),
+        action: String(row.action || ''),
+        typeName: String(row.typeName || '未分类'),
+        G: Number(row.G) || 0,
+        outcome: String(row.outcome || 'unknown'),
+        lastSeenAt: String(row.lastSeenAt || ''),
+      }))
+      const matched = rows.filter((row) => {
+        if (year !== null) {
+          const parsed = Date.parse(row.lastSeenAt)
+          const rowYear = Number.isFinite(parsed) ? new Date(parsed).getUTCFullYear() : 0
+          if (rowYear !== year) return false
+        }
+        if (query === '') return true
+        return ['intent', 'action', 'id', 'typeName'].some((key) => row[key].toLowerCase().includes(query))
+      })
+      return {
+        years: cold.years.map((entry) => ({ year: entry.year, count: entry.count, bytes: entry.bytes })),
+        total: matched.length,
+        rows: matched.slice(offset, offset + limit),
+      }
     },
     usageRows(limit) {
       const size = Math.max(1, Math.min(500, Math.trunc(Number(limit) || 100)))

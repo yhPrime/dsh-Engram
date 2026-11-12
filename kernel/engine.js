@@ -167,6 +167,34 @@ function storageUsageOf(dataDir) {
   return fallbackStorageUsage(dir)
 }
 
+/** manifest.cold → 年档汇总（条数/字节由文件登记累加；文件名为空的不算）。 */
+function coldYearsOf(cold) {
+  const years = []
+  for (const entry of Array.isArray(cold && cold.years) ? cold.years : []) {
+    const files = (Array.isArray(entry && entry.files) ? entry.files : [])
+      .map((file) => ({
+        file: String((file && file.file) || ''),
+        count: Number(file && file.count) || 0,
+        bytes: Number(file && file.bytes) || 0,
+      }))
+      .filter((file) => file.file !== '')
+    if (files.length === 0) continue
+    years.push({
+      year: Number(entry && entry.year) || 0,
+      files,
+      count: files.reduce((sum, file) => sum + file.count, 0),
+      bytes: files.reduce((sum, file) => sum + file.bytes, 0),
+    })
+  }
+  return years
+}
+
+/** 冷档记录归属年份：与写冷档时一致按 UTC 年（manifest.cold 也是按 UTC 年登记的）。 */
+function coldYearOf(text) {
+  const parsed = Date.parse(String(text || ''))
+  return Number.isFinite(parsed) ? new Date(parsed).getUTCFullYear() : 0
+}
+
 export function createEngine(options = {}) {
   const dataDir = String(options.dataDir || '').trim()
   if (dataDir === '') throw new Error('createEngine 需要 dataDir（.exp 根目录）')
@@ -269,23 +297,7 @@ export function createEngine(options = {}) {
       const limit = Math.max(0, Math.min(200, Number.isFinite(requested) ? Math.trunc(requested) : 50))
       const manifest = readManifest(dataDir)
       const cold = manifest !== null && manifest.cold !== null && typeof manifest.cold === 'object' ? manifest.cold : null
-      const years = []
-      for (const entry of Array.isArray(cold && cold.years) ? cold.years : []) {
-        const files = (Array.isArray(entry && entry.files) ? entry.files : [])
-          .map((file) => ({
-            file: String((file && file.file) || ''),
-            count: Number(file && file.count) || 0,
-            bytes: Number(file && file.bytes) || 0,
-          }))
-          .filter((file) => file.file !== '')
-        if (files.length === 0) continue
-        years.push({
-          year: Number(entry && entry.year) || 0,
-          files,
-          count: files.reduce((sum, file) => sum + file.count, 0),
-          bytes: files.reduce((sum, file) => sum + file.bytes, 0),
-        })
-      }
+      const years = coldYearsOf(cold)
       if (years.length === 0) return { years: [], total: 0, samples: [] }
       const rows = shardStore.readColdRecords(dataDir, manifest)
       return {
@@ -296,6 +308,45 @@ export function createEngine(options = {}) {
           intent: String(row.intent || ''),
           typeName: String(row.typeName || '未分类'),
           lastSeenAt: String(row.lastSeenAt || row.ts || ''),
+        })),
+      }
+    },
+    /**
+     * 冷档分页列表（0.15 / X2）：按 query、year 过滤后按 lastSeenAt 降序返回，供「冷档」页浏览。
+     * 与 coldList 的分工：coldList 只给概览摘要（年档/条数/前 N 条），这里给可翻页的行。
+     * 冷档文件缺失/坏行不吞：`readColdRecords` 抛错，由路由转成 500（不能把「丢了」显示成「没有」）。
+     */
+    coldRows: (options = {}) => {
+      const query = String((options && options.query) || '').trim().toLowerCase()
+      const yearRaw = options === null || options === undefined ? null : options.year
+      const year = yearRaw === null || yearRaw === undefined || String(yearRaw).trim() === '' ? null : Math.trunc(Number(yearRaw))
+      const offset = Number.isFinite(Number(options && options.offset)) ? Math.max(0, Math.trunc(Number(options.offset))) : 0
+      const limit = Number.isFinite(Number(options && options.limit)) ? Math.max(0, Math.trunc(Number(options.limit))) : 50
+      const manifest = readManifest(dataDir)
+      const cold = manifest !== null && manifest.cold !== null && typeof manifest.cold === 'object' ? manifest.cold : null
+      const years = coldYearsOf(cold).map((entry) => ({ year: entry.year, count: entry.count, bytes: entry.bytes }))
+      if (years.length === 0) return { total: 0, rows: [], years: [] }
+      const matched = shardStore.readColdRecords(dataDir, manifest).filter((row) => {
+        const lastSeenAt = String((row && (row.lastSeenAt || row.ts)) || '')
+        if (year !== null && coldYearOf(lastSeenAt) !== year) return false
+        if (query === '') return true
+        return ['intent', 'action', 'id', 'typeName'].some((key) => String((row && row[key]) || '').toLowerCase().includes(query))
+      })
+      matched.sort((left, right) => (
+        String((right && (right.lastSeenAt || right.ts)) || '')
+          .localeCompare(String((left && (left.lastSeenAt || left.ts)) || ''))
+      ))
+      return {
+        years,
+        total: matched.length,
+        rows: matched.slice(offset, offset + limit).map((row) => ({
+          id: String((row && row.id) || ''),
+          intent: String((row && row.intent) || ''),
+          action: String((row && row.action) || ''),
+          typeName: String((row && row.typeName) || '未分类'),
+          G: Number(row && row.G) || 0,
+          outcome: String((row && row.outcome) || 'unknown'),
+          lastSeenAt: String((row && (row.lastSeenAt || row.ts)) || ''),
         })),
       }
     },

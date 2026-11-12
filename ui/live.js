@@ -15,7 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { codedError, emptyStore, skillRowOf } from './data-source.js'
+import { RECALL_PASSTHROUGH_KEYS, codedError, emptyStore, skillRowOf } from './data-source.js'
 import { createEngine } from '../kernel/engine.js'
 import { readSettings, resolveEngramDataDir } from '../kernel/settings.js'
 
@@ -251,13 +251,23 @@ export function createLiveSource(config = {}) {
     /**
      * 页面级热档读（P3-A）：经验列表/详情/关系图用。仍是一次全量热档读（≤ HOT_MAX_BYTES），
      * 只是不再和 /state 绑在一起；P3-B 再按类型分片下推。
+     *
+     * 读坏不吞（X3）：返回 { store, error }，由外壳把 error 交给页面显示横幅——
+     * 坏桶显示成「还没有经验」比报错更糟。
      */
     hot() {
-      if (engine === null) return { store: emptyStore() }
+      if (engine === null) return { store: emptyStore(), error: null }
       try {
-        return { store: engine.readHot() }
-      } catch {
-        return { store: emptyStore() }
+        return { store: engine.readHot(), error: null }
+      } catch (error) {
+        return {
+          store: emptyStore(),
+          error: {
+            code: 'store-unreadable',
+            message: String((error && error.message) || error),
+            file,
+          },
+        }
       }
     },
 
@@ -272,6 +282,12 @@ export function createLiveSource(config = {}) {
       } catch (error) {
         return { years: [], total: 0, samples: [], error: String((error && error.message) || error) }
       }
+    },
+
+    /** 冷档分页列表（0.15 / X2）：冷档页浏览与检索；文件缺失/坏行由 engine 抛错，外壳转 500。 */
+    coldRows(args = {}) {
+      if (engine === null) return { total: 0, rows: [], years: [] }
+      return engine.coldRows({ offset: args.offset, limit: args.limit, query: args.query, year: args.year })
     },
 
     usageRows(limit) {
@@ -334,7 +350,12 @@ export function createLiveSource(config = {}) {
     },
 
     recall(args = {}) {
-      return engine.recall({ intent: String(args.intent || ''), limit: args.limit, context: args.context })
+      // A4：高级检索参数原样交给 engine（未传的不补默认值，语义由内核决定）。
+      const input = { intent: String(args.intent || ''), limit: args.limit, context: args.context }
+      for (const key of RECALL_PASSTHROUGH_KEYS) {
+        if (args[key] !== undefined) input[key] = args[key]
+      }
+      return engine.recall(input)
     },
     record(args = {}) {
       return engine.record(args)

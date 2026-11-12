@@ -211,11 +211,14 @@ check('主面板首屏（state=null）渲染不抛错', () => {
 check('详情面板：选中一条经验时真的渲染出意图/做法/收起（不是空白）', () => {
   const pane = module.DetailPane
   assert.equal(typeof pane, 'function', '详情面板没有导出给测试')
-  const row = { id: 'ex_1', intent: '测试意图文本', action: '测试做法文本', outcome: 'success', G: 0.8, typeName: '代码 / 插件' }
-  const element = pane({ selected: 'ex_1', detail: { data: { row }, error: '' }, send: () => {}, onClose: () => {} })
+  const row = { id: 'ex_1', intent: '测试意图文本', action: '测试做法文本', outcome: 'success', G: 0.8, typeName: '代码 / 插件', context: ['windows', 'ppt'], dimensions: ['布局'], verdict: 'decided' }
+  const element = pane({ selected: 'ex_1', detail: { data: { row, history: [{ type: 'created', at: '2026-11-12T00:00:00.000Z' }], feedbackLog: [{ result: 'helped', at: '2026-11-12T01:00:00.000Z' }] }, error: '' }, send: () => {}, onClose: () => {} })
   const serialized = JSON.stringify(element, (key, value) => (typeof value === 'function' ? '[fn]' : value))
   assert.ok(serialized.includes('测试意图文本'), '没渲染意图')
   assert.ok(serialized.includes('测试做法文本'), '没渲染做法')
+  assert.ok(serialized.includes('windows'), '没渲染情境')
+  assert.ok(serialized.includes('布局'), '没渲染维度')
+  assert.ok(serialized.includes('历史'), '没渲染历史')
   assert.ok(serialized.includes('收起'), '没有收起按钮')
 })
 
@@ -421,7 +424,7 @@ check('会话底部按钮：图标按钮，无文字无边框，尺寸对齐旁�
   assert.equal(element.props.style.height, 'calc(28px + var(--dsh-content-font-delta, 0px))')
   assert.equal(element.props.style.border, 'none')
   assert.equal(element.props.style.padding, '6px')
-  assert.equal(element.props.style.borderRadius, 'var(--dsw-radius-sm)')
+  assert.equal(element.props.style.borderRadius, 'var(--dsw-radius-sm, 6px)')
   assert.equal(element.props.style.background, 'transparent')
   assert.ok(String(element.props.title).includes('存进经验库'))
   // 只放图标：不能有文字子节点
@@ -429,6 +432,46 @@ check('会话底部按钮：图标按钮，无文字无边框，尺寸对齐旁�
   assert.equal(children.length, 1)
   assert.equal(typeof children[0].type, 'function')
 })
+check('P2 概览：7 日柱条 / 类型分布 / 待判定块都渲染', () => {
+  const tree = module.Overview({
+    state: {
+      totals: { visible: 3, skills: 1, types: 1 },
+      usage: { today: 2, byDay: [{ date: '2026-11-11', count: 1 }, { date: '2026-11-12', count: 1 }] },
+      stats: { byCategory: { 'PPT / 课件': 2 } },
+      skillSummary: { solid: 1 },
+    },
+    onGo: () => {}, onOpen: () => {}, onChanged: () => {},
+  })
+  const serialized = JSON.stringify(tree, (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(serialized.includes('最近 7 天调用'), '缺 7 日柱条')
+  assert.ok(serialized.includes('类型分布'), '缺类型分布')
+  assert.ok(serialized.includes('待判定'), '缺待判定块')
+})
+
+check('P2 记录：分组渐进披露 + 草稿按钮', () => {
+  const serialized = JSON.stringify(module.Record(), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(serialized.includes('任务与步骤'), '缺任务分组')
+  assert.ok(serialized.includes('清空草稿'), '缺清空草稿')
+})
+
+check('P2 关系图：适配/暂停/图例工具条', () => {
+  const serialized = JSON.stringify(module.Graph({}), (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(serialized.includes('适配视图'))
+  assert.ok(serialized.includes('暂停旋转'))
+  assert.ok(serialized.includes('图例'))
+})
+
+check('P3 命令面板 / 快捷键表可渲染', () => {
+  const palette = module.CommandPalette({ items: [{ id: 'go', group: '前往', label: '概览', run: () => {} }], onClose: () => {} })
+  const paletteText = JSON.stringify(palette, (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(paletteText.includes('概览'), '命令面板没渲染命令')
+  assert.ok(paletteText.includes('输入命令'), '命令面板没有输入框')
+  const shortcuts = module.ShortcutsDialog({ onClose: () => {} })
+  const shortcutText = JSON.stringify(shortcuts, (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(shortcutText.includes('Ctrl / Cmd + K'), '快捷键表缺命令面板')
+  assert.ok(shortcutText.includes('Enter'), '快捷键表缺 Enter')
+})
+
 check('设置页：二级菜单分屏，默认只露出「存储位置」一档', () => {
   const settings = module.Settings
   assert.equal(typeof settings, 'function', '设置页没有导出给测试')
@@ -473,6 +516,7 @@ check('每个页面都渲染出 eng-fill + 自己的滚动窗口', () => {
     ['记录', module.Record, {}],
     ['技能', module.Skills, {}],
     ['类型', module.Types, { onChanged: () => {} }],
+    ['冷档', module.Cold, {}],
     ['使用记录', module.Usage, {}],
     ['设置', module.Settings, {}],
   ].filter(([, fn]) => typeof fn === 'function')
