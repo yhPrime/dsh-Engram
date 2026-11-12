@@ -1,0 +1,50 @@
+{
+  "name": "dsh-engram-kernel",
+  "version": "0.34.0",
+  "private": true,
+  "description": "经验与技能引擎内核（内部分层：存储、检索、簇路由、沉淀、反馈；对外由 dsh-engram 一个插件发布）。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./core": "./core.js",
+    "./engine": "./engine.js",
+    "./store": "./store.js",
+    "./tools": "./tools.js",
+    "./retrieval": "./retrieval.js",
+    "./settings": "./settings.js"
+  },
+  "files": [
+    "index.js",
+    "core.js",
+    "engine.js",
+    "settings.js",
+    "store.js",
+    "kernel.js",
+    "retrieval.js",
+    "cluster.js",
+    "skills.js",
+    "tools.js",
+    "plugin.js",
+    "README.md",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "scripts": {
+    "test": "node tests/kernel.test.mjs && node tests/recall.test.mjs && node tests/store.test.mjs && node tests/cluster.test.mjs && node tests/feedback.test.mjs && node tests/feedback-replay.test.mjs && node tests/feedback-decay.test.mjs && node tests/retire.test.mjs && node tests/feedback-ledger.test.mjs && node tests/audit-migration.test.mjs && node tests/tools.test.mjs && node tests/plugin.test.mjs && node tests/type-tool.test.mjs && node tests/fix-residue.test.mjs && node tests/usage.test.mjs && node tests/sim-agent.test.mjs && node tests/sim-multistep.test.mjs && node tests/task-steps.test.mjs && node tests/lifecycle.test.mjs && node tests/lifecycle-evidence.test.mjs && node tests/consolidation.test.mjs && node tests/agent-workflow.test.mjs && node tests/prediction-error.test.mjs && node tests/context.test.mjs && node tests/retrieval-practice.test.mjs && node tests/agent-workday.test.mjs && node tests/skills.test.mjs && node tests/skill-tools.test.mjs && node tests/skill-consolidate.test.mjs && node tests/induction.test.mjs && node tests/induction-scale.test.mjs && node tests/patch-memory-spaces-footer.test.mjs && node tests/core-boundary.test.mjs && node tests/engine-headless.test.mjs && node tests/adapter-boundary.test.mjs && node tests/settings.test.mjs",
+    "audit": "node tools/audit.mjs",
+    "eval:routing": "node tools/eval-routing.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "license": "MIT",
+  "author": "yhPrime"
+}

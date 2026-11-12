@@ -109,7 +109,7 @@ export function rowOf(experience) {
 /** 可见经验：未删、未被取代、未退休。 */
 export function visibleOf(store) {
   const rows = Array.isArray(store && store.experiences) ? store.experiences : []
-  return rows.filter((item) => !item.deleted_at && !item.superseded_by && !item.retired_at)
+  return rows.filter((item) => item && typeof item === 'object' && !item.deleted_at && !item.superseded_by && !item.retired_at)
 }
 
 /** 排序（列表页）。 */
@@ -270,7 +270,7 @@ export function recallOf(store, query, limit) {
 /** 单条详情：找得到就返回 `{ row, history, feedbackLog }`，否则 null。 */
 export function detailOf(store, id) {
   const rows = Array.isArray(store && store.experiences) ? store.experiences : []
-  const experience = rows.find((item) => String(item.id) === String(id))
+  const experience = rows.find((item) => item && typeof item === 'object' && String(item.id) === String(id))
   if (experience === undefined) return null
   return {
     row: rowOf(experience),
@@ -301,7 +301,9 @@ export function typesOf(store) {
 
 /** 统计（面板顶部四格 + 类型分布）。 */
 export function statsOf(store) {
-  const all = Array.isArray(store && store.experiences) ? store.experiences : []
+  // null/非对象行（自定义或 mock 数据源）不能打崩统计：先过滤，再计数。
+  const all = (Array.isArray(store && store.experiences) ? store.experiences : [])
+    .filter((item) => item && typeof item === 'object')
   const visible = visibleOf(store)
   const byCategory = {}
   for (const item of visible) {
@@ -325,7 +327,7 @@ export function statsOf(store) {
 /** 用后反馈：改 G（EMA 重放）+ 计数 + 历史；找不到 / 不可反馈时抛带 code 的错误。 */
 export function applyFeedbackTo(store, id, result, now = new Date()) {
   const rows = Array.isArray(store && store.experiences) ? store.experiences : []
-  const experience = rows.find((item) => String(item.id) === String(id))
+  const experience = rows.find((item) => item && typeof item === 'object' && String(item.id) === String(id))
   if (experience === undefined) throw codedError('not-found', `没有这条经验：${String(id)}`)
   if (experience.deleted_at) throw codedError('not-feedbackable', '这条经验已删除，不能再反馈')
   if (experience.superseded_by) throw codedError('not-feedbackable', '这条经验已被取代，请给新条反馈')

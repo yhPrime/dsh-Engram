@@ -19,6 +19,7 @@ export const SKILLS_DIRNAME = 'skills'
 export const SCRIPTS_DIRNAME = 'scripts'
 const MAX_ATTACH_FILE_BYTES = 2 * 1024 * 1024
 const MAX_ATTACH_TOTAL_BYTES = 8 * 1024 * 1024
+const MAX_ATTACH_COUNT = 200
 export const SKILL_FILENAME = 'SKILL.md'
 export const META_FILENAME = 'skill.json'
 export const EXCEPTION_LIMIT = 5
@@ -83,7 +84,8 @@ export function assertSafeRelPath(value) {
 export function pathIsLink(target) {
   try {
     if (fs.lstatSync(target).isSymbolicLink()) return true
-    return fs.readlinkSync(target) !== ''
+    // Windows junction：lstat 报目录、readlink 抛 EINVAL；用 native realpath 解析后与自身不同来判定。
+    return path.resolve(fs.realpathSync.native(target)) !== path.resolve(String(target))
   } catch {
     return false
   }
@@ -231,6 +233,7 @@ export function defaultMeta(id) {
     // 新技能一开始排到最前：刚加进来的技能先让用户看见、能被触发，
     // 之后靠实际使用（feedback/uses）把顺序调回正常。
     order: 90,
+    files: [],
     pendingCommit: false,
   }
 }
@@ -245,8 +248,10 @@ function normalizeMeta(raw, id) {
   meta.notes = Array.isArray(raw && raw.notes) ? raw.notes.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()).slice(0, 50) : []
   meta.triggers = Array.isArray(raw && raw.triggers) ? raw.triggers : []
   meta.context = Array.isArray(raw && raw.context) ? raw.context : []
+  // 附件登记不在读取时截断：截断会让第 41 个附件「文件在、登记表里没有」，下次 attach 就丢。
+  // 数量上限放在 attach 时明确拒绝（见 MAX_ATTACH_COUNT），而不是静默丢弃。
   meta.files = Array.isArray(raw && raw.files)
-    ? raw.files.filter((item) => item && typeof item.path === 'string').slice(0, 40)
+    ? raw.files.filter((item) => item && typeof item.path === 'string')
     : []
   return meta
 }
@@ -331,7 +336,15 @@ export function readSkill(dir, id = path.basename(dir)) {
   const { fields, body } = parseFrontmatter(fs.readFileSync(skillFile, 'utf8'))
   let rel = String(id || path.basename(dir)).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   if (rel === '') rel = path.basename(dir)
-  const meta = normalizeMeta(readJsonFile(path.join(dir, META_FILENAME)), rel)
+  const metaPath = path.join(dir, META_FILENAME)
+  const metaRaw = readJsonFile(metaPath)
+  const meta = normalizeMeta(metaRaw, rel)
+  // skill.json 存在但读不出来：不能静默当默认账本（confidence/obstacles/files 会像丢了一样）。
+  // 读路径仍然返回技能（正文可用），但打上标记，validateAllSkills / 界面能看到「账本损坏」。
+  if (fs.existsSync(metaPath) && metaRaw === null) {
+    meta.corrupt = true
+    meta.metaError = `技能账本损坏：${META_FILENAME}（无法解析，已按默认值显示；修复后可恢复计数）`
+  }
   // 磁盘路径是唯一事实源：账本里的旧 id 不拦路，读出来按当前位置纠正（写回发生在下次落盘）。
   meta.id = rel
   const parts = rel.split('/')
@@ -472,9 +485,13 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
   const files = Array.isArray(skill.meta.files) ? [...skill.meta.files] : []
   let total = files.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0)
   const added = []
-  for (const source of Array.isArray(sources) ? sources : []) {
-    const raw = String(source || '').trim()
-    if (raw === '') continue
+  // 先整体校验、再逐项落盘：中途拒绝（同名/超限）时不会留下未登记的孤儿文件。
+  const planned = []
+  let budget = total
+  const sourcesList = (Array.isArray(sources) ? sources : [])
+    .map((item) => String(item || '').trim())
+    .filter((item) => item !== '')
+  for (const raw of sourcesList) {
     const resolved = path.resolve(raw)
     let stat
     try {
@@ -484,32 +501,37 @@ export function attachSkillFiles(dataDir, slug, sources, options = {}) {
     }
     if (!stat.isFile()) throw new Error(`附件不是文件：${raw}`)
     if (stat.size > MAX_ATTACH_FILE_BYTES) throw new Error(`单个附件不能超过 2MB：${raw}`)
-    if (total + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(total)}）`)
-    fs.mkdirSync(scriptsDir, { recursive: true })
     const name = safeAttachName(resolved)
-    const target = path.join(scriptsDir, name)
-    fs.copyFileSync(resolved, target)
     const rel = `${SCRIPTS_DIRNAME}/${name}`
+    // 同一次 attach 里同名文件会互相覆盖（只留最后一份），明确拒绝；跨调用替换是允许的。
+    if (planned.some((item) => item.rel === rel)) throw new Error(`同一次 attach 里有同名附件：${rel}（改名或分两次调用）`)
+    const index = files.findIndex((item) => item.path === rel)
+    const oldBytes = index >= 0 ? Number(files[index].bytes) || 0 : 0
+    // 同名附件是替换不是新增：预算要减去旧的一份，否则 3×1.5MB 同名文件会误撞 8MB 上限。
+    if (budget - oldBytes + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(budget - oldBytes)}）`)
+    const pendingNew = planned.filter((item) => item.index < 0).length
+    if (index < 0 && files.length + pendingNew >= MAX_ATTACH_COUNT) throw new Error(`附件数量不能超过 ${MAX_ATTACH_COUNT} 个（当前 ${files.length + pendingNew}）`)
+    budget = budget - oldBytes + stat.size
+    planned.push({ resolved, stat, name, rel, index, oldBytes })
+  }
+  for (const item of planned) {
+    fs.mkdirSync(scriptsDir, { recursive: true })
+    const target = path.join(scriptsDir, item.name)
+    fs.copyFileSync(item.resolved, target)
     const entry = {
-      path: rel,
-      bytes: stat.size,
+      path: item.rel,
+      bytes: item.stat.size,
       sha256: createHash('sha256').update(fs.readFileSync(target)).digest('hex'),
       addedAt: new Date().toISOString(),
     }
-    const index = files.findIndex((item) => item.path === rel)
-    if (index >= 0) files[index] = entry
+    if (item.index >= 0) files[item.index] = entry
     else files.push(entry)
-    total += stat.size
+    total += item.stat.size - item.oldBytes
     added.push(entry)
   }
   skill.meta.files = files
   appendScriptsSection(skill.dir, files)
-  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${slug}): attach ${added.length} file(s)`)
-  if (!committed) {
-    skill.meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  }
+  const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${slug}): attach ${added.length} file(s)`)
   return { slug, files, added, commit: committed }
 }
 
@@ -529,6 +551,22 @@ export function globalRegistrationOf(skill) {
 }
 
 /**
+ * 只删链接本体，绝不递归：Windows 上 rm(recursive) 会顺着 junction 进去，
+ * 把经验库里的源目录一起删光（实测过）。junction 只能 rmdir，symlink 用 unlink。
+ */
+function removeLinkOnly(target) {
+  for (const attempt of [() => fs.rmdirSync(target), () => fs.unlinkSync(target)]) {
+    try {
+      attempt()
+      return true
+    } catch {
+      // 换下一种
+    }
+  }
+  return false
+}
+
+/**
  * 把一个技能链接进 DSH 的 skills 目录（用户手动点的动作，不是自动行为）。
  *
  * - 优先建 junction（Windows 上不需要管理员权限，且两边是同一份文件，改一处同步）；
@@ -545,17 +583,20 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
   fs.mkdirSync(root, { recursive: true })
   const target = path.join(root, leaf)
   let mode = 'junction'
-  let link = null
-  try {
-    link = fs.readlinkSync(target)
-  } catch {
-    link = null
+  // 幂等：账本记着就是这个目标、文件也还在 → 直接返回成功（别因 readlink 判不出 junction 就报占用）。
+  const registered = globalRegistrationOf(skill)
+  if (registered !== null && path.resolve(registered.path) === path.resolve(target) && fs.existsSync(target)) {
+    return { slug: id, id, leaf, targetDir: target, mode: registered.mode || 'junction', registered: true }
   }
-  if (link !== null) {
-    const resolved = path.resolve(root, link)
-    if (resolved !== path.resolve(skill.dir)) throw new Error(`目标已被占用：${target}（指向 ${resolved}）`)
-  } else if (fs.existsSync(target)) {
-    throw new Error(`目标已被占用：${target}（不是经验库的链接，删掉或改名后再试）`)
+  if (fs.existsSync(target)) {
+    // 已存在但账本没记（或记的是别处）：只有 realpath 指向同一技能才认领，否则绝不覆盖。
+    let same = false
+    try {
+      same = path.resolve(fs.realpathSync.native(target)) === path.resolve(fs.realpathSync.native(skill.dir))
+    } catch {
+      same = false
+    }
+    if (!same) throw new Error(`目标已被占用：${target}（不是经验库的链接，删掉或改名后再试）`)
   } else {
     try {
       fs.symlinkSync(skill.dir, target, 'junction')
@@ -565,12 +606,7 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
     }
   }
   skill.meta.globalRegistered = { path: target, at: new Date().toISOString(), mode }
-  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${id}): register globally`)
-  if (!committed) {
-    skill.meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  }
+  commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): register globally`)
   return { slug: id, id, leaf, targetDir: target, mode, registered: true }
 }
 
@@ -584,47 +620,31 @@ export function unregisterSkillFromDsh(dataDir, slug) {
   const id = skill.id
   const leaf = id.split('/').pop()
   const registered = globalRegistrationOf(skill)
-  const target = registered !== null ? registered.path : path.join(dshGlobalSkillsRoot(), leaf)
-  const expected = path.join(path.dirname(target), leaf)
+  // 没登记过 = 幂等成功；但绝不猜默认路径、不动任何文件。
+  if (registered === null) {
+    return { slug: id, id, leaf, targetDir: path.join(dshGlobalSkillsRoot(), leaf), removed: false, registered: false }
+  }
+  const target = registered.path
   let removed = false
-  if (path.resolve(target) === path.resolve(expected)) {
-    let isLink = false
-    try {
-      // Windows 的 junction 在 lstat 里被报成「目录 + 重解析点」，isSymbolicLink() 是 false，
-      // 只认它就会永远删不掉链接——表现就是点了「取消注册」毫无反应。
-      // readlinkSync 对 symlink 和 junction 都能读出目标，用它判更可靠。
-      isLink = fs.lstatSync(target).isSymbolicLink() || fs.readlinkSync(target) !== ''
-    } catch {
-      isLink = false
+  if (!fs.existsSync(target)) {
+    removed = true
+  } else if (registered.mode === 'copy') {
+    // 只有确认是我们自己复制的那份才删，避免误删用户手放的技能。
+    fs.rmSync(target, { recursive: true, force: true })
+    removed = true
+  } else {
+    // 链接/junction：只删本体（递归会顺着 junction 删掉经验库源目录）。删不掉就报错并保留登记。
+    // 目标若已被替换成普通文件/目录，绝不能当链接删掉（那是用户的东西）。
+    if (!pathIsLink(target)) {
+      throw new Error(`目标已不是链接：${target}（登记已保留，确认后手动处理再重试）`)
     }
-    if (isLink) {
-      // 关键：**绝不能**对链接用递归删除。Windows 上 fs.rm(recursive) 会先顺着 junction
-      // 进去把目标目录（也就是经验库里的技能）里的文件删光，再删掉链接本身——
-      // 实测这一下直接把 `.exp/skills/<slug>/SKILL.md` 和 scripts/ 删了。
-      // 删链接只能用 unlink（symlink）或 rmdir（junction），两者都不跟进去。
-      try {
-        try {
-          fs.unlinkSync(target)
-        } catch {
-          fs.rmdirSync(target)
-        }
-        removed = true
-      } catch {
-        removed = false
-      }
-    } else if (fs.existsSync(target) && registered !== null && registered.mode === 'copy') {
-      // 只有确认是我们自己复制的那份才删，避免误删用户手放的技能
-      fs.rmSync(target, { recursive: true, force: true })
-      removed = true
+    removed = removeLinkOnly(target)
+    if (!removed) {
+      throw new Error(`无法删除全局链接：${target}（登记已保留，可稍后重试或手动删除）`)
     }
   }
   delete skill.meta.globalRegistered
-  writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  const committed = commitSkills(dataDir, `skill(${id}): unregister globally`)
-  if (!committed) {
-    skill.meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), skill.meta)
-  }
+  commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): unregister globally`)
   return { slug: id, id, leaf, targetDir: target, removed, registered: false }
 }
 
@@ -647,12 +667,7 @@ export function updateSkillMeta(dataDir, slug, patch = {}) {
   if (patch.order !== undefined && Number.isFinite(Number(patch.order))) {
     meta.order = Math.max(0, Math.min(100, Math.round(Number(patch.order))))
   }
-  writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
-  const committed = commitSkills(dataDir, `skill(${slug}): meta`)
-  if (!committed) {
-    meta.pendingCommit = true
-    writeJsonFile(path.join(skill.dir, META_FILENAME), meta)
-  }
+  const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), meta, `skill(${slug}): meta`)
   return { slug, typeName: meta.typeName, typeNames: meta.typeNames, notes: meta.notes, commit: committed }
 }
 
@@ -887,21 +902,42 @@ function gitRun(cwd, args) {
   return execFileSync('git', ['-C', cwd, ...args], {
     encoding: 'utf8',
     stdio: 'ignore',
-    timeout: 15000,
+    // 技能树可以上万文件：git add/commit 会超过 15s，超时被杀会留下 index.lock 并让后续提交永久失败。
+    timeout: 300000,
     windowsHide: true,
   })
 }
 
 function gitCapture(cwd, args) {
+  // 沙箱里 git 输出接 pipe 会 EPERM（实测），和 artifact-diff 一样落临时文件再读。
+  const tmp = path.join(os.tmpdir(), `engram-gitcap-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
+  let fd = null
   try {
-    return String(execFileSync('git', ['-C', cwd, ...args], {
+    fd = fs.openSync(tmp, 'w')
+    execFileSync('git', ['-C', cwd, ...args], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 15000,
+      stdio: ['ignore', fd, 'ignore'],
+      timeout: 300000,
       windowsHide: true,
-    }) || '')
+    })
+    fs.closeSync(fd)
+    fd = null
+    return fs.readFileSync(tmp, 'utf8')
   } catch {
     return null
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // 已关闭
+      }
+    }
+    try {
+      fs.unlinkSync(tmp)
+    } catch {
+      // 临时文件不存在
+    }
   }
 }
 
@@ -915,12 +951,29 @@ export function ensureSkillsRepo(dataDir) {
   }
 }
 
+/**
+ * 写 meta 并提交：提交前先把 pendingCommit 置 false（提交快照里就是 false），失败再置 true。
+ * 只置 true 不复位会让 UI 永远显示「待补提交」（技能复验发现）。
+ */
+function commitMeta(dataDir, metaFile, meta, message) {
+  meta.pendingCommit = false
+  writeJsonFile(metaFile, meta)
+  const committed = commitSkills(dataDir, message)
+  if (!committed) {
+    meta.pendingCommit = true
+    writeJsonFile(metaFile, meta)
+  }
+  return committed
+}
+
 /** 提交 skills/ 路径；失败返回 false（写入仍然保留，调用方记 pendingCommit）。 */
 function skillWarningFor(skill, intent) {
   if (!skill) return null
   const text = [skill.name, skill.description, ...(skill.meta.triggers || []), ...(skill.meta.context || [])].join(' ')
   const similarity = stateSimilarity(abstractState(String(intent || '')), abstractState(text))
-  return similarity < 0.12
+  // 中文短意图与技能描述的词面相似度天然很低（正确技能实测 0.035），阈值压到 0.01：
+  // 只有几乎零重叠才提示「可能写错」，避免正常调用被误报。
+  return similarity < 0.01
     ? `skillId 与 intent 的相似度只有 ${Math.round(similarity * 100) / 100}，确认没有写错技能（账本已按该 id 更新）。`
     : null
 }
@@ -970,6 +1023,15 @@ function sleepSync(ms) {
 }
 
 export function commitSkills(dataDir, message) {
+  // 上一次被超时杀掉的 git 会留下 index.lock：超过 10 分钟（> 300s git 超时）的视为残留，清掉再提交。
+  // 阈值必须大于 git 超时，否则长提交（13k 文件实测 86–132s）会被后来者误删活锁。
+  // 仓库根在 dataDir/.git（ensureSkillsRepo 在 dataDir 初始化），不是 dataDir/skills/.git。
+  try {
+    const lock = path.join(String(dataDir || ''), '.git', 'index.lock')
+    if (fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs > 600000) fs.unlinkSync(lock)
+  } catch {
+    // 清锁失败不阻断：让 git 自己报错
+  }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       ensureSkillsRepo(dataDir)
@@ -1143,7 +1205,11 @@ export function validateSkill(skill) {
 /** 扫描全部技能并返回有问题的条目。 */
 export function validateAllSkills(dataDir) {
   return listSkills(dataDir)
-    .map((skill) => ({ slug: skill.slug, problems: validateSkill(skill) }))
+    .map((skill) => {
+      const problems = validateSkill(skill)
+      if (skill.meta && skill.meta.corrupt === true) problems.push(String(skill.meta.metaError || '技能账本损坏'))
+      return { slug: skill.slug, problems }
+    })
     .filter((item) => item.problems.length > 0)
 }
 
@@ -1398,6 +1464,27 @@ export function applySkillObstacle(dataDir, slug, options = {}) {
   return locked.busy === true ? { action: 'busy', slug } : locked.value
 }
 
+/**
+ * 把「裸 slug」解析成真实技能 id（0.13.0）：套件里的技能 id 是 `套件/子技能`，
+ * 用户/模型常只写子技能名。精确匹配优先；唯一后缀匹配自动补全；歧义或不存在要报错，
+ * 绝不静默成功（以前 feedback 裸 slug 返回成功但账本没写）。
+ */
+export function resolveSkillId(dataDir, raw) {
+  const wanted = String(raw || '').trim().replace(/^skill:/, '').replace(/\\/g, '/')
+  if (wanted === '') throw new Error('技能 id 不能为空（形如 skill:<套件/技能名>）')
+  const skills = listSkills(dataDir, { onlyLocal: true })
+  const wantedLower = wanted.toLowerCase()
+  const exact = skills.find((item) => String(item.slug || '').toLowerCase() === wantedLower)
+  if (exact !== undefined) return String(exact.slug)
+  const suffix = skills.filter((item) => String(item.slug || '').toLowerCase().endsWith(`/${wantedLower}`))
+  if (suffix.length === 1) return String(suffix[0].slug)
+  if (suffix.length > 1) {
+    throw new Error(`技能 id 有歧义：${wanted}；候选：${suffix.map((item) => item.slug).join('、')}`)
+  }
+  const available = skills.slice(0, 8).map((item) => item.slug)
+  throw new Error(`没有这个技能：${wanted}${available.length > 0 ? `；可用 id：${available.join('、')}` : '（技能库为空）'}`)
+}
+
 /** 用后结果：成功 = helped + 每个活跃签名记 clean；失败 = hurt。 */
 function applySkillOutcomeUnlocked(dataDir, slug, result, options = {}) {
   let dir
@@ -1410,9 +1497,12 @@ function applySkillOutcomeUnlocked(dataDir, slug, result, options = {}) {
   if (skill === null) return { action: 'missing', slug }
   const now = new Date().toISOString()
   const confidence = skill.meta.confidence
-  confidence.uses = (Number(confidence.uses) || 0) + 1
-  if (result === 'helped') confidence.helped = (Number(confidence.helped) || 0) + 1
-  else if (result === 'hurt') confidence.hurt = (Number(confidence.hurt) || 0) + 1
+  // neutral（含 pending 未判定）只更新时间，不抬 uses：uses 必须恒等于 helped + hurt。
+  if (result === 'helped' || result === 'hurt') {
+    confidence.uses = (Number(confidence.uses) || 0) + 1
+    if (result === 'helped') confidence.helped = (Number(confidence.helped) || 0) + 1
+    else confidence.hurt = (Number(confidence.hurt) || 0) + 1
+  }
   confidence.lastUsedAt = now
   if (result === 'helped') {
     for (const entry of Object.values(skill.meta.obstacles)) {

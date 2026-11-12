@@ -12,7 +12,8 @@ import fs from 'node:fs'
 
 import { buildTools } from './tools.js'
 import { listSkills, readSkillBySlug, validateAllSkills } from './skills.js'
-import { readStore, renderHint, storeFile } from './store.js'
+import { pendingRows, pendingTasks, readStore, renderHint, resolveVerdicts, storeFile, withStoreLock, writeStore } from './store.js'
+import { pendingBrief } from './brief.js'
 
 /** 构建工具面（适配器与 headless 共用同一套配置解析）。 */
 export function createTools(config = {}, defineTool = (definition) => definition) {
@@ -47,6 +48,30 @@ export function createEngine(options = {}) {
     readSkill: (slug) => readSkillBySlug(dataDir, slug),
     validate: () => validateAllSkills(dataDir),
     hint: (maxCharacters) => renderHint(config, maxCharacters),
+    /** 待判定队列（只读）：verdict=pending 的最近几条（带 brief，控制台直接显示）。 */
+    pending: (limit = 2) => pendingRows(readStore(dataDir), limit).map((row) => ({
+      id: row.id,
+      intent: row.intent,
+      action: row.action,
+      verdict: row.verdict,
+      registeredAt: row.registeredAt,
+      dimensions: row.dimensions,
+      brief: pendingBrief(row),
+    })),
+    /** 回填判定（模型给 outcome，插件只写回）。 */
+    resolveVerdicts: (list = []) => withStoreLock(dataDir, () => {
+      const store = readStore(dataDir)
+      const out = resolveVerdicts(store, list)
+      writeStore(dataDir, store)
+      return out
+    }),
+    /** 把 pending 带出回执（会 +1 提醒次数并落盘；外壳与测试用）。 */
+    drainPending: (limit = 2) => withStoreLock(dataDir, () => {
+      const store = readStore(dataDir)
+      const out = pendingTasks(store, limit, { pendingTtl: config.pendingTtl })
+      writeStore(dataDir, store)
+      return out
+    }),
     snapshot: () => {
       const file = storeFile(dataDir)
       let exists = false

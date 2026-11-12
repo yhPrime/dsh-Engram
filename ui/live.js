@@ -275,6 +275,33 @@ export function createLiveSource(config = {}) {
       return engine.listSkills().map(skillRowFromEngine).sort((a, b) => (Number(b.order) || 0) - (Number(a.order) || 0) || String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)) || a.name.localeCompare(b.name, 'zh'))
     },
 
+    pending(limit = 5) {
+      if (engine === null) return []
+      return engine.pending(limit)
+    },
+
+    verdicts(list) {
+      if (engine === null) throw codedError('read-only', '没有 dataDir，无法回填判定。')
+      return engine.resolveVerdicts(Array.isArray(list) ? list : [])
+    },
+
+    usageSummary() {
+      const rows = this.usageRows(200)
+      const byTool = {}
+      let chars = 0
+      let withChars = 0
+      for (const row of rows) {
+        const tool = String(row.tool || 'unknown')
+        byTool[tool] = (byTool[tool] || 0) + 1
+        const size = Number(row.chars)
+        if (Number.isFinite(size) && size > 0) {
+          chars += size
+          withChars += 1
+        }
+      }
+      return { calls: rows.length, chars, withChars, avgChars: withChars > 0 ? Math.round(chars / withChars) : 0, byTool }
+    },
+
     feedback(id, result) {
       if (engine === null) throw codedError('read-only', '没有 dataDir，无法反馈。')
       const out = engine.feedback({ id: String(id), result: String(result) })

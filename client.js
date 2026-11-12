@@ -1595,9 +1595,37 @@ window.__ModuleLoader__.load({
 
     function Usage() {
       const usage = useLoad(useCallback(() => request('/usage?limit=200'), []))
+      const pending = useLoad(useCallback(() => request('/pending'), []))
+      const summary = useLoad(useCallback(() => request('/usage-summary'), []))
       const rows = usage.data ? usage.data.rows || [] : []
+      const pendingRows = Array.isArray(pending.data) ? pending.data : []
+      const stat = summary.data || { calls: 0, chars: 0, avgChars: 0, byTool: {} }
+      const backfill = async (row, outcome) => {
+        await request('/verdicts', { method: 'POST', body: { verdicts: [{ id: row.id, outcome }] } })
+        await Promise.all([pending.reload(), summary.reload(), usage.reload()])
+      }
+      const error = usage.error || pending.error || summary.error
       return h('div', { className: 'eng-fill' },
-        usage.error ? h(Banner, { bad: true }, usage.error) : null,
+        error ? h(Banner, { bad: true }, error) : null,
+        h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
+          h('div', { className: 'eng-detail-title' }, '经验库 token 账'),
+          h('div', { className: 'eng-muted' }, `最近 ${stat.calls} 次调用 · 回执合计 ${stat.chars} 字符 · 平均 ${stat.avgChars}/次`
+            + (stat.calls > 0 && !stat.chars ? '（历史记录没有字符统计，0.13 起才有）' : '')),
+          h('div', { className: 'eng-actions', style: { marginTop: 8 } },
+            Object.entries(stat.byTool || {}).map(([tool, count]) => h(Badge, { key: tool, tone: 'muted' }, `${tool} ${count}`)))),
+        h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
+          h('div', { className: 'eng-detail-title' }, `待判定（${pendingRows.length}）`),
+          pendingRows.length === 0
+            ? h(Empty, null, pending.loading ? '读取中…' : '没有待判定的记录')
+            : h('div', { className: 'eng-stack' }, pendingRows.map((row) => h('div', { key: row.id, className: 'eng-row', style: { gridTemplateColumns: '120px minmax(0,1fr) auto' } },
+              h('span', { className: 'eng-mono' }, row.id),
+              h('div', { className: 'eng-row-main' },
+                h('div', { className: 'eng-row-intent' }, row.intent || row.action || '—'),
+                row.brief ? h('div', { className: 'eng-row-sub' }, row.brief) : null),
+              h('div', { className: 'eng-actions' },
+                h(Button, { small: true, onClick: () => backfill(row, 'success') }, '成功'),
+                h(Button, { small: true, onClick: () => backfill(row, 'corrected') }, '纠正'),
+                h(Button, { small: true, onClick: () => backfill(row, 'failed') }, '失败')))))),
         h('div', { className: 'eng-card eng-scroll' }, rows.length === 0 ? h(Empty, null, usage.loading ? '读取中…' : '还没有调用记录') : h('table', { className: 'eng-table' },
           h('thead', null, h('tr', null, h('th', null, '时间'), h('th', null, '工具'), h('th', null, '意图'), h('th', null, '结果'))),
           h('tbody', null, rows.map((row, index) => h('tr', { key: index },
