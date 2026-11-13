@@ -29,9 +29,9 @@ export const DEFAULT_ORDER = 90
 
 export const MAX_TAGS = 6
 
-/** 临时会话的硬超时：卡住的 provider 不能把导入一直挂着。 */
-export const SESSION_TIMEOUT_MS = 30_000
-export const SESSION_MAX_TOKENS = 400
+/** 临时会话的硬超时：卡住的 provider 不能把导入一直挂着；所有临时会话统一最小预算。 */
+export const SESSION_TIMEOUT_MS = 20_000
+export const SESSION_MAX_TOKENS = 200
 
 /** 分类/标签用的系统提示。只出 JSON，别让模型加解释。 */
 export const CLASSIFY_SYSTEM = [
@@ -224,7 +224,7 @@ export function parseClassification(rawText) {
  */
 export function alignClassification(parsed, typeNames = []) {
   if (parsed === null) return null
-  const names = typeNames.map((name) => String(name || '').trim()).filter(Boolean)
+  const names = typeNames.map((name) => String(name || '').trim()).filter(Boolean).slice(0, 8)
   const category = names.includes(parsed.category) ? parsed.category : ''
   return { category, tags: parsed.tags, order: parsed.order, summaryZh: parsed.summaryZh || "" }
 }
@@ -267,9 +267,9 @@ export function routeOf(selection) {
 export async function classifyWithSession({ llm, route, text, typeNames = [] }) {
   if (llm === null || llm === undefined || typeof llm.stream !== 'function') return null
   if (route === null || route === undefined) return null
-  const names = typeNames.map((name) => String(name || '').trim()).filter(Boolean)
+  const names = typeNames.map((name) => String(name || '').trim()).filter(Boolean).slice(0, 8)
   if (names.length === 0) return null
-  const body = normalizeNewlines(text).slice(0, 6000)
+  const body = normalizeNewlines(text).slice(0, 2000)
   const user = [`可选类型：${names.join('、')}`, '', '技能文本：', body].join('\n')
   try {
     const stream = llm.stream({
@@ -278,6 +278,7 @@ export async function classifyWithSession({ llm, route, text, typeNames = [] }) 
       messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
       system: CLASSIFY_SYSTEM,
       maxTokens: SESSION_MAX_TOKENS,
+      temperature: 0,
       signal: AbortSignal.timeout(SESSION_TIMEOUT_MS),
     })
     const pieces = []

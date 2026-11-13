@@ -30,8 +30,8 @@ function check(name, fn) {
 
 // 先造几条经验与类型
 const seed = readStore(dir)
-upsertExperience(seed, { intent: '做研学课PPT', action: '先定主题色', type: '研学课件', typeDescription: '研学课课件制作' })
-upsertExperience(seed, { intent: '写教案', action: '先列目标', type: '研学教案', typeDescription: '研学课教案' })
+upsertExperience(seed, { intent: '做研学课PPT', action: '先定主题色', type: '研学课件', typeDescription: '研学课课件制作', context: ['插件', '主题'] })
+upsertExperience(seed, { intent: '写教案', action: '先列目标', type: '研学教案', typeDescription: '研学课教案', context: ['插件'] })
 upsertExperience(seed, { intent: '再做个PPT', action: '复用模板', type: '研学课件' })
 writeStore(dir, seed)
 
@@ -48,6 +48,22 @@ check('list：返回类型与使用条数，system 排最后', () => {
   assert.equal(course.count, 2)
   assert.equal(out.types.at(-1).name, '未分类')
   assert.equal(out.typeCount, 2)
+})
+
+check('labels：列出已有次级分类，供复用', () => {
+  const out = typeTool.execute({ action: 'labels' })
+  assert.equal(out.labels.find((item) => item.name === '插件').count, 2)
+  assert.equal(out.labels.find((item) => item.name === '主题').count, 1)
+})
+
+check('label：给单条经验补标签，超过 8 个明确报错', () => {
+  const store = readStore(dir)
+  const row = store.experiences[0]
+  const labelled = typeTool.execute({ action: 'label', id: row.id, labels: ['主题'] })
+  assert.ok(labelled.labels.includes('主题'))
+  store.experiences[0].context = ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8']
+  writeStore(dir, store)
+  assert.throws(() => typeTool.execute({ action: 'label', id: row.id, labels: ['新标签'] }), /最多 8 个/)
 })
 
 check('create：新建类型，重复名报错', () => {

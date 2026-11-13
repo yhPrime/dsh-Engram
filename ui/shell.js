@@ -32,12 +32,15 @@ import {
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
+import { defaultDataDir, moveDataRoot, readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
+import { ensureDefaultTypes } from '../kernel/store.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { importSkills } from '../kernel/import-skill.js'
 import { applySkillNodeAction, buildSkillTree, forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
+import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
+import { normalizeContext, writeStore } from '../kernel/store.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -78,7 +81,7 @@ export const SETTINGS_SPEC = {
   ui: [
     { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示', tip: 'live：读真实经验库；mock：读内置示例数据（只用于看界面效果，不写真实库）。' },
     { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根', tip: '只影响「控制台读哪份库」，不影响工具写入。工具始终写到「存储位置」里的当前根；两边可以指向不同目录——看起来「数据不一致」时先来这里检查。' },
-    { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['dsh', 'codex', 'cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { dsh: '跟随当前主题', codex: '蓝紫星辰（推理滑条渐变）', cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' }, tip: '「跟随当前主题」实时读当前主题的背景渐变（换主题自动变）；主题没有渐变时退回「蓝紫星辰」。关系图右上角的胶囊按钮也能直接切这两项。' },
+    { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['dsh', 'codex', 'universe', 'cosmos', 'cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { dsh: '跟随当前主题', codex: '默认主题', universe: '超能量体', cosmos: '宇宙', cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' }, tip: '「默认主题」是蓝紫星辰，首次安装/未选择时使用；之后改过哪个就记住哪个。「跟随当前主题」实时读当前主题的渐变。' },
     { key: 'graphSurface', label: '关系图背景', type: 'enum', values: ['theme', 'light', 'dark'], labels: { theme: '跟随主题', light: '浅色', dark: '深色' }, tip: '关系图画布的背景深浅。跟随主题＝透明，用页面本来的底色；浅色/深色会铺一层固定底色，同时把节点的明暗补偿一起切过去。图左下角的胶囊也能直接切。' },
     { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭', tip: '关系图自动旋转的速度（弧度/秒）；0 = 不转。拖动时暂停，松手继续。' },
     { key: 'graphBloom', label: '泛光 bloom', type: 'boolean', tip: '给亮节点叠一层柔光，暗色主题下更明显；关掉更省绘制。' },
@@ -741,6 +744,26 @@ export function buildGraph(source, params) {
     edges.push({ source: `type:${typeId}`, target: `exp:${row.id}`, kind: 'type', strength: 0.25 + Math.min(0.5, Math.abs(Number(row.G) || 0) * 0.25) })
     expIds.add(row.id)
   }
+  // 次级分类关系：同标签的经验连一条虚线，不新增节点；标签复用后图上能看出它们的关系。
+  const labelMembers = new Map()
+  for (const row of keptRows) {
+    for (const tag of Array.isArray(row.context) ? row.context : []) {
+      const name = String(tag || '').trim()
+      if (name === '') continue
+      const list = labelMembers.get(name) || []
+      list.push(row.id)
+      labelMembers.set(name, list)
+    }
+  }
+  let labelEdges = 0
+  for (const [name, ids] of labelMembers) {
+    if (ids.length < 2 || ids.length > 6 || labelEdges >= 120) continue
+    for (let index = 1; index < ids.length; index += 1) {
+      edges.push({ source: `exp:${ids[0]}`, target: `exp:${ids[index]}`, kind: 'label', label: name, strength: 0.18 })
+      labelEdges += 1
+      if (labelEdges >= 120) break
+    }
+  }
   const skillTree = buildSkillTree(skills)
   const skillNodes = new Map()
   const walkSkill = (node, parentId) => {
@@ -1076,6 +1099,40 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       return json(res, 200, { ok: true, data: buildTypeOp(active, await readBody(req)) })
     }
+    if (route === '/classify') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      if (!active || active.mode !== 'live' || typeof active.hot !== 'function') return fail(res, 400, 'unsupported', '示例数据不支持自动分类')
+      const body = await readBody(req)
+      const hot = active.hot()
+      if (hot.error) return fail(res, 500, 'store-unreadable', hot.error)
+      const store = hot.store
+      const row = (store.experiences || []).find((item) => item.id === String((body && body.id) || ''))
+      if (row === undefined) return fail(res, 404, 'not-found', '经验不存在')
+      const typeNames = (store.types || []).filter((type) => type && type.system !== true).map((type) => String(type.name || '')).filter(Boolean)
+      const tagNames = [...new Set((store.experiences || []).flatMap((item) => Array.isArray(item.context) ? item.context : []).map(String).filter(Boolean))]
+      const text = [row.intent, row.action, row.note].filter(Boolean).join('\n')
+      let decided = null
+      try {
+        decided = await classifyExperienceWithSession({
+          llm: typeof deps.getLlm === 'function' ? deps.getLlm() : null,
+          route: typeof deps.getRoute === 'function' ? deps.getRoute() : null,
+          text,
+          typeNames,
+          tagNames,
+        })
+      } catch { decided = null }
+      if (decided === null) decided = localClassifyExperience({ text, typeNames, tagNames })
+      const target = (store.types || []).find((type) => type && type.name === decided.category && type.system !== true)
+        || (store.types || []).find((type) => type && type.system !== true)
+      if (target === undefined) return fail(res, 400, 'no-type', '没有可用的主分类')
+      row.typeId = target.id
+      row.typeName = target.name
+      const existingTags = normalizeContext(row.context)
+      const room = Math.max(0, 8 - existingTags.length)
+      row.context = normalizeContext([...existingTags, ...(Array.isArray(decided.tags) ? decided.tags.slice(0, room) : [])])
+      writeStore(String(readOf(active).dataDir || ''), store)
+      return json(res, 200, { ok: true, data: { id: row.id, typeName: target.name, tags: row.context, classifier: decided.classifier, note: decided.note, model: decided.model || '' } })
+    }
     if (route === '/graph') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       return json(res, 200, { ok: true, data: buildGraph(active, url.searchParams) })
@@ -1103,7 +1160,19 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/settings') {
       if (method === 'POST') {
         const body = await readBody(req)
-        if (body && Object.prototype.hasOwnProperty.call(body, 'currentRoot')) setCurrentRoot(String(body.currentRoot || '').trim())
+        if (body && Object.prototype.hasOwnProperty.call(body, 'currentRoot')) {
+          const rawRoot = String(body.currentRoot || '').trim()
+          const oldRoot = resolveEngramDataDir()
+          const newRoot = rawRoot === '' ? defaultDataDir() : rawRoot
+          try {
+            if (path.resolve(oldRoot) !== path.resolve(newRoot)) moveDataRoot(oldRoot, newRoot)
+            setCurrentRoot(rawRoot)
+            // 用户第一次选择存储位置（或走默认根）：空库初始化默认主分类；已有数据不动。
+            ensureDefaultTypes(resolveEngramDataDir())
+          } catch (error) {
+            return fail(res, 409, 'root-move-failed', error && error.message ? error.message : '切换存储位置失败')
+          }
+        }
         if (body && body.config !== undefined) writeEngineConfig(sanitizeSettings(body.config, SETTINGS_SPEC.config))
         if (body && body.ui !== undefined) writeUiConfig(sanitizeSettings(body.ui, SETTINGS_SPEC.ui))
         if (body && body.git !== undefined) writeGitConfig(sanitizeSettings(body.git, SETTINGS_SPEC.git))

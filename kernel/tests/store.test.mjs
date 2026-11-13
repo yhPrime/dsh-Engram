@@ -9,6 +9,7 @@ import path from 'node:path'
 
 import {
   dataDirFromProviderState,
+  ensureDefaultTypes,
   forgetExperience,
   graphSnapshot,
   listInsights,
@@ -130,11 +131,12 @@ check('持久化：writeStore 后 readStore 内容一致', () => {
   assert.ok(again.types.length >= 1)
 })
 
-check('类型不预设：按需自动创建 + 近似合并 + 泛化名 + 上限 + 每日上限', () => {
+check('类型按需创建 + 近似合并 + 泛化名 + 上限 + 每日上限', () => {
   const d1 = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-types-'))
   const s1 = readStore(d1)
   assert.equal(s1.types.length, 1)
   assert.equal(s1.types[0].name, '未分类')
+  assert.equal(s1.types.at(-1).name, '未分类')
 
   const created = upsertExperience(s1, { intent: '做研学课', action: '先定主题色', type: '研学课设计', typeDescription: '研学课教案与流程' })
   assert.equal(created.type.created, true)
@@ -154,18 +156,36 @@ check('类型不预设：按需自动创建 + 近似合并 + 泛化名 + 上限 
 
   const capped = readStore(fs.mkdtempSync(path.join(os.tmpdir(), 'exp-types-cap-')))
   upsertExperience(capped, { intent: '任务一', action: '做法一', type: 'PPT制作' }, { maxTypes: 1 })
-  const over = upsertExperience(capped, { intent: '任务二', action: '做法二', type: '代码插件' }, { maxTypes: 1 })
+  const over = upsertExperience(capped, { intent: '任务二', action: '做法二', type: '量子航线' }, { maxTypes: 1 })
   assert.equal(over.type.created, false)
   assert.equal(over.type.rejected, 'limit')
   assert.equal(over.experience.typeName, '未分类')
 
   const rated = readStore(fs.mkdtempSync(path.join(os.tmpdir(), 'exp-types-rate-')))
   upsertExperience(rated, { intent: '任务一', action: '做法一', type: 'PPT制作' }, { maxTypes: 10, newTypesPerDay: 1 })
-  const rate = upsertExperience(rated, { intent: '任务二', action: '做法二', type: '代码插件' }, { maxTypes: 10, newTypesPerDay: 1 })
+  const rate = upsertExperience(rated, { intent: '任务二', action: '做法二', type: '潮汐算法' }, { maxTypes: 10, newTypesPerDay: 1 })
   assert.equal(rate.type.created, false)
   assert.equal(rate.type.rejected, 'rate')
 
   for (const temp of [d1]) fs.rmSync(temp, { recursive: true, force: true })
+})
+
+check('首次初始化才种默认分类；已有分类不覆盖', () => {
+  const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'exp-defaults-'))
+  ensureDefaultTypes(d2)
+  const seeded = readStore(d2)
+  const defaults = seeded.types.filter((type) => type.system !== true)
+  assert.equal(defaults.length, 6)
+  assert.ok(defaults.some((type) => type.name === '开发'))
+  assert.ok(defaults.some((type) => type.name === '办公'))
+
+  upsertExperience(seeded, { intent: '自定义任务', action: '自定义做法', type: '自定义分类' })
+  writeStore(d2, seeded)
+  ensureDefaultTypes(d2)
+  const again = readStore(d2)
+  assert.equal(again.types.filter((type) => type.name === '自定义分类').length, 1)
+  assert.equal(again.types.filter((type) => type.name === '开发').length, 1)
+  fs.rmSync(d2, { recursive: true, force: true })
 })
 
 check('跟随配置：从记忆插件状态里读 Provider 数据目录', () => {

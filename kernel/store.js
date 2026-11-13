@@ -55,6 +55,15 @@ export const SYSTEM_TYPE = Object.freeze({
 })
 
 /** 类型防膨胀：上限、每天新增上限、名称近似判定阈值。 */
+/** 新库默认主分类：发布版开箱即用；次级分类由 exp_record.labels 自由挂。 */
+export const PRESET_TYPES = Object.freeze([
+  { id: 'ty_dev', name: '开发', description: '代码、插件、测试、UI、视觉、交互等开发工作；具体方向放标签。', source: 'preset' },
+  { id: 'ty_office', name: '办公', description: 'Word / PPT / Excel 等办公文档、课件、表格与版式。', source: 'preset' },
+  { id: 'ty_content', name: '内容', description: '文案、图片、网页、调研等资料与内容产出。', source: 'preset' },
+  { id: 'ty_project', name: '项目', description: '项目推进、验收判据、计划发布、跨模块协作。', source: 'preset' },
+  { id: 'ty_ops', name: '运维', description: '环境部署、网络连通、心跳与对外交换。', source: 'preset' },
+  { id: 'ty_system', name: '系统', description: '标识/幂等、上下文/运行时等底层机制。', source: 'preset' },
+])
 export const DEFAULT_MAX_TYPES = 24
 export const DEFAULT_NEW_TYPES_PER_DAY = 6
 export const DEFAULT_TYPE_SIMILARITY = 0.8
@@ -281,7 +290,7 @@ export function storeFile(dataDir) {
   return path.join(dataDir, FILE_NAME)
 }
 
-/** 空库（首次运行）：只有系统兜底类型。 */
+/** 空库（首次运行）：只有系统兜底类型；默认主分类由用户首次选择存储位置时初始化。 */
 function emptyStore() {
   return { version: 1, types: [{ ...SYSTEM_TYPE }], experiences: [] }
 }
@@ -521,6 +530,22 @@ export function clearStoreReadCache(dataDir) {
 }
 
 /** 读缓存诊断：条数与估算占用字节（测试 / 控制台可见）。 */
+/**
+ * 用户第一次选择存储位置、初始化空库时写入默认主分类。
+ * 已有任何业务类型或经验就完全不动，避免覆盖用户自己的分类。
+ */
+export function ensureDefaultTypes(dataDir) {
+  const store = readStore(dataDir)
+  if (store.experiences.length > 0 || store.types.some((type) => type.system !== true)) return store
+  const next = {
+    ...store,
+    types: [...PRESET_TYPES.map((type) => ({ ...type })), { ...SYSTEM_TYPE }],
+  }
+  ensureClusters(next)
+  writeStore(dataDir, next)
+  return next
+}
+
 export function readStoreCacheInfo() {
   return { entries: STORE_READ_CACHE.size, bytes: storeReadCacheBytes }
 }
@@ -1329,6 +1354,7 @@ export function upsertExperience(store, input, options = {}) {
   const failedStep = Number.isInteger(failedStepInput) && failedStepInput > 0 ? failedStepInput : null
   const stepRewardsInput = Array.isArray(input.stepRewards) ? input.stepRewards.map(Number).filter(Number.isFinite) : null
   const context = normalizeContext(input.context)
+  const labels = normalizeContext(input.labels)
   const dimensions = normalizeDimensions(input.dimensions)
   const artifacts = normalizeArtifacts(input.artifacts)
   const evidence = normalizeEvidence(input.evidence)
@@ -1425,6 +1451,7 @@ export function upsertExperience(store, input, options = {}) {
       applyExpectation(duplicate)
     }
     if (input.context !== undefined) duplicate.context = context
+    if (labels.length > 0) duplicate.context = normalizeContext([...(Array.isArray(duplicate.context) ? duplicate.context : []), ...labels])
     if (dimensions !== null) duplicate.dimensions = dimensions
     if (artifacts !== null) duplicate.artifacts = artifacts
     if (evidence !== null) duplicate.evidence = evidence
@@ -1461,6 +1488,7 @@ export function upsertExperience(store, input, options = {}) {
     revivable.step_rewards = stepRewardsInput !== null ? stepRewardsInput : [reward]
     revivable.GOutcome = computedG
     if (input.context !== undefined) revivable.context = context
+    if (labels.length > 0) revivable.context = normalizeContext([...(Array.isArray(revivable.context) ? revivable.context : []), ...labels])
     applyExpectation(revivable)
     foldExpiredFeedback(revivable, nowMs, decayDays)
     syncDerivedFeedback(revivable)
@@ -1526,7 +1554,7 @@ export function upsertExperience(store, input, options = {}) {
     GSource: 'outcome',
     expectedG: expectedG,
     predictionError: expectedG === null ? null : round4(computedG - expectedG),
-    context,
+    context: normalizeContext([...context, ...labels]),
     ...(typeof input.skillId === 'string' && input.skillId.trim() !== '' ? { skillId: input.skillId.trim() } : {}),
     outcome,
     note: cleanNote.text,
@@ -1640,7 +1668,7 @@ export function pushHistory(experience, event) {
   experience.history = list.slice(-HISTORY_LIMIT)
 }
 
-/** 情境线索（编码特异性，0.25.0）：≤5 个标签、每个 ≤24 字符、去重、小写。 */
+/** 次级分类/情境标签（编码特异性，0.25.0）：≤8 个标签、每个 ≤24 字符、去重、小写。 */
 export function normalizeContext(value) {
   const raw = Array.isArray(value)
     ? value
@@ -1650,7 +1678,7 @@ export function normalizeContext(value) {
     const tag = String(item || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 24)
     if (tag !== '' && !tags.includes(tag)) tags.push(tag)
   }
-  return tags.slice(0, 5)
+  return tags.slice(0, 8)
 }
 
 /**

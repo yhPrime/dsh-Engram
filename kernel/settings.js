@@ -45,12 +45,48 @@ function expand(value) {
 }
 
 /** 唯一的数据目录解析入口；插件、工具、审计、外壳都走这里。 */
+export function defaultDataDir(env = process.env) {
+  return path.join(dshHome(env), '.exp')
+}
+
 export function resolveEngramDataDir(config = {}, env = process.env) {
   const explicit = String((config && config.dataDir) || (env && env.ENGRAM_DATA_DIR) || '').trim()
   if (explicit !== '') return expand(explicit)
   const currentRoot = String(readSettings(env).currentRoot || '').trim()
   if (currentRoot !== '') return expand(currentRoot)
-  return path.join(dshHome(env), APP_DIRNAME, 'data')
+  return defaultDataDir(env)
+}
+
+/**
+ * 把整个数据根挪到新位置（用户切换存储位置时用）。
+ * 目标必须不存在或为空；跨盘 rename 失败时退回复制，校验后再删源。
+ */
+export function moveDataRoot(from, to) {
+  const source = expand(from)
+  const target = expand(to)
+  if (source === '' || target === '' || source === target) return { moved: false, same: true }
+  const sourceWithSep = source + path.sep
+  const targetWithSep = target + path.sep
+  if (target.startsWith(sourceWithSep) || source.startsWith(targetWithSep)) {
+    throw new Error('新存储位置不能嵌套在旧位置里')
+  }
+  if (!fs.existsSync(source)) return { moved: false, missing: true }
+  if (fs.existsSync(target)) {
+    const entries = fs.readdirSync(target)
+    if (entries.length > 0) throw new Error('新存储位置里已经有数据，拒绝覆盖')
+    fs.rmdirSync(target)
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  try {
+    fs.renameSync(source, target)
+    return { moved: true, copied: false }
+  } catch (error) {
+    if (error && error.code !== 'EXDEV') throw error
+    fs.cpSync(source, target, { recursive: true, preserveTimestamps: true })
+    if (!fs.existsSync(target)) throw new Error('复制后目标目录不存在')
+    fs.rmSync(source, { recursive: true, force: true })
+    return { moved: true, copied: true }
+  }
 }
 
 /** 记住当前数据根（管理页/CLI 用）。 */

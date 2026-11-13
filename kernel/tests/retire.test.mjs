@@ -99,10 +99,10 @@ check('取代目标忽略退休条', () => {
 
 check('类型统计不含退休条', () => {
   const agent = newAgent()
-  agent.record({ intent: '装插件', action: '用目录装', outcome: 'failed', type: '环境 / 部署' })
-  agent.record({ intent: '装插件', action: '用目录装', outcome: 'success', type: '环境 / 部署' })
+  agent.record({ intent: '装插件', action: '用目录装', outcome: 'failed', type: '环境' })
+  agent.record({ intent: '装插件', action: '用目录装', outcome: 'success', type: '环境' })
   const store = readStore(agent.dir)
-  const cluster = store.clusters.find((item) => item.name === '环境 / 部署')
+  const cluster = store.clusters.find((item) => item.name === '环境')
   assert.equal(cluster.stats.count, 1)
   assert.equal(cluster.stats.success, 1)
   assert.equal(cluster.stats.fail, 0)

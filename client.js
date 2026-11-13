@@ -73,10 +73,10 @@ window.__ModuleLoader__.load({
   --eng-tone-bad-fg: color-mix(in srgb, var(--dsw-alias-state-error-primary, var(--eng-bad)) 50%, var(--dsw-alias-label-primary));
   --eng-tone-bad-bg: color-mix(in srgb, var(--eng-tone-bad-fg) 14%, transparent);
   /* 默认皮肤：白底 + DSH 蓝强调 + 灰点缀；链接 token 自带亮/暗两套值。 */
-  --eng-accent: var(--dsw-alias-link, #4176e6);
+  --eng-accent: var(--dsw-alias-brand-primary, var(--dsw-alias-link, #4176e6));
   --eng-accent-text: color-mix(in srgb, var(--eng-accent) 75%, var(--dsw-alias-label-primary));
   --eng-accent-soft: color-mix(in srgb, var(--eng-accent) 12%, transparent);
-  --eng-accent-fill: var(--dsw-alias-brand-primary-new-colorprimary-new-color, #4176e6);
+  --eng-accent-fill: var(--dsw-alias-brand-primary, var(--dsw-alias-link, #4176e6));
   --eng-accent-strong: color-mix(in srgb, var(--eng-accent-fill) 80%, #000);
   --eng-tone-brand-fg: var(--eng-accent-text);
   --eng-tone-brand-bg: var(--eng-accent-soft);
@@ -335,7 +335,7 @@ window.__ModuleLoader__.load({
 }
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: var(--eng-r-4); background: transparent; }
-.eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+.eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; user-select: none; }
 .eng-graph-fullscreen { position: absolute; top: 14px; right: 14px; z-index: 6; width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
 .eng-graph-fullscreen:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
 .eng-graph-fullscreen:focus-visible { outline: 2px solid var(--eng-accent-text); outline-offset: 2px; }
@@ -1213,6 +1213,18 @@ window.__ModuleLoader__.load({
         await Promise.all([list.reload(), detail.reload()])
         props.onChanged()
       }
+      const labelCatalog = useLoad(useCallback(() => request('/type', { method: 'POST', body: { action: 'labels' } }), []))
+      const addLabels = async (id, tags) => {
+        await request('/type', { method: 'POST', body: { action: 'label', id, labels: tags } })
+        await Promise.all([list.reload(), detail.reload(), labelCatalog.reload()])
+        props.onChanged()
+      }
+      const autoAssign = async (id) => {
+        const out = await request('/classify', { method: 'POST', body: { id } })
+        await Promise.all([list.reload(), detail.reload()])
+        props.onChanged()
+        return out
+      }
       return h('div', { className: 'eng-fill' },
         list.error ? h(Banner, { bad: true }, list.error) : null,
         storeError ? h(Banner, { bad: true }, `经验数据读取失败：${storeError.message}${storeError.file ? `（${storeError.file}）` : ''}`) : null,
@@ -1250,7 +1262,7 @@ window.__ModuleLoader__.load({
               h(Button, { small: true, disabled: page <= 0, onClick: () => setPage(page - 1) }, '上一页'),
               h(Button, { small: true, disabled: page + 1 >= pages, onClick: () => setPage(page + 1) }, '下一页'))),
           h('div', { className: 'eng-card eng-detail-card', ref: detailRef },
-            h(DetailPane, { key: selected === null ? 'empty' : selected, selected, detail, send, busy: sending, types, onAssign: assign, onClose: () => setSelected(null) }))))
+            h(DetailPane, { key: selected === null ? 'empty' : selected, selected, detail, send, busy: sending, types, onAssign: assign, labelOptions: (labelCatalog.data && labelCatalog.data.labels) || [], onAddLabels: addLabels, onAutoAssign: autoAssign, onClose: () => setSelected(null) }))))
     }
 
     /**
@@ -1260,8 +1272,10 @@ window.__ModuleLoader__.load({
     function DetailPane(props) {
       const { selected, detail, send, onClose, busy } = props
       const [assignTo, setAssignTo] = useState('')
+      const [assigning, setAssigning] = useState(false)
+      const [assignMessage, setAssignMessage] = useState('')
       const [pane, setPane] = useState('overview')
-      useEffect(() => { setAssignTo(''); setPane('overview') }, [selected])
+      useEffect(() => { setAssignTo(''); setAssigning(false); setAssignMessage(''); setPane('overview') }, [selected])
       if (selected === null) return h(Empty, null, '选一条经验看详情')
       if (detail && detail.error) return h(ErrorState, { title: '读取详情失败', message: detail.error, onRetry: detail.reload })
       const data = detail ? detail.data : null
@@ -1300,11 +1314,41 @@ window.__ModuleLoader__.load({
               h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Button, { small: true, onClick: copyJson }, '复制 JSON')),
               h('pre', { className: 'eng-pre eng-pre-json' }, JSON.stringify(data, null, 2)))
             : h('div', null,
+              assignable ? h('div', { className: 'eng-actions', style: { marginBottom: 12, flexWrap: 'wrap' } },
+                h('span', { className: 'eng-label' }, '分类'),
+                h('select', { className: 'eng-select', style: { width: 170 }, value: assignTo, onChange: (event) => setAssignTo(event.target.value) },
+                  h('option', { value: '' }, '选择主分类…'),
+                  types.map((item) => h('option', { key: item.id, value: item.name }, item.name))),
+                h(Button, { small: true, disabled: assigning || assignTo === '' || assignTo === row.typeName, onClick: async () => {
+                  setAssigning(true)
+                  setAssignMessage('')
+                  try { await props.onAssign(row.id, assignTo); setAssignMessage(`已移到「${assignTo}」`) } catch (error) { setAssignMessage(error && error.message ? error.message : '分类失败') } finally { setAssigning(false) }
+                } }, assigning ? '移动中…' : '移到该分类'),
+                assignMessage ? h('span', { className: 'eng-muted' }, assignMessage) : null,
+                typeof props.onAutoAssign === 'function' ? h(Button, { small: true, disabled: assigning, onClick: async () => {
+                  setAssigning(true)
+                  setAssignMessage('')
+                  try { const out = await props.onAutoAssign(row.id); setAssignMessage(`已分到「${out.typeName}」${out.classifier === 'local' ? '（本地兜底，未耗模型）' : '（临时会话）'}`) } catch (error) { setAssignMessage(error && error.message ? error.message : '自动分类失败') } finally { setAssigning(false) }
+                } }, '一键分类') : null,
+                typeof props.onAutoAssign === 'function' ? h(Tip, { text: '一键分类会拉起一次性临时会话（不注入工具/历史、只发最小文本），会产生额外 Token 消费' }) : null) : null,
+              typeof props.onAddLabels === 'function' ? h('div', { className: 'eng-actions', style: { marginBottom: 12, flexWrap: 'wrap' } },
+                h('span', { className: 'eng-label' }, '标签'),
+                h('select', { className: 'eng-select', style: { width: 150 }, value: labelPick, onChange: (event) => setLabelPick(event.target.value) },
+                  h('option', { value: '' }, '选择已有标签…'),
+                  (Array.isArray(props.labelOptions) ? props.labelOptions : []).filter((item) => !(Array.isArray(row.context) && row.context.includes(item.name))).map((item) => h('option', { key: item.name, value: item.name }, `${item.name} (${item.count})`))),
+                h('input', { className: 'eng-input', style: { width: 140 }, placeholder: '新建标签…', value: newLabel, onChange: (event) => setNewLabel(event.target.value) }),
+                h(Button, { small: true, disabled: labelBusy || (labelPick === '' && newLabel.trim() === ''), onClick: async () => {
+                  const tags = [...(labelPick === '' ? [] : [labelPick]), ...newLabel.split(/[,，]/).map((item) => item.trim()).filter(Boolean)]
+                  setLabelBusy(true)
+                  setLabelMessage('')
+                  try { await props.onAddLabels(row.id, tags); setLabelMessage('标签已添加'); setLabelPick(''); setNewLabel('') } catch (error) { setLabelMessage(error && error.message ? error.message : '添加失败') } finally { setLabelBusy(false) }
+                } }, labelBusy ? '添加中…' : '添加标签'),
+                labelMessage ? h('span', { className: 'eng-muted' }, labelMessage) : null) : null,
               h('dl', { className: 'eng-kv' },
                 h('dt', null, '做法'), h('dd', null, row.action || '—'),
-                h('dt', null, '类型'), h('dd', null, row.typeName || '—'),
+                h('dt', null, '分类'), h('dd', null, row.typeName || '未分类'),
                 h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
-                h('dt', null, '情境'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '无'),
+                h('dt', null, '标签'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '无'),
                 Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dt', null, '维度') : null,
                 Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dd', null, row.dimensions.join('、')) : null,
                 row.expectedG === null || row.expectedG === undefined ? null : h('dt', null, '预期 G'),
@@ -1314,12 +1358,7 @@ window.__ModuleLoader__.load({
                 row.retrievals > 0 ? h('dd', null, `${row.retrievals} 次`) : null,
                 h('dt', null, '判定'), h('dd', null, row.verdict === 'pending' ? '待判定' : (row.verdict || '—')),
                 h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
-              row.note ? h('div', { className: 'eng-note' }, h('div', { className: 'eng-label' }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null,
-              assignable ? h('div', { className: 'eng-actions', style: { marginTop: 12 } },
-                h('select', { className: 'eng-select', style: { width: 170 }, value: assignTo, onChange: (event) => setAssignTo(event.target.value) },
-                  h('option', { value: '' }, '改挂类型…'),
-                  types.map((item) => h('option', { key: item.id, value: item.name }, item.name))),
-                h(Button, { small: true, disabled: assignTo === '' || assignTo === row.typeName, onClick: () => props.onAssign(row.id, assignTo) }, '改挂')) : null)
+              row.note ? h('div', { className: 'eng-note' }, h('div', { className: 'eng-label' }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null)
       return h('div', { className: 'eng-detail' },
         h('div', { className: 'eng-actions' }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
         h('h3', { className: 'eng-detail-title' }, row.intent || '（无意图）'),
@@ -1402,7 +1441,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-form-grid' },
             h(Field, { label: '意图', wide: true, hint: '走内核 JitRL 召回（技能模式优先返回技能正文）' },
               h('textarea', { className: 'eng-textarea', placeholder: '例如：把课件导出成 PDF，字体要嵌进去', value: intent, onChange: (event) => setIntent(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) run() } })),
-            h(Field, { label: '情境（逗号分隔，可选）' }, h('input', { className: 'eng-input', placeholder: 'windows, powerpoint', value: context, onChange: (event) => setContext(event.target.value) }))),
+            h(Field, { label: '标签（逗号分隔，可选）' }, h('input', { className: 'eng-input', placeholder: '插件, 主题, 性能', value: context, onChange: (event) => setContext(event.target.value) }))),
           h('details', { style: { marginTop: 8 } },
             h('summary', { className: 'eng-label', style: { cursor: 'pointer' } }, '高级（全库 / 冷档 / 簇 / 明细 / 标记）'),
             h('div', { className: 'eng-actions', style: { marginTop: 8 } },
@@ -1467,7 +1506,7 @@ window.__ModuleLoader__.load({
                       h('div', { className: 'eng-row-sub' }, `${evidence.id} · sim ${fmtNumber(evidence.similarity)}`),
                       evidence.intent ? h('div', { className: 'eng-row-sub' }, evidence.intent) : null,
                       evidence.note ? h('div', { className: 'eng-row-sub' }, evidence.note) : null,
-                      Array.isArray(evidence.context) && evidence.context.length > 0 ? h('div', { className: 'eng-row-sub' }, `情境：${evidence.context.join('、')}`) : null,
+                      Array.isArray(evidence.context) && evidence.context.length > 0 ? h('div', { className: 'eng-row-sub' }, `标签：${evidence.context.join('、')}`) : null,
                       Array.isArray(evidence.dimensions) && evidence.dimensions.length > 0 ? h('div', { className: 'eng-row-sub' }, `维度：${evidence.dimensions.join('、')}`) : null,
                       evidence.lifecycle ? h('div', { className: 'eng-row-sub' }, `生命周期：${evidence.lifecycle.type || ''} ${fmtTime(evidence.lifecycle.at)}`) : null),
                     h('div', { className: 'eng-actions' },
@@ -1547,7 +1586,7 @@ window.__ModuleLoader__.load({
             h(Field, { key: 'action', label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
             h(Field, { key: 'outcome', label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
             h(Field, { key: 'type', label: '类型' }, h('input', { className: 'eng-input', value: form.type, onChange: update('type'), placeholder: 'PPT / 课件' })),
-            h(Field, { key: 'context', label: '情境（逗号分隔）' }, h('input', { className: 'eng-input', value: form.context, onChange: update('context'), placeholder: 'windows, powerpoint' })),
+            h(Field, { key: 'context', label: '标签（逗号分隔）' }, h('input', { className: 'eng-input', value: form.context, onChange: update('context'), placeholder: '插件, 主题, 性能' })),
           ], true),
           group('任务与步骤（可选，记录多步任务时）', [
             h(Field, { key: 'taskId', label: '任务 id' }, h('input', { className: 'eng-input', value: form.taskId, onChange: update('taskId') })),
@@ -1969,7 +2008,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'eng-card', style: { padding: 15 } },
               h('h3', { className: 'eng-section-title', style: { marginBottom: 8 } }, '沉淀技能'),
               h(Field, { label: '同族意图' }, h('input', { className: 'eng-input', value: intent, onChange: (event) => setIntent(event.target.value), placeholder: '例如：给 PPT 插页' })),
-              h(Field, { label: '情境（逗号分隔，可选）' }, h('input', { className: 'eng-input', value: context, onChange: (event) => setContext(event.target.value) })),
+              h(Field, { label: '标签（逗号分隔，可选）' }, h('input', { className: 'eng-input', value: context, onChange: (event) => setContext(event.target.value) })),
               h(Button, { kind: 'primary', disabled: intent.trim() === '', onClick: () => act(async () => { const out = await request('/consolidate', { method: 'POST', body: { intent, context: context.trim() === '' ? [] : context.split(/[,，]/).map((item) => item.trim()).filter(Boolean) } }); return `沉淀结果：${out.action}${out.slug ? `（${out.slug}）` : ''}` }) }, '沉淀')),
             h('div', { className: 'eng-card', style: { padding: 15 } },
               h('h3', { className: 'eng-section-title', style: { marginBottom: 8 } }, '技能校验'),
@@ -2727,7 +2766,9 @@ window.__ModuleLoader__.load({
     const GRAPH_NODE_CAP = 1200
     const GRAPH_PALETTES = {
       dsh: {},
-      codex: { bg: '#050418', bgInner: '#0d0b26', node: CODEX_STAR_STOPS[0].node, node2: CODEX_STAR_STOPS[0].node2, edge: CODEX_STAR_STOPS[0].edge, highlight: CODEX_STAR_STOPS[0].highlight, warn: '#c084fc', ok: '#7aaaff', bad: '#f472b6', glow: CODEX_STAR_STOPS[0].glow, dust: CODEX_STAR_STOPS[0].dust, bloom: 20 },
+      codex: { bg: '#050418', bgInner: '#0d0b26', node: CODEX_STAR_STOPS[0].node, node2: CODEX_STAR_STOPS[0].node2, edge: CODEX_STAR_STOPS[0].edge, highlight: CODEX_STAR_STOPS[0].highlight, warn: '#c084fc', ok: '#7aaaff', bad: '#f472b6', glow: CODEX_STAR_STOPS[0].glow, dust: CODEX_STAR_STOPS[0].dust, bloom: 20, dark: true },
+      universe: { bg: '#02070d', bgInner: '#061a26', node: '#7df9ff', node2: '#4da3ff', edge: '#2ec5ff', highlight: '#eaffff', warn: '#ffd166', ok: '#7dffd4', bad: '#ff4f9a', glow: '#00e5ff', dust: '#bff8ff', bloom: 22, dark: true },
+      cosmos: { bg: '#000714', bgInner: '#07142f', node: '#88def6', node2: '#cc32b2', edge: '#2f2ce0', highlight: '#e9f3ff', warn: '#ffd166', ok: '#7dffd4', bad: '#ff4f9a', glow: '#7a3cff', dust: '#cfe0ff', bloom: 22, dark: true },
       cyberpunk: { bg: '#020308', bgInner: '#071023', node: '#00f0ff', node2: '#ff2bd6', edge: '#7b2cff', highlight: '#ff2bd6', warn: '#ffd166', ok: '#39ff88', bad: '#ff3b5c', glow: '#ff2bd6', dust: '#8fe9ff', bloom: 22 },
       aurora: { bg: '#010208', bgInner: '#06101a', node: '#7dffd4', node2: '#b892ff', edge: '#7cc7ff', highlight: '#c9b6ff', warn: '#ffe3a3', glow: '#9dffdf', dust: '#bfffe9', bloom: 18 },
       blackgold: { bg: '#060504', bgInner: '#141006', node: '#ffcc66', node2: '#ff9f2e', edge: '#b9852f', highlight: '#ffe3a3', warn: '#ffcf7a', glow: '#ffb84d', dust: '#ffe3a3', bloom: 16 },
@@ -2780,6 +2821,47 @@ window.__ModuleLoader__.load({
         ctx.beginPath()
         ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner)
         ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer)
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
+    /** 两根屏幕固定（billboard）的光晕条：有自己的慢旋转 + 呼吸式闪烁/伸缩。 */
+    function drawCameraSunBars(ctx, radius, color, time = 0) {
+      if (!(radius > 3)) return
+      const spin = time * 0.06
+      const breathe = 0.86 + 0.14 * Math.sin(time * 0.7)
+      const bars = [[-0.16, 5.6, 0.5], [0.92, 4.0, 0.34]]
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.lineCap = 'round'
+      for (let index = 0; index < bars.length; index += 1) {
+        const [baseAngle, lengthScale, alpha] = bars[index]
+        const angle = baseAngle + spin + index * 0.18
+        const ux = Math.cos(angle)
+        const uy = Math.sin(angle)
+        const flicker = 0.82 + 0.18 * Math.sin(time * 0.9 + index * 1.7)
+        const half = radius * lengthScale * (0.92 + 0.08 * Math.sin(time * 0.55 + index * 2.1))
+        const xA = -ux * half
+        const yA = -uy * half
+        const xB = ux * half
+        const yB = uy * half
+        const gradient = ctx.createLinearGradient(xA, yA, xB, yB)
+        gradient.addColorStop(0, withAlpha(color, 0))
+        gradient.addColorStop(0.5, withAlpha(color, alpha * flicker * breathe))
+        gradient.addColorStop(1, withAlpha(color, 0))
+        ctx.strokeStyle = gradient
+        ctx.globalAlpha = 0.4
+        ctx.lineWidth = Math.max(1.6, radius * 0.72 * breathe)
+        ctx.beginPath()
+        ctx.moveTo(xA, yA)
+        ctx.lineTo(xB, yB)
+        ctx.stroke()
+        ctx.globalAlpha = 0.85
+        ctx.lineWidth = Math.max(0.8, radius * 0.22 * breathe)
+        ctx.beginPath()
+        ctx.moveTo(xA, yA)
+        ctx.lineTo(xB, yB)
         ctx.stroke()
       }
       ctx.restore()
@@ -2851,7 +2933,13 @@ window.__ModuleLoader__.load({
     }
     const GRAPH_SOLIDS = buildGraphSolids()
     const GRAPH_SOLID_FOR_KIND = { root: 'icosa', type: 'dodeca', suite: 'cube', skill: 'tetra' }
+    const GRAPH_SUN_DEFAULT = { hot: '#ffffff', glow: '#ffffff', ray: '#ffffff', core: '#ffffff' }
+    const GRAPH_SUN_UNIVERSE = { hot: '#dbe7ff', glow: '#7a6bff', ray: '#eaf1ff', core: '#ffffff' }
+    const GRAPH_SUN_COSMOS = { hot: '#e6f0ff', glow: '#5d8dff', ray: '#eef6ff', core: '#ffffff' }
+    const GRAPH_SUN = GRAPH_SUN_DEFAULT
+    const GRAPH_SUN_BAR = '#fff2c6'
     const GRAPH_POLY_BUDGET = 80
+    const STAR_CORE_BOOST = 1.5
     /** 主技能=没有父级的顶层技能，用正八面体；子技能仍是正四面体。 */
     const graphSolidForNode = (node) => (node && node.kind === 'skill' && (!node.parent || node.depth === 0) ? GRAPH_SOLIDS.octa : GRAPH_SOLIDS[GRAPH_SOLID_FOR_KIND[node.kind]])
 
@@ -3117,31 +3205,107 @@ window.__ModuleLoader__.load({
       return []
     }
 
+    /** 主题强调色采样：品牌色/链接色/状态色 + 背景渐变里所有鲜艳停靠点。 */
+    function readThemeAccentColors(themeStops, fallback) {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return [fallback]
+      const root = getComputedStyle(document.documentElement)
+      const read = (name) => (root.getPropertyValue(name) || '').trim()
+      const names = [
+        '--dsw-alias-brand-primary',
+        '--dsw-alias-brand-primary-new-colorprimary-new-color',
+        '--dsw-alias-link',
+        '--dsw-alias-state-warn-primary',
+        '--dsw-alias-state-success-primary',
+        '--dsw-alias-state-error-primary',
+      ]
+      const raw = []
+      for (const name of names) {
+        const value = read(name)
+        if (value) raw.push(value)
+      }
+      for (const color of themeStops) raw.push(color)
+      if (raw.length === 0) raw.push(fallback)
+      const seen = new Set()
+      const colors = []
+      for (const color of raw) {
+        const rgb = parseRgbColor(color)
+        if (rgb === null) continue
+        const hsl = rgbToHsl(rgb)
+        if (hsl.s < 0.16 || hsl.l < 0.12 || hsl.l > 0.94) continue
+        const hex = hslToHex(hsl.h, hsl.s, hsl.l)
+        if (seen.has(hex)) continue
+        seen.add(hex)
+        colors.push(hex)
+      }
+      return colors.length > 0 ? colors : [fallback]
+    }
+
+    function hueOf(color) {
+      const rgb = parseRgbColor(color)
+      return rgb === null ? 0 : rgbToHsl(rgb).h
+    }
+
+    function hueDistance(left, right) {
+      const delta = Math.abs(hueOf(left) - hueOf(right))
+      return Math.min(delta, 1 - delta)
+    }
+
+    function readResolvedToken(name) {
+      if (typeof window === 'undefined' || typeof document === 'undefined') return ''
+      try {
+        const root = getComputedStyle(document.documentElement)
+        return (root.getPropertyValue(name) || '').trim()
+      } catch {
+        return ''
+      }
+    }
+
+    function buildThemeAccentPalette(themeStops, dark, fallback) {
+      const colors = readThemeAccentColors(themeStops, fallback)
+      const brand = readResolvedToken('--dsw-alias-brand-primary')
+      const link = readResolvedToken('--dsw-alias-link')
+      const primaryRaw = brand || link || colors[0] || fallback
+      const accent = vividColor(primaryRaw, dark)
+      const candidates = themeStops
+        .filter((color) => hueDistance(color, accent) >= 0.08)
+        .map((color) => vividColor(color, dark))
+      let secondary = candidates[0]
+      if (!secondary) {
+        const hsl = rgbToHsl(parseRgbColor(accent) || { r: 65, g: 118, b: 230 })
+        secondary = hslToHex(hsl.h + 0.12, Math.max(0.55, hsl.s), dark ? 0.68 : 0.56)
+      } else {
+        secondary = vividColor(secondary, dark)
+      }
+      return {
+        node: accent,
+        nodeLight: lightenColor(accent, 0.4),
+        node2: secondary,
+        edge: accent,
+        highlight: lightenColor(secondary, 0.35),
+        glow: accent,
+        dust: lightenColor(secondary, 0.55),
+      }
+    }
+
     function readDshGraphPalette(canvas) {
       const local = getComputedStyle(canvas)
       const root = getComputedStyle(document.documentElement)
       const read = (name, fallback) => (local.getPropertyValue(name) || root.getPropertyValue(name) || '').trim() || fallback
       const bg = read('--dsw-alias-bg-layer-1', '#ffffff')
       const bgInner = read('--dsw-alias-bg-layer-2', bg)
-      const rgb = bg.match(/\d+(\.\d+)?/g) || ['255', '255', '255']
+      const rgb = bg.match(/d+(.d+)?/g) || ['255', '255', '255']
       const luminance = (Number(rgb[0]) * 0.299 + Number(rgb[1]) * 0.587 + Number(rgb[2]) * 0.114) / 255
       const dark = luminance < 0.45
-      // 主题自带渐变（昔涟那种）时沿用它；主题没有渐变就退到「蓝紫星辰」，
-      // 不再用 DSH 的默认品牌蓝——那是宿主默认色，跟主题没关系。
       const themeStops = graphStops(readThemeGradientStops(), dark)
-      const hasThemeGradient = themeStops.length >= 2
       const star = CODEX_STAR_STOPS[dark ? 1 : 0]
-      const pick = (index, fallback) => (hasThemeGradient ? (themeStops[index] || themeStops[themeStops.length - 1]) : fallback)
+      const accent = buildThemeAccentPalette(themeStops, dark, star.node)
       return {
         bg: bgInner,
         bgInner: bg,
-        node: pick(0, star.node),
-        nodeLight: hasThemeGradient ? lightenColor(pick(1, star.nodeLight), 0.3) : star.nodeLight,
-        node2: pick(themeStops.length - 1, star.node2),
-        edge: pick(1, star.edge),
-        highlight: hasThemeGradient ? lightenColor(pick(1, star.highlight), 0.25) : star.highlight,
-        glow: pick(0, star.glow),
-        dust: hasThemeGradient ? lightenColor(pick(1, star.dust), 0.2) : star.dust,
+        ...accent,
+        warn: vividColor(read('--dsw-alias-state-warn-primary', '#d69e2e'), dark),
+        ok: vividColor(read('--dsw-alias-state-success-primary', '#38a169'), dark),
+        bad: vividColor(read('--dsw-alias-state-error-primary', '#e53e3e'), dark),
         ringFill: dark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
         dark,
         bloom: dark ? 12 : 7,
@@ -3187,7 +3351,7 @@ window.__ModuleLoader__.load({
       const centers = new Map()
       const total = Math.max(1, types.length)
       types.forEach((node, index) => {
-        const y = total === 1 ? 0 : 1 - (index / (total - 1)) * 2
+        const y = total === 1 ? 0 : 0.88 - (index / (total - 1)) * 1.76
         const ring = Math.sqrt(Math.max(0, 1 - y * y))
         const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(node.id) * 0.5
         const radius = 360 + rand(`${node.id}r`) * 40
@@ -3209,10 +3373,10 @@ window.__ModuleLoader__.load({
         for (let index = 0; index < list.length; index += 1) {
           const node = list[index]
           const weight = Math.max(0.06, Math.min(1, Number(node.weight) || 0.3))
-          const y = list.length === 1 ? 0 : 1 - (index / (list.length - 1)) * 2
+          const y = list.length === 1 ? 0.18 : 0.55 - (index / (list.length - 1)) * 1.1
           const ring = Math.sqrt(Math.max(0, 1 - y * y))
           const phi = index * 2.399963 + rand(`${node.id}a`) * 0.3
-          const rr = 24 + (1 - Math.pow(weight, 0.7)) * 26 + rand(`${node.id}r`) * 4
+          const rr = 22 + (1 - Math.pow(weight, 0.65)) * 34 + rand(`${node.id}r`) * 2
           positions.set(node.id, {
             x: center.x + Math.cos(phi) * ring * rr,
             y: center.y + y * rr * 0.72,
@@ -3271,6 +3435,23 @@ window.__ModuleLoader__.load({
         const b = Math.acos(2 * rand(`${node.id}b`) - 1)
         const rr = 450 + rand(`${node.id}r`) * 90
         positions.set(node.id, { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr })
+      }
+      // 所有星球都略微离开太阳两极：纬度限制 0.9；正好落在轴上的给一点横向偏移。
+      const LAT_LIMIT = 0.9
+      for (const [id, point] of positions) {
+        const radius = Math.hypot(point.x, point.y, point.z)
+        if (!(radius > 0.01)) continue
+        const maxY = radius * LAT_LIMIT
+        if (Math.abs(point.y) > maxY) {
+          point.y = Math.sign(point.y) * maxY
+          const horizontal = Math.hypot(point.x, point.z)
+          if (horizontal < radius * 0.15) {
+            const angle = rand(`${id}lat`) * Math.PI * 2
+            const next = Math.sqrt(Math.max(0, Math.pow(radius * 0.96, 2) - point.y * point.y))
+            point.x = Math.cos(angle) * next
+            point.z = Math.sin(angle) * next
+          }
+        }
       }
       return positions
     }
@@ -3370,7 +3551,7 @@ window.__ModuleLoader__.load({
       }, [query, viewData])
       const stateRef = useRef({
         nodes: new Map(), edges: new Map(), dust: [],
-        cam: { yaw: -0.42, pitch: -0.24, dist: 1420 },
+        cam: { yaw: -0.42, pitch: 0.26, dist: 1420 },
         selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false, fit: null,
       })
       const selectNode = (node) => {
@@ -3381,10 +3562,15 @@ window.__ModuleLoader__.load({
       }
       // 图上那个胶囊：手动切「跟随主题 / 蓝紫星辰」，写进 ui.graphPalette。
       const graphUi = (settings.data && settings.data.ui) || {}
-      const paletteNow = GRAPH_PALETTES[graphUi.graphPalette] ? graphUi.graphPalette : 'dsh'
+      const [paletteOverride, setPaletteOverride] = useState(() => {
+        try { return localStorage.getItem('eng:graphPalette') || '' } catch { return '' }
+      })
+      const paletteNow = GRAPH_PALETTES[paletteOverride] ? paletteOverride : (GRAPH_PALETTES[graphUi.graphPalette] ? graphUi.graphPalette : 'codex')
       const surfaceNow = ['theme', 'light', 'dark'].includes(graphUi.graphSurface) ? graphUi.graphSurface : 'theme'
       const pickPalette = async (key) => {
         if (key === paletteNow) return
+        setPaletteOverride(key)
+        try { localStorage.setItem('eng:graphPalette', key) } catch {}
         try {
           await request('/settings', { method: 'POST', body: { ui: { graphPalette: key } } })
           await settings.reload()
@@ -3405,7 +3591,7 @@ window.__ModuleLoader__.load({
         const canvas = canvasRef.current
         if (!canvas || !viewData) return undefined
         const ui = (settings.data && settings.data.ui) || {}
-        const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
+        const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'codex'
         let palette = paletteKey === 'dsh'
           ? readDshGraphPalette(canvas)
           : (() => {
@@ -3414,7 +3600,7 @@ window.__ModuleLoader__.load({
               return { ...base, nodeLight: lightenColor(base.node, 0.5) }
             })()
         // 左下角胶囊强制深/浅背景时，画布底色和「暗色主题」判定一起跟着切。
-        if (ui.graphSurface === 'dark' || ui.graphSurface === 'light') {
+        if (paletteKey !== 'universe' && (ui.graphSurface === 'dark' || ui.graphSurface === 'light')) {
           const forcedDark = ui.graphSurface === 'dark'
           palette = {
             ...palette,
@@ -3510,6 +3696,7 @@ window.__ModuleLoader__.load({
               existing.targetWeight = Number(node.weight) || 0.3
               existing.targetAlpha = 1
               existing.parentId = parentMap.get(node.id) || null
+              existing.orbitSpeed = node.kind === 'experience' ? 0.16 + 0.30 * Math.pow(Math.max(0.06, Math.min(1, Number(node.weight) || 0.3)), 1.8) : 0
               existing.spinSpeed = node.kind === 'type' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08
             } else {
               store.nodes.set(node.id, {
@@ -3517,6 +3704,7 @@ window.__ModuleLoader__.load({
                 baseX: shape.x, baseY: shape.y, baseZ: shape.z,
                 targetX: shape.x, targetY: shape.y, targetZ: shape.z,
                 parentId: parentMap.get(node.id) || null,
+                orbitSpeed: node.kind === 'experience' ? 0.16 + 0.30 * Math.pow(Math.max(0.06, Math.min(1, Number(node.weight) || 0.3)), 1.8) : 0,
                 spinSpeed: node.kind === 'type' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08,
                 spinAngle: 0,
                 r: 0, alpha: 0, targetAlpha: 1,
@@ -3583,10 +3771,13 @@ window.__ModuleLoader__.load({
           return best
         }
         const onPointerDown = (event) => {
+          if (event.button !== 0) return
           lastInteraction = performance.now()
-          store.dragging = { x: event.clientX, y: event.clientY, yaw: cam.yaw, pitch: cam.pitch }
+          store.autoPauseUntil = 0
+          store.dragging = { x: event.clientX, y: event.clientY, yaw: cam.yaw, pitch: cam.pitch, pointerId: event.pointerId }
           store.dragMoved = false
           canvas.style.cursor = 'grabbing'
+          try { if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId) } catch {}
         }
         const onPointerMove = (event) => {
           lastInteraction = performance.now()
@@ -3595,7 +3786,8 @@ window.__ModuleLoader__.load({
             const dy = event.clientY - store.dragging.y
             if (Math.hypot(dx, dy) > 4) store.dragMoved = true
             cam.yaw = store.dragging.yaw + dx * 0.006
-            cam.pitch = Math.max(-1.35, Math.min(1.35, store.dragging.pitch - dy * 0.006))
+            // 拖拽方向贴手：往下拖，画面跟着往下走。
+            cam.pitch = Math.max(-1.35, Math.min(1.35, store.dragging.pitch + dy * 0.006))
             return
           }
           if (event.target !== canvas) { store.hovered = null; return }
@@ -3615,7 +3807,10 @@ window.__ModuleLoader__.load({
             setSelection(hit === null ? null : hit.node)
           }
           store.dragging = null
+          // 松手后先停自转 1.2s，给用户看一眼刚拖到的角度；再恢复。
+          store.autoPauseUntil = performance.now() + 1200
           canvas.style.cursor = 'grab'
+          try { if (canvas.releasePointerCapture && event.pointerId !== undefined) canvas.releasePointerCapture(event.pointerId) } catch {}
         }
         const onWheel = (event) => {
           lastInteraction = performance.now()
@@ -3637,8 +3832,8 @@ window.__ModuleLoader__.load({
             store.fit = { from: cam.dist, to: target, at: performance.now() }
           }
         }
-        // 进入关系图时按“滚轮再放大一档”的默认大小（0.9 = 一次滚轮缩放）。
-        fitCamera(true, 0.9)
+        // 进入关系图时按“滚轮再放大两档”的默认大小（0.81 = 两次滚轮缩放）。
+        fitCamera(true, 0.81)
         fitRef.current = () => { store.userZoom = false; fitCamera(false) }
         zoomRef.current = (factor) => { store.userZoom = true; cam.dist = Math.min(3200, Math.max(520, cam.dist * factor)) }
         const refreshPalette = () => {
@@ -3715,7 +3910,7 @@ window.__ModuleLoader__.load({
             cam.dist = store.fit.from + (store.fit.to - store.fit.from) * eased
             if (progress >= 1) store.fit = null
           }
-          if (rotation !== 0 && store.dragging === null) cam.yaw -= rotation * dt
+          if (rotation !== 0 && store.dragging === null && now > (store.autoPauseUntil || 0)) cam.yaw += rotation * dt
           const cx = width / 2
           const cy = height / 2
           ctx.clearRect(0, 0, width, height)
@@ -3748,7 +3943,7 @@ window.__ModuleLoader__.load({
             if (Number.isFinite(entry.targetX)) entry.baseX += (entry.targetX - entry.baseX) * move
             if (Number.isFinite(entry.targetY)) entry.baseY += (entry.targetY - entry.baseY) * move
             if (Number.isFinite(entry.targetZ)) entry.baseZ += (entry.targetZ - entry.baseZ) * move
-            entry.spinAngle = -store.t * (entry.spinSpeed || 0) + entry.phase
+            entry.spinAngle = store.t * (entry.spinSpeed || 0) + entry.phase
             entry.currentWeight += (entry.targetWeight - entry.currentWeight) * Math.min(1, dt * 4)
             entry.alpha += (entry.targetAlpha - entry.alpha) * Math.min(1, dt * 4)
             entry.r += (radiusOf(entry.node, entry.currentWeight) - entry.r) * Math.min(1, dt * 6)
@@ -3756,7 +3951,10 @@ window.__ModuleLoader__.load({
           for (const entry of store.nodes.values()) {
             const parent = entry.parentId ? store.nodes.get(entry.parentId) : null
             if (parent && parent !== entry) {
-              const angle = parent.spinAngle || 0
+              // 小经验像小星星一样绕分类节点公转；技能仍随套件的自旋走。
+              const angle = entry.node.kind === 'experience'
+                ? store.t * (entry.orbitSpeed || 0.24)
+                : (parent.spinAngle || 0)
               const dx = entry.baseX - parent.baseX
               const dz = entry.baseZ - parent.baseZ
               entry.x = parent.baseX + dx * Math.cos(angle) - dz * Math.sin(angle)
@@ -3797,10 +3995,11 @@ window.__ModuleLoader__.load({
             const relatedEdge = focusId === null || bright
             ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolate ? 0.02 : 0.1))
             const isSuiteEdge = edgeState.edge.kind === 'suite'
-            ctx.strokeStyle = isSuiteEdge ? (palette.glow || palette.node) : (palette.edge || palette.node)
-            ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : (isSuiteEdge ? 2.1 : 1.7))) * near
-            ctx.setLineDash(edgeState.edge.kind === 'suite' ? [5, 3] : (edgeState.edge.kind === 'derived' ? [2, 3] : []))
-            ctx.shadowBlur = bloom && bright ? (4 + strength * 10) * near : 0
+            const isLabelEdge = edgeState.edge.kind === 'label'
+            ctx.strokeStyle = isLabelEdge ? (palette.node2 || palette.edge) : (isSuiteEdge ? (palette.glow || palette.node) : (palette.edge || palette.node))
+            ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : (isSuiteEdge ? 2.1 : (isLabelEdge ? 1.0 : 1.7)))) * near
+            ctx.setLineDash(isLabelEdge ? [1, 4] : (edgeState.edge.kind === 'suite' ? [5, 3] : (edgeState.edge.kind === 'derived' ? [2, 3] : [])))
+            ctx.shadowBlur = !isLabelEdge && bloom && bright ? (4 + strength * 10) * near : 0
             ctx.shadowColor = edgeState.edge.kind === 'derived' ? palette.node2 : palette.glow
             ctx.beginPath()
             ctx.moveTo(from.screenX, from.screenY)
@@ -3904,6 +4103,8 @@ window.__ModuleLoader__.load({
               // 之前外晕太浓太大、星心用中间调，叠在一起就成一团发霉的污渍。
               const glowColor = palette.glow || color
               const hot = lightenColor(color, palette.dark ? 0.55 : 0.72)
+              const sun = node.kind === 'root' ? (paletteKey === 'universe' ? GRAPH_SUN_UNIVERSE : paletteKey === 'cosmos' ? GRAPH_SUN_COSMOS : GRAPH_SUN_DEFAULT) : null
+              const haloColor = sun ? sun.glow : glowColor
               const haloRadius = screenRadius * 2
               if (screenRadius > 2.2) {
                 // 光晕和星芒用叠加混合：亮处更亮（星星是发光体），
@@ -3911,30 +4112,31 @@ window.__ModuleLoader__.load({
                 ctx.save()
                 ctx.globalCompositeOperation = 'lighter'
                 const halo = ctx.createRadialGradient(0, 0, screenRadius * 0.34, 0, 0, haloRadius)
-                halo.addColorStop(0, withAlpha(glowColor, 0.3))
-                halo.addColorStop(0.42, withAlpha(glowColor, 0.1))
-                halo.addColorStop(1, withAlpha(glowColor, 0))
+                halo.addColorStop(0, withAlpha(haloColor, 0.3))
+                halo.addColorStop(0.42, withAlpha(haloColor, 0.1))
+                halo.addColorStop(1, withAlpha(haloColor, 0))
                 ctx.fillStyle = halo
                 ctx.beginPath()
                 ctx.arc(0, 0, haloRadius, 0, Math.PI * 2)
                 ctx.fill()
                 // 小星点只给光晕，大一点的才加星芒，免得缩远后一片刺
-                if (screenRadius > 3.2) drawStarFlare(ctx, screenRadius * 2.6, glowColor, 0.26)
+                if (screenRadius > 3.2) drawStarFlare(ctx, screenRadius * 2.6, haloColor, 0.26)
                 ctx.restore()
               }
               // 中心主星：外面一层日冕 + 8 条缓慢旋转的恒星芒，里面保留二十面体晶壳。
               if (node.kind === 'root') {
                 const corona = ctx.createRadialGradient(0, 0, screenRadius * 0.2, 0, 0, screenRadius * 4.6)
-                corona.addColorStop(0, withAlpha(hot, 0.36))
-                corona.addColorStop(0.42, withAlpha(glowColor, 0.16))
-                corona.addColorStop(1, withAlpha(glowColor, 0))
+                corona.addColorStop(0, withAlpha(sun.hot, 0.36))
+                corona.addColorStop(0.42, withAlpha(sun.glow, 0.16))
+                corona.addColorStop(1, withAlpha(sun.glow, 0))
                 ctx.save()
                 ctx.globalCompositeOperation = 'lighter'
                 ctx.fillStyle = corona
                 ctx.beginPath()
                 ctx.arc(0, 0, screenRadius * 4.6, 0, Math.PI * 2)
                 ctx.fill()
-                drawStarRays(ctx, screenRadius * 5.2, palette.highlight, 0.5, entry.spinAngle * 0.35)
+                if (paletteKey === 'universe') drawStarRays(ctx, screenRadius * 5.2, sun.ray, 0.5, entry.spinAngle * 0.35)
+                else drawCameraSunBars(ctx, screenRadius, GRAPH_SUN_BAR, store.t)
                 ctx.restore()
               }
               // 正多面体：发光线框 + 半透明面；技能/经验缩小后仍退回 2D 轮廓。
@@ -3949,21 +4151,27 @@ window.__ModuleLoader__.load({
                 })
                 if (node.kind === 'root') {
                   const starCore = ctx.createRadialGradient(0, 0, 0, 0, 0, screenRadius * 1.1)
-                  starCore.addColorStop(0, 'rgba(255, 255, 255, .98)')
-                  starCore.addColorStop(0.35, withAlpha(hot, 0.75))
-                  starCore.addColorStop(1, withAlpha(hot, 0))
+                  starCore.addColorStop(0, 'rgba(255, 255, 255, 1)')
+                  starCore.addColorStop(0.35, withAlpha(sun.hot, Math.min(1, 0.75 * STAR_CORE_BOOST)))
+                  starCore.addColorStop(1, withAlpha(sun.hot, 0))
                   ctx.save()
                   ctx.globalCompositeOperation = 'lighter'
                   ctx.fillStyle = starCore
                   ctx.beginPath()
                   ctx.arc(0, 0, screenRadius * 1.1, 0, Math.PI * 2)
                   ctx.fill()
+                  // 白热核心再叠一层，中央光点大约亮 0.5 倍。
+                  ctx.globalAlpha = 0.95
+                  ctx.fillStyle = '#ffffff'
+                  ctx.beginPath()
+                  ctx.arc(0, 0, Math.max(1, screenRadius * 0.42), 0, Math.PI * 2)
+                  ctx.fill()
                   ctx.restore()
                 }
                 if (screenRadius > 1.4) {
-                  ctx.fillStyle = withAlpha(hot, 0.95)
+                  ctx.fillStyle = 'rgba(255, 255, 255, .95)'
                   ctx.beginPath()
-                  ctx.arc(0, 0, Math.max(0.7, screenRadius * 0.26), 0, Math.PI * 2)
+                  ctx.arc(0, 0, Math.max(0.8, screenRadius * 0.32), 0, Math.PI * 2)
                   ctx.fill()
                 }
                 ctx.restore()
@@ -4082,9 +4290,15 @@ window.__ModuleLoader__.load({
           canvas.removeEventListener('touchcancel', onTouchEnd)
         }
       }, [viewData, settings.data, paused, isolate])
-      const surfaceStyle = surfaceNow === 'dark'
-        ? { background: '#0b1020' }
-        : surfaceNow === 'light' ? { background: '#f6f8fc' } : undefined
+      const surfaceStyle = paletteNow === 'universe'
+        ? { background: 'radial-gradient(circle at 50% 45%, #0a2a3d 0%, #04121d 52%, #010307 100%)' }
+        : paletteNow === 'cosmos'
+        ? { background: 'radial-gradient(circle at 50% 42%, #1b264d 0%, #07142f 52%, #000714 100%)' }
+        : paletteNow === 'codex' && surfaceNow === 'theme'
+          ? { background: 'radial-gradient(circle at 50% 42%, #1a1438 0%, #0d0b26 55%, #050418 100%)' }
+          : surfaceNow === 'dark'
+            ? { background: '#0b1020' }
+            : surfaceNow === 'light' ? { background: '#f6f8fc' } : undefined
       const typeNodes = graph.data && Array.isArray(graph.data.nodes) ? graph.data.nodes.filter((node) => node.kind === 'type') : []
       const focusedTypeNode = focusedType === null ? null : (typeNodes.find((node) => node.id === focusedType) || null)
       const graphSummary = graph.data && graph.data.summary ? graph.data.summary : null
@@ -4221,7 +4435,7 @@ window.__ModuleLoader__.load({
               onClick: () => pickSurface(key),
             }, label))),
           h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图配色' },
-            [['dsh', '跟随主题'], ['codex', '蓝紫星辰']].map(([key, label]) => h('button', {
+            [['codex', '默认主题'], ['universe', '超能量体'], ['cosmos', '宇宙'], ['dsh', '跟随主题']].map(([key, label]) => h('button', {
               key,
               type: 'button',
               'data-active': paletteNow === key ? 'true' : 'false',
@@ -5216,6 +5430,11 @@ window.__ModuleLoader__.load({
       layoutGraph,
       GRAPH_SOLIDS,
       GRAPH_SOLID_FOR_KIND,
+      GRAPH_SUN,
+      GRAPH_SUN_DEFAULT,
+      GRAPH_SUN_UNIVERSE,
+      GRAPH_SUN_COSMOS,
+      GRAPH_SUN_BAR,
       graphSolidForNode,
       drawPolyhedron,
       CommandPalette,

@@ -216,10 +216,19 @@ check('详情面板：选中一条经验时真的渲染出意图/做法/收起�
   const serialized = JSON.stringify(element, (key, value) => (typeof value === 'function' ? '[fn]' : value))
   assert.ok(serialized.includes('测试意图文本'), '没渲染意图')
   assert.ok(serialized.includes('测试做法文本'), '没渲染做法')
-  assert.ok(serialized.includes('windows'), '没渲染情境')
+  assert.ok(serialized.includes('windows'), '没渲染次级分类')
   assert.ok(serialized.includes('布局'), '没渲染维度')
   assert.ok(serialized.includes('历史'), '没渲染历史')
   assert.ok(serialized.includes('收起'), '没有收起按钮')
+  const source = fs.readFileSync(new URL('../../client.js', import.meta.url), 'utf8')
+  assert.ok(source.includes('移到该分类'), '详情里没有手动分类按钮')
+  assert.ok(source.includes('选择主分类'), '详情里没有主分类选择器')
+  assert.ok(source.includes('一键分类'), '没有一键分类按钮')
+  assert.ok(source.includes("request('/classify'"), '一键分类没有走临时会话路由')
+  assert.ok(source.includes('会产生额外 Token 消费'), '一键分类没有 Token 提示')
+  assert.ok(source.includes('选择已有标签'), '没有已有标签选择')
+  assert.ok(source.includes('新建标签'), '没有新建标签输入')
+  assert.ok(source.includes('添加标签'), '没有添加标签按钮')
 })
 
 check('详情面板：未选中 / 读取中 / 请求失败三种状态都有可见文案', () => {
@@ -531,6 +540,27 @@ check('关系图布局 O(N+E)：1k/3k 可完成且位置确定', () => {
     const b = second.get('exp:e0')
     assert.deepEqual(a, b, '布局不确定')
   }
+})
+
+check('宇宙主题：独立深色调色板 + 深色判定', () => {
+  assert.ok(module.GRAPH_PALETTES.universe, '没有宇宙主题')
+  assert.equal(module.GRAPH_PALETTES.universe.dark, true)
+  assert.equal(module.GRAPH_PALETTES.universe.node, '#7df9ff')
+})
+
+check('宇宙主题：深空冷蓝调色板', () => {
+  assert.ok(module.GRAPH_PALETTES.cosmos, '没有宇宙主题')
+  assert.equal(module.GRAPH_PALETTES.cosmos.dark, true)
+  assert.equal(module.GRAPH_PALETTES.cosmos.node, '#88def6')
+  assert.equal(module.GRAPH_SUN_COSMOS.ray, '#eef6ff')
+})
+
+check('默认主题的太阳是暖白，宇宙保留蓝紫', () => {
+  assert.equal(module.GRAPH_PALETTES.codex.dark, true)
+  assert.ok(module.GRAPH_SUN, '没有统一的太阳配色')
+  assert.equal(module.GRAPH_SUN_DEFAULT.ray, '#ffffff')
+  assert.equal(module.GRAPH_SUN_UNIVERSE.glow, '#7a6bff')
+  assert.equal(module.GRAPH_SUN_BAR, '#fff2c6')
 })
 
 check('P3 命令面板 / 快捷键表可渲染', () => {

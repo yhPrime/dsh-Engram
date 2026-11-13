@@ -123,9 +123,9 @@ check('聚类状态：clusterStateOf 可被 similarityV2 比较，且相关意�
 
 check('统计：success / fail 按 G 符号、uses 按 hits 累加、lastUsedAt 取最大', () => {
   const store = freshStore()
-  upsertExperience(store, { intent: '任务甲', action: '做法甲', outcome: 'success', type: '代码 / 插件' })
-  upsertExperience(store, { intent: '任务乙', action: '做法乙', outcome: 'failed', type: '代码 / 插件' })
-  const cluster = store.clusters.find((item) => item.name === '代码 / 插件')
+  upsertExperience(store, { intent: '任务甲', action: '做法甲', outcome: 'success', type: '代码' })
+  upsertExperience(store, { intent: '任务乙', action: '做法乙', outcome: 'failed', type: '代码' })
+  const cluster = store.clusters.find((item) => item.name === '代码')
   assert.equal(cluster.stats.count, 2)
   assert.equal(cluster.stats.success, 1)
   assert.equal(cluster.stats.fail, 1)

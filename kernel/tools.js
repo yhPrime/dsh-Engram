@@ -17,6 +17,7 @@ import {
   listTypes,
   logUsage,
   mergeTypes,
+  normalizeContext,
   pendingTasks,
   rankExperiences,
   readColdStore,
@@ -143,7 +144,7 @@ export function buildTools(defineTool, config = {}) {
 
   const record = defineTool({
     name: 'exp_record',
-    description: '记录一条工作经验（做法 + 结果）。同一做法会就地更新 hits，近似替换会写新条并标记旧条被取代。',
+    description: '记录一条工作经验（做法 + 结果）。同一做法会就地更新 hits，近似替换会写新条并标记旧条被取代。次级分类用 labels 数组挂多个标签（≤8），优先复用 exp_type action=labels 的已有标签，已有无法满足才新建。',
     parameters: {
       intent: { type: 'string', required: true, description: '要做的任务/意图。' },
       action: { type: 'string', required: true, description: '采取的做法或方案名。' },
@@ -160,7 +161,8 @@ export function buildTools(defineTool, config = {}) {
       stepRewards: { type: 'array', description: '分步回报（数字数组）；整条记录时可用它代替单一 G。' },
       expectedOutcome: { type: 'string', enum: ['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'], description: '可选：做之前预期会怎样（结果词）。用于算预测误差。' },
       expectedG: { type: 'number', description: '可选：预期回报（-1..1），优先于 expectedOutcome。' },
-      context: { type: 'array', description: '可选：情境线索（如产物/课程类型/工作区标签），≤5 个；召回时用于编码特异性匹配。' },
+      context: { type: 'array', description: '可选：情境线索/次级分类（如产物/课程类型/工作区标签），≤8 个；召回时用于编码特异性匹配。' },
+      labels: { type: 'array', description: '可选：次级分类标签（≤8），与 context 合并；优先用 exp_type action=labels 列出的已有标签，已有无法满足才新建。' },
       artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
       dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
       verdicts: { type: 'array', description: '可选：回填回执里的 pending，[{id,outcome,dimensions?}]；一次可回填多条。' },
@@ -240,6 +242,7 @@ export function buildTools(defineTool, config = {}) {
         expectedOutcome: args.expectedOutcome,
         expectedG: args.expectedG,
         context: args.context,
+        labels: args.labels,
         skillId: args.skillId,
       }
       const upsertOptions = {
@@ -882,9 +885,9 @@ export function buildTools(defineTool, config = {}) {
 
   const typeTool = defineTool({
     name: 'exp_type',
-    description: '管理经验类型：list 列表（含条数）/ create 新建 / rename 改名 / merge 合并（经验批量改挂，源类型删除）/ delete 删除（经验归「未分类」）/ assign 把单条经验改挂到指定类型（定点修脏数据，不动 hits）。',
+    description: '管理经验主分类：list 列表（含条数）/ labels 列出已有次级分类（写 labels 前先复用）/ create 新建 / rename 改名 / merge 合并（经验批量改挂，源类型删除）/ delete 删除（经验归「未分类」）/ assign 把单条经验改挂到指定类型（定点修脏数据，不动 hits）。主分类唯一；次级分类用 exp_record.labels 多标签。',
     parameters: {
-      action: { type: 'string', enum: ['list', 'create', 'rename', 'merge', 'delete', 'assign'], required: true, description: '要执行的动作。' },
+      action: { type: 'string', enum: ['list', 'create', 'rename', 'merge', 'delete', 'assign', 'labels', 'label'], required: true, description: '要执行的动作。' },
       name: { type: 'string', description: 'create/rename/delete 时的类型名或 id（rename 时是旧名）；assign 时的目标类型名。' },
       newName: { type: 'string', description: 'rename 的新名；merge 的目标类型名（不存在会新建）。' },
       names: { type: 'array', description: 'merge 时的来源类型名/id 列表。' },
@@ -898,6 +901,38 @@ export function buildTools(defineTool, config = {}) {
       return withStoreLock(dataDir, () => {
       const manifest = readManifest(dataDir)
       const action = String(args.action || '').trim()
+      if (action === 'label') {
+        const store = readStore(dataDir)
+        const row = store.experiences.find((item) => item.id === String(args.id || ''))
+        if (row === undefined) throw new Error('经验不存在')
+        const existing = normalizeContext(row.context)
+        const incoming = normalizeContext(args.labels)
+        const merged = [...new Set([...existing, ...incoming])]
+        if (merged.length > 8) {
+          const error = new Error('标签最多 8 个，请先删掉一些旧标签')
+          error.code = 'invalid'
+          throw error
+        }
+        row.context = normalizeContext(merged)
+        writeStore(dataDir, store)
+        return { action, id: row.id, labels: row.context }
+      }
+      if (action === 'labels') {
+        const store = readStore(dataDir)
+        const counts = new Map()
+        for (const row of visibleExperiences(store)) {
+          for (const tag of Array.isArray(row.context) ? row.context : []) {
+            const name = String(tag || '').trim()
+            if (name === '') continue
+            counts.set(name, (counts.get(name) || 0) + 1)
+          }
+        }
+        const labels = [...counts.entries()]
+          .map(([name, count]) => ({ name, count }))
+          .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh'))
+          .slice(0, 60)
+        return { action, labels, total: counts.size }
+      }
       // T4：list/create 只读 manifest（stats.tasksByType 提供唯一任务数），不加载全量经验。
       // merge/delete/assign/rename 要动经验行或引用名，仍走全量（写路径等 task-6 的 writeTypeShards 能力）。
       let catalogTypes = null

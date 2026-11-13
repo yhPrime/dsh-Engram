@@ -53,15 +53,35 @@ function seed(agent) {
   })
 }
 
-check('context 规范化：去重、小写、截断、最多 5 个', () => {
+check('context 规范化：去重、小写、截断、最多 8 个', () => {
   const agent = newAgent()
   const made = agent.record({
     intent: '做 PPT', action: '克隆页', outcome: 'success', type: 'PPT / 课件',
-    context: [' 课件 ', 'PPT', 'ppt', 'a'.repeat(40), 'x', 'y', 'z'],
+    context: [' 课件 ', 'PPT', 'ppt', 'a'.repeat(40), 'x', 'y', 'z', 'u', 'v', 'w'],
   })
   const row = agent.all().find((item) => item.id === made.id)
   assert.deepEqual(row.context.slice(0, 3), ['课件', 'ppt', 'a'.repeat(24)])
-  assert.equal(row.context.length, 5)
+  assert.equal(row.context.length, 8)
+})
+
+check('labels 作为次级分类并入 context', () => {
+  const agent = newAgent()
+  const made = agent.record({
+    intent: '给关系图加主题', action: '改调色板', outcome: 'success', type: 'UI / 视觉',
+    context: ['主题'], labels: ['插件', '性能'],
+  })
+  const row = agent.all().find((item) => item.id === made.id)
+  assert.deepEqual(row.context.slice(0, 3), ['主题', '插件', '性能'])
+})
+
+check('重复记录时 labels 是追加，不覆盖已有标签', () => {
+  const agent = newAgent()
+  agent.record({ intent: '给图加主题', action: '改调色板', outcome: 'success', type: '开发', labels: ['主题'] })
+  agent.record({ intent: '给图加主题', action: '改调色板', outcome: 'success', type: '开发', labels: ['性能'] })
+  const rows = agent.all().filter((row) => row.intent === '给图加主题')
+  const row = rows[rows.length - 1]
+  assert.ok(row.context.includes('主题'))
+  assert.ok(row.context.includes('性能'))
 })
 
 check('同一意图不同情境：召回应想起匹配的那条（课件 vs 教案）', () => {

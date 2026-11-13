@@ -86,11 +86,11 @@ check('记忆 → 回想：正回报做法排在负回报前面，负样本仍�
 
 check('使用 → 更新：照 top1 再做一次，就地更新 hits 而不是新增', () => {
   const agent = newAgent()
-  agent.record({ intent: '给插件跑测试', action: '先跑 npm test', outcome: 'success', type: '代码 / 插件' })
+  agent.record({ intent: '给插件跑测试', action: '先跑 npm test', outcome: 'success', type: '代码' })
   const recalled = agent.recall('给插件跑测试')
   const adopted = agent.adoptTop(recalled)
   assert.equal(adopted, '先跑 npm test')
-  const again = agent.record({ intent: '给插件跑测试', action: adopted, outcome: 'success', type: '代码 / 插件' })
+  const again = agent.record({ intent: '给插件跑测试', action: adopted, outcome: 'success', type: '代码' })
   assert.equal(again.action, 'updated')
   assert.equal(again.hits, 2)
   assert.equal(readStore(agent.dataDir).experiences.filter((x) => !x.deleted_at && !x.superseded_by).length, 1)
@@ -111,8 +111,8 @@ check('用错 → 下沉：连败后原来排第一的会掉到负样本之后',
 
 check('新成功做法 → 取代旧做法：旧条隐藏但保留', () => {
   const agent = newAgent()
-  const old = agent.record({ intent: '发布插件到 GitHub', action: 'git subtree split 后推送', outcome: 'success', type: '代码 / 插件' })
-  const made = agent.record({ intent: '发布插件到 GitHub', action: '用 git commit-tree 直接造提交', outcome: 'success', type: '代码 / 插件' })
+  const old = agent.record({ intent: '发布插件到 GitHub', action: 'git subtree split 后推送', outcome: 'success', type: '代码' })
+  const made = agent.record({ intent: '发布插件到 GitHub', action: '用 git commit-tree 直接造提交', outcome: 'success', type: '代码' })
   assert.equal(made.action, 'superseded')
   assert.equal(made.supersededId, old.id)
   const recalled = agent.recall('发布插件到 GitHub')
@@ -188,9 +188,9 @@ check('调用日志与行为一一对应：四段回路都留痕', () => {
 
 check('取代链 A→B→C：C 指向 B，不是回头改写 A', () => {
   const agent = newAgent()
-  const a = agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码 / 插件' })
-  const b = agent.record({ intent: '发布插件到 GitHub', action: '做法乙', outcome: 'success', type: '代码 / 插件' })
-  const c = agent.record({ intent: '发布插件到 GitHub', action: '做法丙', outcome: 'success', type: '代码 / 插件' })
+  const a = agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码' })
+  const b = agent.record({ intent: '发布插件到 GitHub', action: '做法乙', outcome: 'success', type: '代码' })
+  const c = agent.record({ intent: '发布插件到 GitHub', action: '做法丙', outcome: 'success', type: '代码' })
   assert.equal(b.action, 'superseded')
   assert.equal(c.action, 'superseded')
   const store = readStore(agent.dataDir)
@@ -206,10 +206,10 @@ check('取代链 A→B→C：C 指向 B，不是回头改写 A', () => {
 
 check('再记一条已被取代的做法：复活它（而不是静默更新到隐藏条或新开重复条）', () => {
   const agent = newAgent()
-  const a = agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码 / 插件' })
-  const b = agent.record({ intent: '发布插件到 GitHub', action: '做法乙', outcome: 'success', type: '代码 / 插件' })
+  const a = agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码' })
+  const b = agent.record({ intent: '发布插件到 GitHub', action: '做法乙', outcome: 'success', type: '代码' })
   assert.equal(b.action, 'superseded')
-  const again = agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码 / 插件' })
+  const again = agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码' })
   assert.equal(again.action, 'revived', '同一做法又做成了 → 解除隐藏')
   assert.equal(again.id, a.id)
   const store = readStore(agent.dataDir)
@@ -228,10 +228,10 @@ check('再记一条已被取代的做法：复活它（而不是静默更新到�
 
 check('反馈后重记成功：就地更新基准，但反馈历史保留、G 仍为负', () => {
   const agent = newAgent()
-  const made = agent.record({ intent: '给插件跑测试', action: '先跑 npm test', outcome: 'success', type: '代码 / 插件' })
+  const made = agent.record({ intent: '给插件跑测试', action: '先跑 npm test', outcome: 'success', type: '代码' })
   agent.feedback(made.id, 'hurt')
   agent.feedback(made.id, 'hurt')
-  const retried = agent.record({ intent: '给插件跑测试', action: '先跑 npm test', outcome: 'success', type: '代码 / 插件' })
+  const retried = agent.record({ intent: '给插件跑测试', action: '先跑 npm test', outcome: 'success', type: '代码' })
   assert.equal(retried.action, 'updated', 'outcome 没翻转，就地更新')
   const rows = readStore(agent.dataDir).experiences.filter((item) => !item.deleted_at && !item.superseded_by)
   assert.equal(rows.length, 1)
@@ -264,11 +264,11 @@ check('全负族：给出 warning，提醒别照做', () => {
 
 check('类型计数只算可见条（取代后 3 条应显示 1）', () => {
   const agent = newAgent()
-  agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码 / 插件' })
-  agent.record({ intent: '发布插件到 GitHub', action: '做法乙', outcome: 'success', type: '代码 / 插件' })
-  agent.record({ intent: '发布插件到 GitHub', action: '做法丙', outcome: 'success', type: '代码 / 插件' })
+  agent.record({ intent: '发布插件到 GitHub', action: '做法甲', outcome: 'success', type: '代码' })
+  agent.record({ intent: '发布插件到 GitHub', action: '做法乙', outcome: 'success', type: '代码' })
+  agent.record({ intent: '发布插件到 GitHub', action: '做法丙', outcome: 'success', type: '代码' })
   const listed = agent.call('exp_type', { action: 'list' })
-  const type = (listed.types || []).find((item) => item.name === '代码 / 插件')
+  const type = (listed.types || []).find((item) => item.name === '代码')
   assert.ok(type, '应列出该类型')
   assert.equal(type.count, 1, 'count 应为可见条数')
 })
