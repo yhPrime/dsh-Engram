@@ -212,8 +212,10 @@ check('详情面板：选中一条经验时真的渲染出意图/做法/收起�
   const pane = module.DetailPane
   assert.equal(typeof pane, 'function', '详情面板没有导出给测试')
   const row = { id: 'ex_1', intent: '测试意图文本', action: '测试做法文本', outcome: 'success', G: 0.8, typeName: '代码 / 插件', context: ['windows', 'ppt'], dimensions: ['布局'], verdict: 'decided' }
-  const element = pane({ selected: 'ex_1', detail: { data: { row, history: [{ type: 'created', at: '2026-11-12T00:00:00.000Z' }], feedbackLog: [{ result: 'helped', at: '2026-11-12T01:00:00.000Z' }] }, error: '' }, send: () => {}, onClose: () => {} })
+  const element = pane({ selected: 'ex_1', detail: { data: { row, history: [{ type: 'created', at: '2026-11-12T00:00:00.000Z' }], feedbackLog: [{ result: 'helped', at: '2026-11-12T01:00:00.000Z' }] }, error: '' }, send: () => {}, onClose: () => {}, types: [{ id: 'ty_dev', name: '开发' }], onAssign: async () => {}, labelOptions: [{ name: '主题', count: 2 }], onAddLabels: async () => {}, onAutoAssign: async () => {} })
   const serialized = JSON.stringify(element, (key, value) => (typeof value === 'function' ? '[fn]' : value))
+  assert.ok(serialized.includes('选择已有标签'), '详情渲染时丢掉了标签选择器')
+  assert.ok(serialized.includes('一键分类'), '详情渲染时丢掉了一键分类')
   assert.ok(serialized.includes('测试意图文本'), '没渲染意图')
   assert.ok(serialized.includes('测试做法文本'), '没渲染做法')
   assert.ok(serialized.includes('windows'), '没渲染次级分类')

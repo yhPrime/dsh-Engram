@@ -1274,8 +1274,12 @@ window.__ModuleLoader__.load({
       const [assignTo, setAssignTo] = useState('')
       const [assigning, setAssigning] = useState(false)
       const [assignMessage, setAssignMessage] = useState('')
+      const [labelPick, setLabelPick] = useState('')
+      const [newLabel, setNewLabel] = useState('')
+      const [labelBusy, setLabelBusy] = useState(false)
+      const [labelMessage, setLabelMessage] = useState('')
       const [pane, setPane] = useState('overview')
-      useEffect(() => { setAssignTo(''); setAssigning(false); setAssignMessage(''); setPane('overview') }, [selected])
+      useEffect(() => { setAssignTo(''); setAssigning(false); setAssignMessage(''); setLabelPick(''); setNewLabel(''); setLabelBusy(false); setLabelMessage(''); setPane('overview') }, [selected])
       if (selected === null) return h(Empty, null, '选一条经验看详情')
       if (detail && detail.error) return h(ErrorState, { title: '读取详情失败', message: detail.error, onRetry: detail.reload })
       const data = detail ? detail.data : null

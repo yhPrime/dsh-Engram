@@ -35,6 +35,10 @@
 
 ## 当前发布
 
+- **v0.19.35（修复经验详情 labelPick 未定义崩溃）**
+  - 详情面板补上标签编辑器状态 `labelPick/newLabel/labelBusy/labelMessage` 与切换经验时的重置
+  - 回归测试：带标签/一键分类 props 渲染详情，防止再出现 “labelPick is not defined”
+  - 测试：全量 kernel + UI 通过
 - **v0.19.34（上下文缩减落地 + 子会话复验修复）**
   - 一键分类输入 600 字 / 标签 20 个 / 输出 120 tokens；导入技能 2000 字 / 200 tokens / 20s
   - UI 一键分类真正打 `/classify`（不再走本地 `/type auto`）；label 超过 8 个明确报错不半写；自动标签只用剩余名额
