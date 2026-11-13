@@ -16,10 +16,13 @@ import {
   findType,
   listTypes,
   logUsage,
+  canonicalTag,
+  isValidTag,
   mergeTypes,
   normalizeContext,
   pendingTasks,
   rankExperiences,
+  tagCatalog,
   readColdStore,
   readManifest,
   readStore,
@@ -906,6 +909,12 @@ export function buildTools(defineTool, config = {}) {
         const row = store.experiences.find((item) => item.id === String(args.id || ''))
         if (row === undefined) throw new Error('经验不存在')
         const existing = normalizeContext(row.context)
+        const rawLabels = Array.isArray(args.labels) ? args.labels : (args.labels === undefined || args.labels === null || args.labels === '' ? [] : [args.labels])
+        if (rawLabels.some((label) => canonicalTag(label) === null)) {
+          const error = new Error('标签需为 1–12 字短名词，不能是句子或带标点')
+          error.code = 'invalid'
+          throw error
+        }
         const incoming = normalizeContext(args.labels)
         const merged = [...new Set([...existing, ...incoming])]
         if (merged.length > 8) {
@@ -919,19 +928,8 @@ export function buildTools(defineTool, config = {}) {
       }
       if (action === 'labels') {
         const store = readStore(dataDir)
-        const counts = new Map()
-        for (const row of visibleExperiences(store)) {
-          for (const tag of Array.isArray(row.context) ? row.context : []) {
-            const name = String(tag || '').trim()
-            if (name === '') continue
-            counts.set(name, (counts.get(name) || 0) + 1)
-          }
-        }
-        const labels = [...counts.entries()]
-          .map(([name, count]) => ({ name, count }))
-          .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh'))
-          .slice(0, 60)
-        return { action, labels, total: counts.size }
+        const labels = tagCatalog(store, { limit: 60 })
+        return { action, labels, total: labels.length }
       }
       // T4：list/create 只读 manifest（stats.tasksByType 提供唯一任务数），不加载全量经验。
       // merge/delete/assign/rename 要动经验行或引用名，仍走全量（写路径等 task-6 的 writeTypeShards 能力）。

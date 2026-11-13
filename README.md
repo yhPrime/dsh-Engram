@@ -6,12 +6,10 @@ Engram（记忆痕迹）：经验与技能引擎 + **经验库控制台**，一�
 
 ```bash
 npm pack
-dsh plugin --profile <profile> add ./dsh-engram-0.19.36.tgz
+dsh plugin --profile <profile> add ./dsh-engram-0.19.43.tgz
 ```
 
-重启 DSH 后只出现**一个**插件行「dsh-engram」：左侧栏多出「经验库」，控制台含概览 / 关系图 / 经验 / 检索 / 记录 / 技能 / 类型 / 冷档 / 使用记录 / 设置；工具面 `exp_record / exp_recall / exp_feedback / exp_consolidate / exp_type / exp_skill_attach` 同包内的 `/exp-ui/api` 一并生效。
-
-快捷键：`Ctrl/Cmd+K` 命令面板、`?` 快捷键表、`g` + `o/e/r/n/s/t/u/,` 跳页、`Shift+R` 刷新、`j/k` 列表移动。
+重启 DSH 后只出现**一个**插件行「dsh-engram」：左侧栏多出「经验库」，控制台含概览 / 关系图 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置；工具面 `exp_record / exp_recall / exp_feedback / exp_consolidate / exp_type` 同包内的 `/exp-ui/api` 一并生效。
 
 ## 结构
 
@@ -27,9 +25,9 @@ dsh plugin --profile <profile> add ./dsh-engram-0.19.36.tgz
 
 在 DSH 插件行或 `~/.dsh/engram/settings.json`：
 
-- `dataDir` / `currentRoot`：经验库目录（含 `manifest.json` + `buckets/`；老库是 `exp-lib.json`）
+- `dataDir` / `currentRoot`：经验库目录（含 `exp-lib.json`）
 - `source`：`live`（默认）或 `mock`（仅演示）
-- 内核参数：`hint`、`usageLog`、`feedbackEta`、`routing`、`maxTypes` 等，大部分可在控制台「设置」页修改；`autoBind` / `recent` / `slimRecall` 属高级选项。
+- 内核参数：`hint`、`usageLog`、`feedbackEta`、`routing`、`maxTypes` 等，全部可在控制台「设置」页修改。
 
 ## Git 备份
 
@@ -48,9 +46,9 @@ dsh plugin --profile <profile> add ./dsh-engram-0.19.36.tgz
 
 - `<dataDir>/skills/<slug>/SKILL.md`（frontmatter name/description + 正文）
 - `<dataDir>/skills/<slug>/scripts/`（脚本附件，登记在 `skill.json` 的 `files`，并在 `SKILL.md` 维护「## 脚本」清单）
-- 沉淀时可带：`exp_consolidate` 的 `body`（手写正文）/ `files`（脚本路径）
-- 已有技能补料：`exp_skill_attach`（files / body）
-- 控制台「技能」页显示整包文件数，选中技能可「注册技能到全局」（链接到 `$DSH_HOME/skills/<叶子名>/`，建不了链接才复制；注册后经验库不再排序它，按钮变「取消注册」）
+- 沉淀时可带：`exp_consolidate` 的 `body`（手写正文）/ `files`（脚本路径）/ `install`（同时装成 DSH 可加载技能）
+- 已有技能补料：`exp_skill_attach`（files / body / install）
+- 控制台「技能」页显示文件数，选中技能可「装到 DSH」（复制到 `$DSH_HOME/skills/<slug>/`，之后 `skill` 工具就能加载）
 
 ## 借鉴与致谢
 

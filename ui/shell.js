@@ -40,7 +40,7 @@ import { importSkills } from '../kernel/import-skill.js'
 import { applySkillNodeAction, buildSkillTree, forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
-import { normalizeContext, readStore, writeStore } from '../kernel/store.js'
+import { normalizeContext, readStore, tagCatalog, writeStore } from '../kernel/store.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -1099,6 +1099,12 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       return json(res, 200, { ok: true, data: buildTypeOp(active, await readBody(req)) })
     }
+    if (route === '/classify-diag') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      const llm = typeof deps.getLlm === 'function' ? deps.getLlm() : null
+      const routeInfo = typeof deps.getRoute === 'function' ? deps.getRoute() : null
+      return json(res, 200, { ok: true, data: { mode: active && active.mode ? active.mode : '', hasLlm: llm !== null && llm !== undefined, hasStream: llm !== null && llm !== undefined && typeof llm.stream === 'function', hasRoute: routeInfo !== null && routeInfo !== undefined, provider: routeInfo && routeInfo.provider ? String(routeInfo.provider) : '', model: routeInfo && routeInfo.model ? String(routeInfo.model) : '' } })
+    }
     if (route === '/classify') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       if (!active || active.mode !== 'live' || typeof active.hot !== 'function') return fail(res, 400, 'unsupported', '示例数据不支持自动分类')
@@ -1109,7 +1115,7 @@ export async function handleRequest(req, res, source, deps = {}) {
       const row = (store.experiences || []).find((item) => item.id === String((body && body.id) || ''))
       if (row === undefined) return fail(res, 404, 'not-found', '经验不存在')
       const typeNames = (store.types || []).filter((type) => type && type.system !== true).map((type) => String(type.name || '')).filter(Boolean)
-      const tagNames = [...new Set((store.experiences || []).flatMap((item) => Array.isArray(item.context) ? item.context : []).map(String).filter(Boolean))]
+      const tagNames = tagCatalog(store, { limit: 60 }).map((item) => item.name)
       const text = [row.intent, row.action, row.note].filter(Boolean).join('\n')
       let decided = null
       try {

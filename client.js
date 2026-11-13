@@ -1332,7 +1332,7 @@ window.__ModuleLoader__.load({
                 typeof props.onAutoAssign === 'function' ? h(Button, { small: true, disabled: assigning, onClick: async () => {
                   setAssigning(true)
                   setAssignMessage('')
-                  try { const out = await props.onAutoAssign(row.id); const tagPart = Array.isArray(out.addedTags) && out.addedTags.length > 0 ? `，标签：${out.addedTags.join('、')}` : '，未新增标签'; setAssignMessage(`已分到「${out.typeName}」${tagPart}${out.classifier === 'local' ? '（本地兜底，未耗模型）' : '（临时会话）'}`) } catch (error) { setAssignMessage(error && error.message ? error.message : '自动分类失败') } finally { setAssigning(false) }
+                  try { const out = await props.onAutoAssign(row.id); setAssignTo(out.typeName || ''); const tagPart = Array.isArray(out.addedTags) && out.addedTags.length > 0 ? `，标签：${out.addedTags.join('、')}` : '，未新增标签'; setAssignMessage(`已分到「${out.typeName}」${tagPart}${out.classifier === 'local' ? '（本地兜底，未耗模型）' : '（临时会话）'}`) } catch (error) { setAssignMessage(error && error.message ? error.message : '自动分类失败') } finally { setAssigning(false) }
                 } }, '一键分类') : null,
                 typeof props.onAutoAssign === 'function' ? h(Tip, { text: '一键分类会拉起一次性临时会话（不注入工具/历史、只发最小文本），会产生额外 Token 消费' }) : null) : null,
               typeof props.onAddLabels === 'function' ? h('div', { className: 'eng-actions', style: { marginBottom: 12, flexWrap: 'wrap' } },
@@ -3555,7 +3555,7 @@ window.__ModuleLoader__.load({
       }, [query, viewData])
       const stateRef = useRef({
         nodes: new Map(), edges: new Map(), dust: [],
-        cam: { yaw: -0.42, pitch: 0.26, dist: 1420 },
+        cam: { yaw: -0.42, pitch: 0.26, dist: 1420, panX: 0, panY: 0 },
         selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false, fit: null,
       })
       const selectNode = (node) => {
@@ -3643,6 +3643,8 @@ window.__ModuleLoader__.load({
         }
         const rand = (text) => (hash(text) % 100000) / 100000
         const resize = () => {
+          const oldWidth = width
+          const oldHeight = height
           const rect = canvas.getBoundingClientRect()
           width = Math.max(320, rect.width)
           height = Math.max(320, rect.height)
@@ -3650,6 +3652,18 @@ window.__ModuleLoader__.load({
           canvas.width = Math.round(width * dpr)
           canvas.height = Math.round(height * dpr)
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+          const resized = oldWidth > 0 && oldHeight > 0 && (Math.abs(width - oldWidth) > 1 || Math.abs(height - oldHeight) > 1)
+          if (resized) {
+            // 视口尺寸变化（含进出全屏）时按比例同步相机，画面相对大小保持不变。
+            const ratio = Math.min(width / oldWidth, height / oldHeight)
+            if (Number.isFinite(ratio) && ratio > 0) {
+              cam.dist = Math.min(3200, Math.max(520, cam.dist / ratio))
+              cam.panX *= ratio
+              cam.panY *= ratio
+            }
+            store.userZoom = true
+            store.fit = null
+          }
         }
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
@@ -3673,7 +3687,7 @@ window.__ModuleLoader__.load({
           const z2 = wy * sp + z1 * cp
           const depth = cam.dist + z2
           const f = FOCAL / Math.max(180, depth)
-          return { x: width / 2 + x1 * f, y: height / 2 + y1 * f, f, depth }
+          return { x: width / 2 + x1 * f - cam.panX, y: height / 2 + y1 * f - cam.panY, f, depth }
         }
         const sync = (data) => {
           const positions = layoutGraph(data)
@@ -3820,7 +3834,16 @@ window.__ModuleLoader__.load({
           lastInteraction = performance.now()
           event.preventDefault()
           store.userZoom = true
-          cam.dist = Math.min(3200, Math.max(520, cam.dist * (event.deltaY > 0 ? 1.08 : 0.92)))
+          const factor = event.deltaY > 0 ? 1.08 : 0.92
+          const next = Math.min(3200, Math.max(520, cam.dist * factor))
+          const k = next / cam.dist
+          // 以鼠标位置为缩放锚点：光标下的点保持不动，而不是永远缩向中心太阳。
+          const rect = canvas.getBoundingClientRect()
+          const dx = event.clientX - rect.left - width / 2
+          const dy = event.clientY - rect.top - height / 2
+          cam.panX = cam.panX / k + dx * (1 / k - 1)
+          cam.panY = cam.panY / k + dy * (1 / k - 1)
+          cam.dist = next
         }
         resize()
         sync(viewData)
@@ -3831,6 +3854,8 @@ window.__ModuleLoader__.load({
           const target = Math.max(900, Math.min(2800, bound * 2.9 * scale))
           if (immediate) {
             cam.dist = target
+            cam.panX = 0
+            cam.panY = 0
             store.fit = null
           } else {
             store.fit = { from: cam.dist, to: target, at: performance.now() }
@@ -3838,7 +3863,7 @@ window.__ModuleLoader__.load({
         }
         // 进入关系图时按“滚轮再放大两档”的默认大小（0.81 = 两次滚轮缩放）。
         fitCamera(true, 0.81)
-        fitRef.current = () => { store.userZoom = false; fitCamera(false) }
+        fitRef.current = () => { store.userZoom = false; cam.panX = 0; cam.panY = 0; fitCamera(false) }
         zoomRef.current = (factor) => { store.userZoom = true; cam.dist = Math.min(3200, Math.max(520, cam.dist * factor)) }
         const refreshPalette = () => {
           if (paletteKey !== 'dsh') return
@@ -3853,7 +3878,7 @@ window.__ModuleLoader__.load({
           themeObserver = null
         }
         const onResize = () => { resize(); fitCamera() }
-        const onFullscreen = () => requestAnimationFrame(() => { resize(); fitCamera(true) })
+        const onFullscreen = () => requestAnimationFrame(() => { resize() })
         window.addEventListener('resize', onResize)
         document.addEventListener('fullscreenchange', onFullscreen)
         window.addEventListener('pointermove', onPointerMove)

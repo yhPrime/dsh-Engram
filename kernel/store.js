@@ -1668,15 +1668,52 @@ export function pushHistory(experience, event) {
   experience.history = list.slice(-HISTORY_LIMIT)
 }
 
-/** 次级分类/情境标签（编码特异性，0.25.0）：≤8 个标签、每个 ≤24 字符、去重、小写。 */
+/** 标签统一表：同义词/大小写先归一；新标签才允许手动创建。 */
+export const TAG_MIN_REUSE = 2
+const TAG_ALIASES = new Map([
+  ['ppt', 'PPT'], ['pptx', 'PPT'], ['幻灯片', 'PPT'],
+  ['word', 'Word'], ['docx', 'Word'], ['docx排版', '版式'],
+  ['excel', 'Excel'], ['xlsx', 'Excel'], ['wps', 'WPS'],
+  ['eigenflux', 'EigenFlux'],
+  ['dsh-engram', 'DSH-Engram'], ['dsh 插件', 'DSH-Engram'], ['经验库插件', 'DSH-Engram'],
+  ['awesome-dsh-plugin', 'DSH-Engram'], ['dsh-engram-dev', 'DSH-Engram'],
+  ['exp_consolidate', '技能沉淀'],
+  ['tls握手超时', 'TLS握手超时'], ['skills', '技能'],
+  ['dsh', 'DSH'], ['ds h', 'DSH'],
+  ['2^53', '数值边界'], ['client.js', '客户端'],
+  ['react 客户端 client.js', 'React 客户端'], ['silent failure', '静默失败'], ['workspace-write', '沙箱'],
+])
+
+export function canonicalTag(value) {
+  const raw = String(value || '').replace(/\s+/g, ' ').trim()
+  if (raw === '') return null
+  const alias = TAG_ALIASES.get(raw.toLowerCase())
+  if (alias !== undefined) return alias
+  if (!isValidTag(raw)) return null
+  return raw
+}
+
+/** 次级分类/情境标签（编码特异性）：≤8 个标签、每个 ≤12 字符，统一别名、去重。 */
+/** 标签规则：短名词，1–12 字，不含句子标点/连接词碎片；自动分类只能从已有标签里选。 */
+export const TAG_MAX_CHARS = 12
+const TAG_BAD_WORDS = /(的|了|也|已经|这个|那个|就是|不是|可以|需要|参与|纳入|进行|我们|你们|他们)/
+export function isValidTag(value) {
+  const tag = String(value || '').trim()
+  if (tag.length < 1 || tag.length > TAG_MAX_CHARS) return false
+  if (!/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(tag)) return false
+  if (TAG_BAD_WORDS.test(tag) && tag.length > 5) return false
+  return true
+}
+
 export function normalizeContext(value) {
   const raw = Array.isArray(value)
     ? value
     : (value === undefined || value === null || value === '' ? [] : [value])
   const tags = []
   for (const item of raw) {
-    const tag = String(item || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 24)
-    if (tag !== '' && !tags.includes(tag)) tags.push(tag)
+    const tag = canonicalTag(item)
+    if (tag === null) continue
+    if (!tags.some((existing) => existing.toLowerCase() === tag.toLowerCase())) tags.push(tag)
   }
   return tags.slice(0, 8)
 }
@@ -1893,6 +1930,25 @@ export function purgeTombstones(store, tombstoneDays = DEFAULT_TOMBSTONE_DAYS, n
 }
 
 /** 可见经验（未删、未被取代）。 */
+/** 可复用标签词表：只收合规、且至少被两处使用的标签；一次性标签留在行上但不进下拉。 */
+export function tagCatalog(store, options = {}) {
+  const minCount = Math.max(1, Math.trunc(Number(options.minCount) || TAG_MIN_REUSE))
+  const limit = Math.max(1, Math.min(200, Math.trunc(Number(options.limit) || 60)))
+  const counts = new Map()
+  for (const row of visibleExperiences(store)) {
+    for (const tag of Array.isArray(row.context) ? row.context : []) {
+      const name = canonicalTag(tag)
+      if (name === null) continue
+      counts.set(name, (counts.get(name) || 0) + 1)
+    }
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .filter((item) => item.count >= minCount)
+    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh'))
+    .slice(0, limit)
+}
+
 export function visibleExperiences(store, options = {}) {
   return store.experiences.filter((item) => {
     if (item.deleted_at && !options.includeDeleted) return false

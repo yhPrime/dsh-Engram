@@ -6,6 +6,8 @@
  *  - 低 maxTokens、短超时；失败一律退回本地规则，不让 UI 卡住；
  *  - 返回值明确 classifier='session' 或 'local'，调用方要如实告诉用户。
  */
+import { isValidTag } from './store.js'
+
 export const EXPERIENCE_SESSION_MAX_TOKENS = 120
 export const EXPERIENCE_SESSION_TIMEOUT_MS = 15_000
 export const EXPERIENCE_TEXT_LIMIT = 600
@@ -13,7 +15,7 @@ export const EXPERIENCE_TAG_LIMIT = 4
 
 const SYSTEM = [
   '你是经验归档器。只输出一个 JSON 对象，不要解释、不要代码块、不要调用任何工具。',
-  '字段：category（必须是给定主分类之一；都不合适就给空字符串）、tags（1-4 个短标签，优先从给定已有标签里选，没有合适才新建）。',
+  '字段：category（必须是给定主分类之一；都不合适就给空字符串）、tags（1-4 个短标签，只能从给定已有标签里选，不得新建；没有合适就给空数组）。',
   '例：{"category":"办公","tags":["PPT","版式"]}',
 ].join('\n')
 
@@ -36,9 +38,10 @@ function parseJson(text) {
   try { return JSON.parse(source.slice(start, end + 1)) } catch { return null }
 }
 
-function cleanTags(value) {
+function cleanTags(value, allowed = null) {
   const list = Array.isArray(value) ? value : []
-  return [...new Set(list.map((item) => String(item || '').trim()).filter(Boolean))].slice(0, EXPERIENCE_TAG_LIMIT)
+  const allow = allowed === null ? null : new Set(allowed)
+  return [...new Set(list.map((item) => String(item || '').trim()).filter((item) => item !== '' && isValidTag(item) && (allow === null || allow.has(item))))].slice(0, EXPERIENCE_TAG_LIMIT)
 }
 
 export function localClassifyExperience({ text = '', typeNames = [], tagNames = [] } = {}) {
@@ -51,11 +54,13 @@ export function localClassifyExperience({ text = '', typeNames = [], tagNames = 
   ]
   const found = rules.find(([, pattern]) => pattern.test(String(text || '')))
   const category = found && typeNames.includes(found[0]) ? found[0] : (typeNames.includes('开发') ? '开发' : (typeNames[0] || ''))
-  const tag = String(text || '').match(/[A-Za-z][A-Za-z0-9_-]{1,20}|[一-龥]{2,6}/g) || []
-  const tags = [...new Set(tag.filter((item) => item.length >= 2))].slice(0, EXPERIENCE_TAG_LIMIT)
+  const lower = String(text || '').toLowerCase()
+  const known = tagNames.filter((tag) => isValidTag(tag) && tag.length >= 2 && lower.includes(String(tag).toLowerCase())).slice(0, EXPERIENCE_TAG_LIMIT)
+  const tech = String(text || '').match(/\b(?:ppt|word|excel|docx|xlsx|python|typescript|javascript|git|ssh|dsh|univer)\b/gi) || []
+  const tags = [...new Set([...known, ...tech.map((item) => item.toUpperCase())])].slice(0, EXPERIENCE_TAG_LIMIT)
   return {
     category,
-    tags: tags.length > 0 ? tags : tagNames.slice(0, 1),
+    tags,
     classifier: 'local',
     note: '没有可用模型会话，已用本地关键词兜底（不额外消耗 Token）',
   }
@@ -78,6 +83,7 @@ export async function classifyExperienceWithSession({ llm, route, text = '', typ
       messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
       system: SYSTEM,
       maxTokens: EXPERIENCE_SESSION_MAX_TOKENS,
+      reasoningEffort: 'off',
       temperature: 0,
       signal: AbortSignal.timeout(EXPERIENCE_SESSION_TIMEOUT_MS),
     })
@@ -89,7 +95,7 @@ export async function classifyExperienceWithSession({ llm, route, text = '', typ
     if (!names.includes(category)) return null
     return {
       category,
-      tags: cleanTags(parsed.tags),
+      tags: cleanTags(parsed.tags, tagNames),
       classifier: 'session',
       model: route.model,
       provider: route.provider,

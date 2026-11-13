@@ -278,6 +278,7 @@ export async function classifyWithSession({ llm, route, text, typeNames = [] }) 
       messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
       system: CLASSIFY_SYSTEM,
       maxTokens: SESSION_MAX_TOKENS,
+      reasoningEffort: 'off',
       temperature: 0,
       signal: AbortSignal.timeout(SESSION_TIMEOUT_MS),
     })

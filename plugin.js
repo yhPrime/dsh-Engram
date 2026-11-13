@@ -52,9 +52,9 @@ function mountConsole(webCtx, config) {
     // 目录选择服务晚于本插件挂上也照样能用（inject 就绪后回填）。
     let latePicker = null
     const api = createApi(config, {
-      getLlm: () => safeGet('llm'),
+      getLlm: () => safeGet('llm') || lateLlm,
       getRoute: () => {
-        const model = safeGet('agentDefaultModel')
+        const model = safeGet('agentDefaultModel') || lateModel
         if (model === undefined || model === null || typeof model.currentSelection !== 'function') return null
         try {
           return model.currentSelection() || null
