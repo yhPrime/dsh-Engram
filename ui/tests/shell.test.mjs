@@ -527,7 +527,7 @@ await check('POST /settings：内核参数落盘、可清空', async () => {
     assert.equal(first.payload.data.config.routing, 'off')
     assert.equal(first.payload.data.config.hint, false)
     assert.ok(first.payload.data.spec.config.some((field) => field.key === 'feedbackEta'))
-    assert.ok(first.payload.data.spec.ui.some((field) => field.key === 'graphTheme'))
+    assert.ok(first.payload.data.spec.ui.some((field) => field.key === 'graphPalette'))
     await call(source, '/settings', { method: 'POST', body: { config: { feedbackEta: '' } } })
     const second = await call(source, '/settings')
     assert.equal(second.payload.data.config.feedbackEta, undefined)

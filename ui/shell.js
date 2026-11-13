@@ -78,7 +78,6 @@ export const SETTINGS_SPEC = {
   ui: [
     { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示', tip: 'live：读真实经验库；mock：读内置示例数据（只用于看界面效果，不写真实库）。' },
     { key: 'dataDir', label: '目录覆盖', type: 'string', hint: '留空则用「存储位置」里的当前根', tip: '只影响「控制台读哪份库」，不影响工具写入。工具始终写到「存储位置」里的当前根；两边可以指向不同目录——看起来「数据不一致」时先来这里检查。' },
-    { key: 'graphTheme', label: '关系图主题', type: 'enum', values: ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration'], labels: { personal: '个人记忆碎片', dream: '梦境记忆轨迹', knowledge: '知识概念关联', emotion: '情绪记忆链路', spacetime: '时空记忆时间线', collective: '集体共享记忆', inspiration: '灵感思绪蛛网' }, tip: '只改关系图的外形（布局密度、节点形状、漂移方式），不改颜色。' },
     { key: 'graphPalette', label: '关系图配色', type: 'enum', values: ['dsh', 'codex', 'cyberpunk', 'aurora', 'blackgold', 'steampunk', 'qingmo', 'minimal', 'lava'], labels: { dsh: '跟随当前主题', codex: '蓝紫星辰（推理滑条渐变）', cyberpunk: '赛博朋克', aurora: '极光空灵', blackgold: '黑金科幻', steampunk: '蒸汽复古', qingmo: '青墨国风', minimal: '极简冷科技', lava: '熔岩炽热' }, tip: '「跟随当前主题」实时读当前主题的背景渐变（换主题自动变）；主题没有渐变时退回「蓝紫星辰」。关系图右上角的胶囊按钮也能直接切这两项。' },
     { key: 'graphSurface', label: '关系图背景', type: 'enum', values: ['theme', 'light', 'dark'], labels: { theme: '跟随主题', light: '浅色', dark: '深色' }, tip: '关系图画布的背景深浅。跟随主题＝透明，用页面本来的底色；浅色/深色会铺一层固定底色，同时把节点的明暗补偿一起切过去。图左下角的胶囊也能直接切。' },
     { key: 'graphRotation', label: '自动旋转速度', type: 'number', hint: '弧度/秒，0 为关闭', tip: '关系图自动旋转的速度（弧度/秒）；0 = 不转。拖动时暂停，松手继续。' },
@@ -669,12 +668,56 @@ export function buildSettings(source) {
   }
 }
 
+/** 关系图 summary 模式的默认/上限经验条数（0.19.0）。 */
+export const GRAPH_SUMMARY_LIMIT = 300
+export const GRAPH_SUMMARY_LIMIT_MAX = 1200
+
+/**
+ * 解析 `/graph` 的 `scope` / `limit`。
+ *
+ * 兼容性优先：不带 `scope=summary` 时一律全量（旧 client 只认全量，不能因为
+ * 顺手加的 `limit` 参数就悄悄变少）。`limit` 只在 summary 下生效，非法值退回
+ * 默认 300，越界夹到 1..1200（`limit=0` 也按 1 处理，避免返回 0 个经验节点）。
+ */
+function graphOptionsOf(params) {
+  const get = (key) => (params && typeof params.get === 'function' ? params.get(key) : null)
+  const summary = String(get('scope') || '').trim().toLowerCase() === 'summary'
+  return { summary, limit: summary ? graphLimitOf(get('limit')) : Infinity }
+}
+
+function graphLimitOf(raw) {
+  if (raw === null || raw === undefined || String(raw).trim() === '') return GRAPH_SUMMARY_LIMIT
+  const parsed = Math.trunc(Number(raw))
+  if (!Number.isFinite(parsed)) return GRAPH_SUMMARY_LIMIT
+  return Math.min(GRAPH_SUMMARY_LIMIT_MAX, Math.max(1, parsed))
+}
+
+/** 经验节点排序：weight 降序，其次 recent，再按 lastSeenAt 降序（全量模式不动原顺序）。 */
+function rankGraphExperiences(rows) {
+  return rows
+    .map((row) => {
+      const lastSeen = Date.parse(String(row.lastSeenAt || row.ts || '')) || 0
+      return {
+        row,
+        lastSeen,
+        recent: lastSeen > 0 && Date.now() - lastSeen < 7 * 24 * 3600 * 1000,
+        weight: Math.min(1, 0.3 + Math.abs(Number(row.G) || 0) * 0.35),
+      }
+    })
+    .sort((left, right) => right.weight - left.weight
+      || Number(right.recent) - Number(left.recent)
+      || right.lastSeen - left.lastSeen)
+}
+
 /** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
-export function buildGraph(source) {
+export function buildGraph(source, params) {
   const read = readOf(source)
   const storeRead = storeReadOf(source)
   const store = storeRead.store
   const rows = visibleOf(store).map(rowOf)
+  const options = graphOptionsOf(params)
+  // summary 只裁经验：root/type/skill/suite 全留，保证图骨架不塌。
+  const keptRows = options.summary ? rankGraphExperiences(rows).slice(0, options.limit).map((entry) => entry.row) : rows
   const types = typesOf(store)
   const skills = source && typeof source.skills === 'function' ? (source.skills() || []) : []
   const nodes = [{ id: 'root', kind: 'root', label: '经验库' }]
@@ -686,7 +729,7 @@ export function buildGraph(source) {
     knownTypes.add(type.id)
   }
   const expIds = new Set()
-  for (const row of rows) {
+  for (const row of keptRows) {
     const typeId = row.typeId || 'ty_other'
     if (!knownTypes.has(typeId)) {
       nodes.push({ id: `type:${typeId}`, kind: 'type', label: row.typeName || '未分类', count: 0 })
@@ -753,11 +796,26 @@ export function buildGraph(source) {
     if (linked.length === 0 && !String(id).includes('/')) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
   }
   const suiteRoots = skillTree.filter((node) => node.kind === 'group' || node.skillCount > 1).length
+  // degree 用一遍边表累加（O(N+E)）：前端画图不用再自己数邻居。
+  const degree = new Map()
+  for (const edge of edges) {
+    degree.set(edge.source, (degree.get(edge.source) || 0) + 1)
+    degree.set(edge.target, (degree.get(edge.target) || 0) + 1)
+  }
+  const byKind = {}
+  for (const node of nodes) {
+    node.degree = degree.get(node.id) || 0
+    byKind[node.kind] = (byKind[node.kind] || 0) + 1
+  }
   return {
     notice: String(read.notice || ''),
     storeError: storeRead.error,
     nodes,
     edges,
+    // total/truncated 只描述「经验」：summary 裁的就是经验，骨架节点不裁。
+    total: rows.length,
+    truncated: keptRows.length < rows.length,
+    byKind,
     summary: { types: types.length, experiences: rows.length, skills: skills.length, suites: suiteRoots },
     updatedAt: String(read.updatedAt || ''),
   }
@@ -1020,7 +1078,7 @@ export async function handleRequest(req, res, source, deps = {}) {
     }
     if (route === '/graph') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
-      return json(res, 200, { ok: true, data: buildGraph(active) })
+      return json(res, 200, { ok: true, data: buildGraph(active, url.searchParams) })
     }
     if (route === '/validate') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

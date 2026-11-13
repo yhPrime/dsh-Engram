@@ -350,15 +350,14 @@ check('关系图节点是「中心向外发光」而不是球体高光', () => {
   assert.equal(withAlpha('rgba(147, 51, 234, 1)', 0.2), 'rgba(147, 51, 234, 0.2)')
   assert.equal(withAlpha('nonsense', 0.3), 'rgba(128, 128, 128, 0.3)')
 })
-check('关系图页：整块画布 + 右上角配色胶囊（跟随主题 / 蓝紫星辰）', () => {
+check('关系图页：整块画布 + 设置抽屉入口', () => {
   const tree = JSON.stringify(module.Graph({}), (key, value) => (typeof value === 'function' ? '[fn]' : value))
   assert.ok(tree.includes('eng-graph-canvas'), '没有画布')
-  assert.ok(tree.includes('eng-graph-pill'), '没有配色胶囊')
-  assert.ok(tree.includes('跟随主题'), '胶囊缺少「跟随主题」')
-  assert.ok(tree.includes('蓝紫星辰'), '胶囊缺少「蓝紫星辰」')
-  assert.ok(tree.includes('eng-graph-pill-bottom'), '缺少左下角背景胶囊')
-  assert.ok(tree.includes('浅色') && tree.includes('深色'), '左侧胶囊缺少深浅两项')
+  assert.ok(tree.includes('eng-graph-drawer-toggle'), '没有设置抽屉入口')
   const source = loaded.source
+  assert.ok(source.includes('eng-graph-drawer'), '没有设置抽屉')
+  assert.ok(source.includes('跟随主题') && source.includes('蓝紫星辰'), '抽屉缺少配色两项')
+  assert.ok(source.includes('浅色') && source.includes('深色'), '抽屉缺少深浅两项')
   assert.ok(source.includes('graphSurface'), '背景深浅没有写进 ui 设置')
   assert.ok(source.includes("#0b1020"), '深色背景没有实际底色')
   assert.ok(source.includes("#f6f8fc"), '浅色背景没有实际底色')
@@ -454,11 +453,84 @@ check('P2 记录：分组渐进披露 + 草稿按钮', () => {
   assert.ok(serialized.includes('清空草稿'), '缺清空草稿')
 })
 
-check('P2 关系图：适配/暂停/图例工具条', () => {
+check('P2 关系图：设置抽屉含适配/暂停/图例', () => {
+  const source = loaded.source
   const serialized = JSON.stringify(module.Graph({}), (key, value) => (typeof value === 'function' ? '[fn]' : value))
-  assert.ok(serialized.includes('适配视图'))
-  assert.ok(serialized.includes('暂停旋转'))
-  assert.ok(serialized.includes('图例'))
+  assert.ok(serialized.includes('eng-graph-drawer-toggle'))
+  assert.ok(source.includes('适配视图'))
+  assert.ok(source.includes('暂停旋转'))
+  assert.ok(source.includes('图例'))
+})
+
+check('主题强调色：默认黑白品牌退回 DSH 蓝，彩色主题跟随', () => {
+  const pick = module.pickAccent
+  assert.equal(typeof pick, 'function', 'pickAccent 没导出')
+  assert.equal(pick([15, 17, 21], false), '#4176e6')
+  assert.equal(pick([249, 250, 251], true), '#5686fe')
+  assert.equal(pick([139, 92, 246], false), '#8b5cf6')
+  assert.equal(pick([0, 120, 120], true), '#007878')
+})
+
+check('正多面体：五种顶点/棱/面数量正确，可自旋绘制', () => {
+  const solids = module.GRAPH_SOLIDS
+  const expected = {
+    tetra: [4, 6, 4],
+    cube: [8, 12, 6],
+    octa: [6, 12, 8],
+    dodeca: [20, 30, 12],
+    icosa: [12, 30, 20],
+  }
+  for (const [name, [vertices, edges, faces]] of Object.entries(expected)) {
+    assert.equal(solids[name].vertices.length, vertices, `${name} 顶点数`)
+    assert.equal(solids[name].edges.length, edges, `${name} 棱数`)
+    assert.equal(solids[name].faces.length, faces, `${name} 面数`)
+  }
+  assert.equal(module.GRAPH_SOLID_FOR_KIND.root, 'icosa')
+  assert.equal(module.GRAPH_SOLID_FOR_KIND.type, 'dodeca')
+  assert.equal(module.GRAPH_SOLID_FOR_KIND.suite, 'cube')
+  assert.equal(module.GRAPH_SOLID_FOR_KIND.skill, 'tetra')
+  assert.equal(module.graphSolidForNode({ kind: 'skill', parent: '', depth: 0 }).faces.length, 8, '主技能应是八面体')
+  assert.equal(module.graphSolidForNode({ kind: 'skill', parent: 'suite:x', depth: 1 }).faces.length, 4, '子技能应是四面体')
+  let calls = 0
+  const ctx = {
+    save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {},
+    stroke() { calls += 1 }, set fillStyle(value) {}, set strokeStyle(value) {},
+    set lineWidth(value) {}, set shadowColor(value) {}, set shadowBlur(value) {},
+    set globalCompositeOperation(value) {},
+  }
+  for (const solid of Object.values(module.GRAPH_SOLIDS)) module.drawPolyhedron(ctx, 12, '#7aaaff', solid, 0.8, { glow: true })
+  assert.ok(calls >= 10, `多面体棱线绘制不足（${calls}）`)
+})
+
+check('关系图布局 O(N+E)：1k/3k 可完成且位置确定', () => {
+  const build = (experiences, skills) => {
+    const nodes = [{ id: 'root', kind: 'root' }]
+    const edges = []
+    for (let index = 0; index < 20; index += 1) {
+      nodes.push({ id: `type:t${index}`, kind: 'type', label: `T${index}`, weight: 0.8 })
+      edges.push({ source: 'root', target: `type:t${index}`, kind: 'root', strength: 0.1 })
+    }
+    for (let index = 0; index < experiences; index += 1) {
+      nodes.push({ id: `exp:e${index}`, kind: 'experience', typeId: `t${index % 20}`, weight: 0.2 + (index % 7) / 10 })
+      edges.push({ source: `type:t${index % 20}`, target: `exp:e${index}`, kind: 'type', strength: 0.5 })
+    }
+    for (let index = 0; index < skills; index += 1) {
+      nodes.push({ id: `skill:s${index}`, kind: 'skill', label: `S${index}`, weight: 0.5 })
+    }
+    return { nodes, edges }
+  }
+  for (const size of [1000, 3000]) {
+    const data = build(size - 20 - 80, 80)
+    const started = Date.now()
+    const first = module.layoutGraph(data)
+    const elapsed = Date.now() - started
+    assert.equal(first.size, data.nodes.length - 1, `布局漏节点（${size}）`)
+    assert.ok(elapsed < (size === 1000 ? 120 : 300), `布局 ${size} 节点耗时 ${elapsed}ms`)
+    const second = module.layoutGraph(data)
+    const a = first.get('exp:e0')
+    const b = second.get('exp:e0')
+    assert.deepEqual(a, b, '布局不确定')
+  }
 })
 
 check('P3 命令面板 / 快捷键表可渲染', () => {

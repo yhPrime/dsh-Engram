@@ -336,6 +336,11 @@ window.__ModuleLoader__.load({
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: var(--eng-r-4); background: transparent; }
 .eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+.eng-graph-fullscreen { position: absolute; top: 14px; right: 14px; z-index: 6; width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+.eng-graph-fullscreen:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-graph-fullscreen:focus-visible { outline: 2px solid var(--eng-accent-text); outline-offset: 2px; }
+.eng-graph-canvas-wrap:fullscreen { width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; background: var(--dsw-alias-bg-base); }
+.eng-graph-canvas-wrap:fullscreen .eng-graph-fullscreen { top: 18px; right: 18px; }
 .eng-content-full { padding: 0; max-width: none; overflow: hidden; display: flex; }
 .eng-content-full .eng-graph-canvas-wrap { flex: 1 1 auto; height: 100%; min-height: 0; aspect-ratio: auto; border-radius: 0; }
 .eng-graph-detail { position: absolute; right: 14px; bottom: 14px; z-index: 2; width: min(320px, 72%); padding: 12px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.14); }
@@ -350,9 +355,34 @@ window.__ModuleLoader__.load({
 /* 左下角：画布深浅背景切换（与右上角配色胶囊同一套皮肤） */
 .eng-graph-pill-bottom { top: auto; right: auto; bottom: 14px; left: 14px; }
 .eng-graph-pill-top { top: 14px; right: auto; left: 14px; }
-.eng-graph-legend { position: absolute; left: 14px; top: 58px; z-index: 3; width: min(300px, 72%); display: flex; flex-direction: column; gap: var(--eng-s-2); padding: var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); }
+.eng-graph-note { position: absolute; right: 14px; bottom: 14px; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-sm); backdrop-filter: blur(10px); }
+.eng-graph-note-btn { padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); font: inherit; font-size: var(--eng-fs-micro); color: var(--eng-accent-text); background: var(--dsw-alias-bg-layer-1); cursor: pointer; }
+.eng-graph-note-btn:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-graph-drawer-toggle { position: absolute; top: 14px; left: 14px; z-index: 6; padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+.eng-graph-drawer-toggle:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-graph-drawer { position: absolute; top: 56px; left: 14px; z-index: 6; width: min(330px, calc(100% - 28px)); max-height: calc(100% - 78px); overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); box-shadow: 0 16px 40px rgba(0,0,0,.22); }
+.eng-graph-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.eng-graph-drawer-close { border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); padding: 2px 9px; font: inherit; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; }
+.eng-graph-drawer-label { margin-top: 4px; font-size: var(--eng-fs-micro); font-weight: 600; color: var(--dsw-alias-label-secondary); letter-spacing: .04em; }
+.eng-graph-drawer .eng-graph-search { position: static; width: 100%; padding: 0; }
+.eng-graph-drawer .eng-graph-filters button { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
+.eng-graph-drawer .eng-graph-filters button[data-active="true"] { color: var(--eng-accent-text); border-color: var(--eng-accent); background: var(--eng-accent-soft); }
+.eng-graph-legend-inline { display: flex; flex-direction: column; gap: var(--eng-s-1); max-height: 180px; overflow: auto; }
+.eng-graph-search { position: absolute; left: 14px; top: 58px; z-index: 4; width: min(320px, 72%); display: flex; flex-direction: column; gap: 6px; }
+.eng-graph-search-input { width: 100%; background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent); backdrop-filter: blur(10px); }
+.eng-graph-search-hits { display: flex; flex-direction: column; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); }
+.eng-graph-search-hit { border: 0; border-radius: var(--eng-r-2); padding: 5px 8px; font: inherit; font-size: var(--eng-fs-sm); text-align: left; color: var(--dsw-alias-label-primary); background: transparent; cursor: pointer; }
+.eng-graph-search-hit:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-graph-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.eng-graph-filters button { border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); padding: 2px 9px; font: inherit; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); cursor: pointer; }
+.eng-graph-filters button[data-active="true"] { color: var(--eng-accent-text); border-color: var(--eng-accent); background: var(--eng-accent-soft); }
+.eng-visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+.eng-graph-legend { position: absolute; left: 14px; top: 178px; z-index: 3; width: min(300px, 72%); display: flex; flex-direction: column; gap: var(--eng-s-2); padding: var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); }
 .eng-graph-legend-list { display: flex; flex-direction: column; gap: var(--eng-s-1); max-height: 200px; overflow: auto; }
 .eng-graph-legend-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) 40px; gap: var(--eng-s-2); align-items: center; font-size: var(--eng-fs-sm); }
+.eng-graph-legend-btn { display: grid; grid-template-columns: 10px minmax(0, 1fr) 40px; gap: var(--eng-s-2); align-items: center; width: 100%; padding: 2px 6px; border: 1px solid transparent; border-radius: var(--eng-r-2); font: inherit; font-size: var(--eng-fs-sm); color: inherit; text-align: left; background: transparent; cursor: pointer; }
+.eng-graph-legend-btn:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-graph-legend-btn[data-active="true"] { color: var(--eng-accent-text); border-color: var(--eng-accent); background: var(--eng-accent-soft); }
 .eng-legend-dot { width: 7px; height: 7px; border-radius: var(--eng-r-full); background: var(--eng-accent); }
 .eng-graph-pill button[data-tone="light"] { color: #1f2430; }
 .eng-graph-pill button[data-tone="light"][data-active="true"] { color: #1f2430; background: #eef1f6; }
@@ -784,6 +814,8 @@ window.__ModuleLoader__.load({
         archive: 'M2 3.5h12v2.5H2V3.5Zm1 3.5h10v6.5H3V7Zm3.5 2h3',
         graph: 'M3 3h3v3H3V3Zm7 7h3v3h-3v-3ZM3 13h3v3H3v-3Zm4-9h3M6 6l3 3m2 4h3M14 10l-3-3',
         gear: 'M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Zm5.4-2.2c0-.5-.1-.9-.2-1.3l1.5-1.1-1.4-2.4-1.8.7c-.6-.5-1.3-.9-2-1.2L9.2 1H6.8l-.3 1.7c-.7.3-1.4.7-2 1.2l-1.8-.7L1.3 5.6l1.5 1.1c-.1.4-.2.8-.2 1.3s.1.9.2 1.3L1.3 10.4l1.4 2.4 1.8-.7c.6.5 1.3.9 2 1.2l.3 1.7h2.4l.3-1.7c.7-.3 1.4-.7 2-1.2l1.8.7 1.4-2.4-1.5-1.1c.1-.4.2-.8.2-1.3Z',
+        expand: 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4',
+        collapse: 'M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4',
       }
       return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { flex: '0 0 auto', opacity: .9 } },
         h('path', { d: paths[props.name] || paths.overview }))
@@ -2564,7 +2596,6 @@ window.__ModuleLoader__.load({
               h('div', { className: 'eng-muted', style: { marginTop: 12, fontSize: 11 } }, '冷档条目只读：不可反馈、不可编辑、不可删除。')))))
     }
 
-    const GRAPH_THEMES = ['personal', 'dream', 'knowledge', 'emotion', 'spacetime', 'collective', 'inspiration']
     function lightenColor(color, amount = 0.55) {
       const text = String(color || '').trim()
       let r = 0
@@ -2693,6 +2724,7 @@ window.__ModuleLoader__.load({
       { node: '#4d93f8', nodeLight: '#93c5fd', node2: '#9333ea', edge: '#6d28d9', highlight: '#c084fc', glow: '#6d28d9', dust: '#bfdbfe' },
     ]
 
+    const GRAPH_NODE_CAP = 1200
     const GRAPH_PALETTES = {
       dsh: {},
       codex: { bg: '#050418', bgInner: '#0d0b26', node: CODEX_STAR_STOPS[0].node, node2: CODEX_STAR_STOPS[0].node2, edge: CODEX_STAR_STOPS[0].edge, highlight: CODEX_STAR_STOPS[0].highlight, warn: '#c084fc', ok: '#7aaaff', bad: '#f472b6', glow: CODEX_STAR_STOPS[0].glow, dust: CODEX_STAR_STOPS[0].dust, bloom: 20 },
@@ -2733,65 +2765,189 @@ window.__ModuleLoader__.load({
       ctx.restore()
     }
 
-    function drawGraphShape(ctx, radius, theme) {
+    /** 恒星芒：8 条长短交替的射线，慢慢转，给中心主星一点“恒星”感。 */
+    function drawStarRays(ctx, length, color, alpha, phase) {
+      if (!(length > 3)) return
+      ctx.save()
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.strokeStyle = withAlpha(color, alpha)
+      ctx.lineCap = 'round'
+      ctx.lineWidth = Math.max(0.7, Math.min(1.6, length * 0.018))
+      for (let index = 0; index < 8; index += 1) {
+        const angle = phase + (Math.PI / 4) * index
+        const inner = length * 0.16
+        const outer = index % 2 === 0 ? length : length * 0.62
+        ctx.beginPath()
+        ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner)
+        ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer)
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
+    /** 5 种正多面体：线框 + 半透明面；顶点已归一到单位球。 */
+    function buildGraphSolids() {
+      const norm = (v) => { const len = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / len, v[1] / len, v[2] / len] }
+      const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+      const edgesOf = (vertices, faces) => {
+        const set = new Set()
+        for (const face of faces) {
+          for (let i = 0; i < face.length; i += 1) {
+            const a = face[i]
+            const b = face[(i + 1) % face.length]
+            set.add(a < b ? a + ':' + b : b + ':' + a)
+          }
+        }
+        return [...set].map((key) => key.split(':').map(Number))
+      }
+      const tetra = {
+        vertices: [[1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]].map(norm),
+        faces: [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]],
+      }
+      tetra.edges = edgesOf(tetra.vertices, tetra.faces)
+      const cube = {
+        vertices: [[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]].map(norm),
+        faces: [[0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]],
+      }
+      cube.edges = edgesOf(cube.vertices, cube.faces)
+      const octa = {
+        vertices: [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(norm),
+        faces: [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]],
+      }
+      octa.edges = edgesOf(octa.vertices, octa.faces)
+      const t = (1 + Math.sqrt(5)) / 2
+      const raw = []
+      for (const a of [1, -1]) for (const b of [1, -1]) {
+        raw.push([0, a, b * t], [a, b * t, 0], [b * t, 0, a])
+      }
+      const icoVertices = raw.map(norm)
+      const icoFaces = []
+      const edgeSet = new Set()
+      for (let i = 0; i < raw.length; i += 1) for (let j = i + 1; j < raw.length; j += 1) {
+        if (Math.abs(Math.hypot(raw[i][0] - raw[j][0], raw[i][1] - raw[j][1], raw[i][2] - raw[j][2]) - 2) < 0.01) edgeSet.add(i + ':' + j)
+      }
+      for (let i = 0; i < raw.length; i += 1) for (let j = i + 1; j < raw.length; j += 1) for (let k = j + 1; k < raw.length; k += 1) {
+        if (edgeSet.has(i + ':' + j) && edgeSet.has(i + ':' + k) && edgeSet.has(j + ':' + k)) icoFaces.push([i, j, k])
+      }
+      const icosa = { vertices: icoVertices, faces: icoFaces }
+      icosa.edges = edgesOf(icoVertices, icoFaces)
+      const dual = icoFaces.map((face) => norm(face.reduce((sum, index) => [sum[0] + icoVertices[index][0] / 3, sum[1] + icoVertices[index][1] / 3, sum[2] + icoVertices[index][2] / 3], [0, 0, 0])))
+      const around = icoVertices.map((vertex, index) => icoFaces.map((face, fi) => (face.includes(index) ? fi : -1)).filter((fi) => fi >= 0))
+      const dodecaFaces = around.map((faceIndexes, vertexIndex) => {
+        const n = norm(icoVertices[vertexIndex])
+        const ref = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]
+        const u = norm(cross(n, ref))
+        const w = cross(n, u)
+        return faceIndexes.slice().sort((a, b) => {
+          const pa = dual[a]
+          const pb = dual[b]
+          return Math.atan2(dot(pa, w), dot(pa, u)) - Math.atan2(dot(pb, w), dot(pb, u))
+        })
+      })
+      const dodeca = { vertices: dual, faces: dodecaFaces }
+      dodeca.edges = edgesOf(dual, dodecaFaces)
+      return { tetra, cube, octa, dodeca, icosa }
+    }
+    const GRAPH_SOLIDS = buildGraphSolids()
+    const GRAPH_SOLID_FOR_KIND = { root: 'icosa', type: 'dodeca', suite: 'cube', skill: 'tetra' }
+    const GRAPH_POLY_BUDGET = 80
+    /** 主技能=没有父级的顶层技能，用正八面体；子技能仍是正四面体。 */
+    const graphSolidForNode = (node) => (node && node.kind === 'skill' && (!node.parent || node.depth === 0) ? GRAPH_SOLIDS.octa : GRAPH_SOLIDS[GRAPH_SOLID_FOR_KIND[node.kind]])
+
+    /** 发光线框正多面体：面半透明、棱线带 shadowBlur，按 spine 自旋。 */
+    function drawPolyhedron(ctx, radius, color, solid, spin, options = {}) {
+      if (!solid || radius <= 0.4) return
+      const cosY = Math.cos(spin)
+      const sinY = Math.sin(spin)
+      const cosX = Math.cos(spin * 0.63)
+      const sinX = Math.sin(spin * 0.63)
+      const points = solid.vertices.map((vertex) => {
+        const x = vertex[0] * cosY + vertex[2] * sinY
+        const z = -vertex[0] * sinY + vertex[2] * cosY
+        const y = vertex[1]
+        return { x: x * radius, y: (y * cosX - z * sinX) * radius, z: y * sinX + z * cosX }
+      })
+      const edgeInfo = solid.edges.map(([a, b]) => ({ a, b, depth: (points[a].z + points[b].z) / 2 }))
+      const faceDepth = solid.faces.map((face) => ({ face, z: face.reduce((sum, index) => sum + points[index].z, 0) / face.length }))
+      const frontFaces = faceDepth.filter((face) => face.z >= 0)
+      const baseWidth = Math.max(0.65, Math.min(2.2, radius * 0.075))
+      ctx.save()
+      // 正面片合并成一次 fill。
+      if (frontFaces.length > 0) {
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.fillStyle = withAlpha(color, options.faceAlpha === undefined ? 0.36 : options.faceAlpha)
+        ctx.beginPath()
+        for (const { face } of frontFaces) {
+          face.forEach((index, order) => {
+            const point = points[index]
+            if (order === 0) ctx.moveTo(point.x, point.y)
+            else ctx.lineTo(point.x, point.y)
+          })
+          ctx.closePath()
+        }
+        ctx.fill()
+      }
+      ctx.globalCompositeOperation = 'lighter'
+      // 棱按深度分 6 档：从背后 0.22 渐亮到正面 0.96，不再“转到一半突然变暗”。
+      const bands = 6
+      const buckets = Array.from({ length: bands }, () => [])
+      for (const edge of edgeInfo) {
+        const t = Math.max(0, Math.min(1, (edge.depth + 1) / 2))
+        buckets[Math.min(bands - 1, Math.floor(t * bands))].push(edge)
+      }
+      if (options.glow) {
+        ctx.strokeStyle = withAlpha(color, 0.10)
+        ctx.lineWidth = baseWidth * 3.4
+        ctx.beginPath()
+        for (const { a, b } of edgeInfo) {
+          ctx.moveTo(points[a].x, points[a].y)
+          ctx.lineTo(points[b].x, points[b].y)
+        }
+        ctx.stroke()
+      }
+      for (let band = 0; band < bands; band += 1) {
+        const list = buckets[band]
+        if (list.length === 0) continue
+        const depth = (band + 0.5) / bands
+        const alpha = Math.min(1, (0.22 + 0.74 * Math.pow(depth, 1.15)) * (options.edgeAlpha === undefined ? 0.95 : options.edgeAlpha))
+        ctx.strokeStyle = withAlpha(lightenColor(color, 0.55), alpha)
+        ctx.lineWidth = baseWidth * (0.9 + depth * 0.18)
+        ctx.beginPath()
+        for (const { a, b } of list) {
+          ctx.moveTo(points[a].x, points[a].y)
+          ctx.lineTo(points[b].x, points[b].y)
+        }
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
+    function drawGraphShape(ctx, radius, kind = 'experience') {
       if (radius <= 0.2) return
       ctx.beginPath()
-      if (theme === 'knowledge') {
-        for (let i = 0; i < 6; i += 1) {
-          const angle = (Math.PI / 3) * i - Math.PI / 6
-          const x = Math.cos(angle) * radius
-          const y = Math.sin(angle) * radius
-          if (i === 0) ctx.moveTo(x, y)
+      if (kind === 'type') {
+        // 类型是“主星”：六边形，和经验的圆点一眼分得开。
+        for (let index = 0; index < 6; index += 1) {
+          const angle = (Math.PI / 3) * index - Math.PI / 6
+          const x = Math.cos(angle) * radius * 1.04
+          const y = Math.sin(angle) * radius * 1.04
+          if (index === 0) ctx.moveTo(x, y)
           else ctx.lineTo(x, y)
         }
         ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-        return
-      }
-      if (theme === 'dream') {
-        ctx.ellipse(0, 0, radius * 1.35, radius * 0.72, 0, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.stroke()
-        return
-      }
-      if (theme === 'inspiration') {
-        for (let i = 0; i < 8; i += 1) {
-          const angle = (Math.PI / 4) * i
-          const length = i % 2 === 0 ? radius * 1.7 : radius * 0.62
-          const x = Math.cos(angle) * length
-          const y = Math.sin(angle) * length
-          if (i === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
-        }
+      } else if (kind === 'skill') {
+        // 技能是菱形，套件仍用圆 + 外虚线环，经验是圆点。
+        ctx.moveTo(0, -radius * 1.18)
+        ctx.lineTo(radius * 0.82, 0)
+        ctx.lineTo(0, radius * 1.18)
+        ctx.lineTo(-radius * 0.82, 0)
         ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-        return
-      }
-      if (theme === 'spacetime') {
+      } else {
         ctx.arc(0, 0, radius, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.stroke()
-        ctx.beginPath()
-        ctx.moveTo(0, -radius * 1.9)
-        ctx.lineTo(0, radius * 1.9)
-        ctx.strokeStyle = 'rgba(255,255,255,.22)'
-        ctx.stroke()
-        return
       }
-      ctx.arc(0, 0, radius, 0, Math.PI * 2)
       ctx.fill()
       ctx.stroke()
-      if (theme === 'collective') {
-        ctx.beginPath()
-        ctx.arc(0, 0, radius * 1.7, 0, Math.PI * 2)
-        ctx.stroke()
-      } else if (theme === 'emotion') {
-        ctx.beginPath()
-        ctx.arc(radius * 1.35, -radius * 0.6, radius * 0.28, 0, Math.PI * 2)
-        ctx.fill()
-      }
     }
 
     /**
@@ -2992,28 +3148,237 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 关系图布局（纯函数，O(N+E)）：类型球面锚点、经验按类型分层、技能/套件按父子环摆放。
+     * 抽出来是为了能单测 1k/3k 夹具；不依赖 React / DOM。
+     */
+    function layoutGraph(data) {
+      const nodes = Array.isArray(data && data.nodes) ? data.nodes : []
+      const edges = Array.isArray(data && data.edges) ? data.edges : []
+      const hash = (text) => {
+        let value = 2166136261
+        const raw = String(text)
+        for (let index = 0; index < raw.length; index += 1) {
+          value ^= raw.charCodeAt(index)
+          value = Math.imul(value, 16777619)
+        }
+        return value >>> 0
+      }
+      const rand = (text) => (hash(text) % 100000) / 100000
+      const nodeById = new Map(nodes.map((node) => [node.id, node]))
+      const types = nodes.filter((node) => node.kind === 'type')
+      const experiences = nodes.filter((node) => node.kind === 'experience')
+      const hierarchy = nodes.filter((node) => node.kind === 'skill' || node.kind === 'suite')
+      const parentOf = new Map()
+      const childrenByParent = new Map()
+      const derivedByTarget = new Map()
+      for (const edge of edges) {
+        if (edge.kind === 'suite') {
+          parentOf.set(edge.target, edge.source)
+          const list = childrenByParent.get(edge.source) || []
+          list.push(edge.target)
+          childrenByParent.set(edge.source, list)
+        } else if (edge.kind === 'derived') {
+          const list = derivedByTarget.get(edge.target) || []
+          list.push(edge.source)
+          derivedByTarget.set(edge.target, list)
+        }
+      }
+      const centers = new Map()
+      const total = Math.max(1, types.length)
+      types.forEach((node, index) => {
+        const y = total === 1 ? 0 : 1 - (index / (total - 1)) * 2
+        const ring = Math.sqrt(Math.max(0, 1 - y * y))
+        const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(node.id) * 0.5
+        const radius = 360 + rand(`${node.id}r`) * 40
+        centers.set(node.id, { x: Math.cos(phi) * ring * radius, y: y * radius * 0.78, z: Math.sin(phi) * ring * radius })
+      })
+      const positions = new Map()
+      for (const node of types) positions.set(node.id, centers.get(node.id))
+      const expByType = new Map()
+      for (const node of experiences) {
+        const key = `type:${node.typeId}`
+        const list = expByType.get(key) || []
+        list.push(node)
+        expByType.set(key, list)
+      }
+      for (const [key, list] of expByType) {
+        const center = centers.get(key) || { x: 0, y: 0, z: 0 }
+        // 同类型经验用黄金角均匀铺在球壳上，只按权重调半径，不再随机堆成团。
+        list.sort((left, right) => (Number(right.weight) || 0) - (Number(left.weight) || 0))
+        for (let index = 0; index < list.length; index += 1) {
+          const node = list[index]
+          const weight = Math.max(0.06, Math.min(1, Number(node.weight) || 0.3))
+          const y = list.length === 1 ? 0 : 1 - (index / (list.length - 1)) * 2
+          const ring = Math.sqrt(Math.max(0, 1 - y * y))
+          const phi = index * 2.399963 + rand(`${node.id}a`) * 0.3
+          const rr = 24 + (1 - Math.pow(weight, 0.7)) * 26 + rand(`${node.id}r`) * 4
+          positions.set(node.id, {
+            x: center.x + Math.cos(phi) * ring * rr,
+            y: center.y + y * rr * 0.72,
+            z: center.z + Math.sin(phi) * ring * rr,
+          })
+        }
+      }
+      const queue = []
+      let skillIndex = 0
+      for (const node of hierarchy) {
+        if (parentOf.has(node.id)) continue
+        let base
+        if (node.kind === 'suite') {
+          const a = rand(`${node.id}a`) * Math.PI * 2
+          const b = Math.acos(2 * rand(`${node.id}b`) - 1)
+          const rr = 500 + rand(`${node.id}r`) * 60
+          base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
+        } else {
+          const derived = (derivedByTarget.get(node.id) || []).map((id) => positions.get(id)).filter(Boolean)
+          if (derived.length > 0) {
+            base = derived.reduce((sum, item) => ({ x: sum.x + item.x / derived.length, y: sum.y + item.y / derived.length, z: sum.z + item.z / derived.length }), { x: 0, y: 0, z: 0 })
+          } else {
+            // 顶层技能沿黄金角排成外环，y 只做小幅散开，整体更均匀。
+            const phi = skillIndex * 2.399963 + rand(`${node.id}a`) * 0.2
+            const rr = 560 + rand(`${node.id}r`) * 70
+            base = { x: Math.cos(phi) * rr, y: (rand(`${node.id}y`) - 0.5) * 180, z: Math.sin(phi) * rr }
+            skillIndex += 1
+          }
+          const a = rand(`${node.id}a`) * Math.PI * 2
+          base = { x: base.x + Math.cos(a) * 46, y: base.y + (rand(`${node.id}y`) - 0.5) * 60, z: base.z + Math.sin(a) * 46 }
+        }
+        positions.set(node.id, base)
+        queue.push(node)
+      }
+      while (queue.length > 0) {
+        const parent = queue.shift()
+        const base = positions.get(parent.id) || { x: 0, y: 0, z: 0 }
+        const children = (childrenByParent.get(parent.id) || []).map((id) => nodeById.get(id)).filter(Boolean)
+        if (children.length === 0) continue
+        const rr = 42 + Math.sqrt(children.length) * 13
+        children.forEach((child, index) => {
+          const y = children.length === 1 ? 0 : 1 - (index / (children.length - 1)) * 2
+          const ring = Math.sqrt(Math.max(0, 1 - y * y))
+          const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(child.id) * 0.4
+          positions.set(child.id, {
+            x: base.x + Math.cos(phi) * ring * rr,
+            y: base.y + y * rr * 0.72,
+            z: base.z + Math.sin(phi) * ring * rr,
+          })
+          queue.push(child)
+        })
+      }
+      for (const node of hierarchy) {
+        if (positions.has(node.id)) continue
+        const a = rand(`${node.id}a`) * Math.PI * 2
+        const b = Math.acos(2 * rand(`${node.id}b`) - 1)
+        const rr = 450 + rand(`${node.id}r`) * 90
+        positions.set(node.id, { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr })
+      }
+      return positions
+    }
     function Graph() {
       const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const canvasRef = useRef(null)
+      const wrapRef = useRef(null)
       const fitRef = useRef(null)
       const zoomRef = useRef(null)
+      const [fullscreen, setFullscreen] = useState(false)
       const [selection, setSelection] = useState(null)
       const [paused, setPaused] = useState(false)
-      const [legendOpen, setLegendOpen] = useState(false)
       const [simple, setSimple] = useState(false)
+      const [query, setQuery] = useState('')
+      const [kindFilter, setKindFilter] = useState('all')
+      const [resultFilter, setResultFilter] = useState('all')
+      const [recentOnly, setRecentOnly] = useState(false)
+      // 「加载全部」：临时跳过 1,200 上限；「图例点击」：只看某一类（不覆盖 kindFilter）。
+      const [allowAll, setAllowAll] = useState(false)
+      const [focusedType, setFocusedType] = useState(null)
+      const [isolate, setIsolate] = useState(false)
+      const [panelOpen, setPanelOpen] = useState(false)
+      const searchRef = useRef(null)
+      useEffect(() => {
+        const onChange = () => setFullscreen(Boolean(document.fullscreenElement && wrapRef.current && document.fullscreenElement === wrapRef.current))
+        document.addEventListener('fullscreenchange', onChange)
+        return () => document.removeEventListener('fullscreenchange', onChange)
+      }, [])
+      const toggleFullscreen = async () => {
+        const element = wrapRef.current
+        if (!element) return
+        try {
+          if (document.fullscreenElement) await document.exitFullscreen()
+          else if (typeof element.requestFullscreen === 'function') await element.requestFullscreen()
+        } catch {
+          // 浏览器拒绝全屏（权限/手势）时保持原样，不弹窗。
+        }
+      }
+      useEffect(() => {
+        if (panelOpen && searchRef.current) searchRef.current.focus()
+      }, [panelOpen])
       const viewData = useMemo(() => {
-        if (!simple || !graph.data) return graph.data
-        const nodes = (graph.data.nodes || []).filter((node) => node.kind !== 'experience')
+        if (!graph.data) return graph.data
+        let data = graph.data
+        const allNodes = Array.isArray(data.nodes) ? data.nodes : []
+        if (!allowAll && allNodes.length > GRAPH_NODE_CAP) {
+          const structural = allNodes.filter((node) => node.kind !== 'experience')
+          const experiences = allNodes.filter((node) => node.kind === 'experience')
+            .sort((left, right) => (Number(right.weight) || 0) - (Number(left.weight) || 0))
+          const nodes = [...structural, ...experiences].slice(0, GRAPH_NODE_CAP)
+          const ids = new Set(nodes.map((node) => node.id))
+          data = {
+            ...data,
+            nodes,
+            edges: (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target)),
+            truncated: true,
+            total: allNodes.length,
+          }
+        }
+        if (focusedType !== null) {
+          const nodes = (data.nodes || []).filter((node) => node.id === focusedType
+            || (node.kind === 'experience' && `type:${node.typeId}` === focusedType))
+          const ids = new Set(nodes.map((node) => node.id))
+          data = { ...data, nodes, edges: (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target)) }
+        }
+        if (resultFilter !== 'all' || recentOnly) {
+          const cutoff = recentOnly ? Date.now() - 30 * 86400000 : null
+          const nodes = (data.nodes || []).filter((node) => {
+            if (node.kind !== 'experience') return true
+            if (resultFilter !== 'all' && node.outcome !== resultFilter) return false
+            if (cutoff !== null) {
+              const stamp = Date.parse(String(node.lastSeenAt || ''))
+              if (!Number.isFinite(stamp) || stamp < cutoff) return false
+            }
+            return true
+          })
+          const ids = new Set(nodes.map((node) => node.id))
+          data = { ...data, nodes, edges: (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target)) }
+        }
+        if (!simple) {
+          if (kindFilter === 'all') return data
+          const nodes = (data.nodes || []).filter((node) => node.kind === kindFilter)
+          const ids = new Set(nodes.map((node) => node.id))
+          return { ...data, nodes, edges: (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target)) }
+        }
+        const nodes = (data.nodes || []).filter((node) => node.kind !== 'experience')
         const ids = new Set(nodes.map((node) => node.id))
-        const edges = (graph.data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target))
-        return { ...graph.data, nodes, edges }
-      }, [graph.data, simple])
+        const edges = (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target))
+        return { ...data, nodes, edges }
+      }, [graph.data, allowAll, focusedType, simple, kindFilter, resultFilter, recentOnly])
+      const searchHits = useMemo(() => {
+        const term = query.trim().toLowerCase()
+        if (term === '') return []
+        const nodes = viewData && Array.isArray(viewData.nodes) ? viewData.nodes : []
+        return nodes.filter((node) => `${node.label || ''} ${node.id || ''}`.toLowerCase().includes(term)).slice(0, 6)
+      }, [query, viewData])
       const stateRef = useRef({
         nodes: new Map(), edges: new Map(), dust: [],
         cam: { yaw: -0.42, pitch: -0.24, dist: 1420 },
         selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false, fit: null,
       })
+      const selectNode = (node) => {
+        if (!node) return
+        stateRef.current.selected = node.id
+        stateRef.current.pulse = 0
+        setSelection(node)
+      }
       // 图上那个胶囊：手动切「跟随主题 / 蓝紫星辰」，写进 ui.graphPalette。
       const graphUi = (settings.data && settings.data.ui) || {}
       const paletteNow = GRAPH_PALETTES[graphUi.graphPalette] ? graphUi.graphPalette : 'dsh'
@@ -3040,7 +3405,6 @@ window.__ModuleLoader__.load({
         const canvas = canvasRef.current
         if (!canvas || !viewData) return undefined
         const ui = (settings.data && settings.data.ui) || {}
-        const theme = GRAPH_THEMES.includes(ui.graphTheme) ? ui.graphTheme : 'personal'
         const paletteKey = GRAPH_PALETTES[ui.graphPalette] ? ui.graphPalette : 'dsh'
         let palette = paletteKey === 'dsh'
           ? readDshGraphPalette(canvas)
@@ -3058,7 +3422,7 @@ window.__ModuleLoader__.load({
             ringFill: forcedDark ? 'rgba(8, 12, 20, .55)' : 'rgba(255, 255, 255, .62)',
           }
         }
-        const rotation = paused ? 0 : (Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.04)
+        const rotation = paused ? 0 : (Number.isFinite(Number(ui.graphRotation)) ? Number(ui.graphRotation) : 0.025)
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
         const dustCount = Math.max(0, Math.min(240, Number(ui.graphDust) || 70))
@@ -3072,6 +3436,13 @@ window.__ModuleLoader__.load({
         let dpr = 1
         let raf = 0
         let last = performance.now()
+        let lastInteraction = performance.now()
+        let lastDrawAt = 0
+        let onScreen = true
+        const visibilityObserver = typeof IntersectionObserver === 'function'
+          ? new IntersectionObserver((entries) => { onScreen = entries.some((entry) => entry.isIntersecting) })
+          : null
+        if (visibilityObserver !== null) visibilityObserver.observe(canvas)
         const hash = (text) => {
           let value = 2166136261
           for (let index = 0; index < String(text).length; index += 1) {
@@ -3085,13 +3456,14 @@ window.__ModuleLoader__.load({
           const rect = canvas.getBoundingClientRect()
           width = Math.max(320, rect.width)
           height = Math.max(320, rect.height)
-          dpr = Math.min(2, window.devicePixelRatio || 1)
+          dpr = Math.min(1.5, window.devicePixelRatio || 1)
           canvas.width = Math.round(width * dpr)
           canvas.height = Math.round(height * dpr)
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         }
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
+          if (node.kind === 'root') return 9 + Math.pow(w, 0.85) * 3
           if (node.kind === 'type') return 4 + Math.pow(w, 0.85) * 7
           if (node.kind === 'suite') return 6 + Math.pow(w, 0.85) * 6
           if (node.kind === 'skill') return 4.5 + Math.pow(w, 0.9) * 5.5
@@ -3113,112 +3485,40 @@ window.__ModuleLoader__.load({
           const f = FOCAL / Math.max(180, depth)
           return { x: width / 2 + x1 * f, y: height / 2 + y1 * f, f, depth }
         }
-        const layout = (data) => {
-          const types = data.nodes.filter((node) => node.kind === 'type')
-          const experiences = data.nodes.filter((node) => node.kind === 'experience')
-          const skills = data.nodes.filter((node) => node.kind === 'skill')
-          const centers = new Map()
-          const total = Math.max(1, types.length)
-          types.forEach((node, index) => {
-            const y = total === 1 ? 0 : 1 - (index / (total - 1)) * 2
-            const ring = Math.sqrt(Math.max(0, 1 - y * y))
-            const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(node.id) * 0.5
-            const radius = 240 + rand(`${node.id}r`) * 150
-            centers.set(node.id, { x: Math.cos(phi) * ring * radius, y: y * radius * 0.78, z: Math.sin(phi) * ring * radius })
-          })
-          const positions = new Map()
-          for (const node of types) positions.set(node.id, centers.get(node.id))
-          const expByType = new Map()
-          for (const node of experiences) {
-            const key = `type:${node.typeId}`
-            if (!expByType.has(key)) expByType.set(key, [])
-            expByType.get(key).push(node)
-          }
-          for (const [key, list] of expByType) {
-            const center = centers.get(key) || { x: 0, y: 0, z: 0 }
-            for (const node of list) {
-              const a = rand(`${node.id}a`) * Math.PI * 2
-              const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-              const rr = 26 + Math.pow(rand(`${node.id}r`), 0.65) * 145
-              positions.set(node.id, {
-                x: center.x + Math.sin(b) * Math.cos(a) * rr,
-                y: center.y + Math.cos(b) * rr * 0.72,
-                z: center.z + Math.sin(b) * Math.sin(a) * rr,
-              })
-            }
-          }
-          // 套件层级：先放顶层节点，再按「父 → 子」把子技能摆到父节点周围。
-          const hierarchy = data.nodes.filter((node) => node.kind === 'skill' || node.kind === 'suite')
-          const parentOf = new Map()
-          for (const edge of data.edges) if (edge.kind === 'suite') parentOf.set(edge.target, edge.source)
-          const queue = []
-          for (const node of hierarchy) {
-            if (parentOf.has(node.id)) continue
-            let base
-            if (node.kind === 'suite') {
-              const a = rand(`${node.id}a`) * Math.PI * 2
-              const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-              const rr = 330 + rand(`${node.id}r`) * 70
-              base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
-            } else {
-              const derived = data.edges.filter((edge) => edge.target === node.id && edge.kind === 'derived').map((edge) => positions.get(edge.source)).filter(Boolean)
-              if (derived.length > 0) {
-                base = derived.reduce((sum, item) => ({ x: sum.x + item.x / derived.length, y: sum.y + item.y / derived.length, z: sum.z + item.z / derived.length }), { x: 0, y: 0, z: 0 })
-              } else {
-                const a = rand(`${node.id}a`) * Math.PI * 2
-                const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-                const rr = 300 + rand(`${node.id}r`) * 90
-                base = { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr }
-              }
-              const a = rand(`${node.id}a`) * Math.PI * 2
-              base = { x: base.x + Math.cos(a) * 46, y: base.y + (rand(`${node.id}y`) - 0.5) * 60, z: base.z + Math.sin(a) * 46 }
-            }
-            positions.set(node.id, base)
-            queue.push(node)
-          }
-          while (queue.length > 0) {
-            const parent = queue.shift()
-            const base = positions.get(parent.id) || { x: 0, y: 0, z: 0 }
-            const children = hierarchy.filter((node) => parentOf.get(node.id) === parent.id)
-            if (children.length === 0) continue
-            const rr = 42 + Math.sqrt(children.length) * 13
-            children.forEach((child, index) => {
-              const y = children.length === 1 ? 0 : 1 - (index / (children.length - 1)) * 2
-              const ring = Math.sqrt(Math.max(0, 1 - y * y))
-              const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(child.id) * 0.4
-              positions.set(child.id, {
-                x: base.x + Math.cos(phi) * ring * rr,
-                y: base.y + y * rr * 0.72,
-                z: base.z + Math.sin(phi) * ring * rr,
-              })
-              queue.push(child)
-            })
-          }
-          // 理论上不会有漏网节点；真漏了也给个位置，别让它停在原点。
-          for (const node of hierarchy) {
-            if (positions.has(node.id)) continue
-            const a = rand(`${node.id}a`) * Math.PI * 2
-            const b = Math.acos(2 * rand(`${node.id}b`) - 1)
-            const rr = 300 + rand(`${node.id}r`) * 90
-            positions.set(node.id, { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr })
-          }
-          return positions
-        }
         const sync = (data) => {
-          const positions = layout(data)
+          const positions = layoutGraph(data)
+          const parentMap = new Map()
+          for (const edge of data.edges || []) {
+            if (edge.kind === 'type') parentMap.set(edge.target, edge.source)
+            else if (edge.kind === 'suite') parentMap.set(edge.target, edge.source)
+          }
           const seen = new Set()
           for (const node of data.nodes) {
-            if (node.kind === 'root') continue
             seen.add(node.id)
-            const shape = positions.get(node.id) || { x: 0, y: 0, z: 0 }
+            const shape = node.kind === 'root' ? { x: 0, y: 0, z: 0 } : (positions.get(node.id) || { x: 0, y: 0, z: 0 })
             const existing = store.nodes.get(node.id)
             if (existing) {
               existing.node = node
+              if (!Number.isFinite(existing.baseX)) {
+                existing.baseX = existing.x
+                existing.baseY = existing.y
+                existing.baseZ = existing.z
+              }
+              existing.targetX = shape.x
+              existing.targetY = shape.y
+              existing.targetZ = shape.z
               existing.targetWeight = Number(node.weight) || 0.3
               existing.targetAlpha = 1
+              existing.parentId = parentMap.get(node.id) || null
+              existing.spinSpeed = node.kind === 'type' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08
             } else {
               store.nodes.set(node.id, {
                 node, x: shape.x, y: shape.y, z: shape.z,
+                baseX: shape.x, baseY: shape.y, baseZ: shape.z,
+                targetX: shape.x, targetY: shape.y, targetZ: shape.z,
+                parentId: parentMap.get(node.id) || null,
+                spinSpeed: node.kind === 'type' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08,
+                spinAngle: 0,
                 r: 0, alpha: 0, targetAlpha: 1,
                 currentWeight: 0.08, targetWeight: Number(node.weight) || 0.3,
                 phase: rand(`${node.id}p`) * Math.PI * 2, drift: 0.7 + rand(`${node.id}d`) * 0.8,
@@ -3256,24 +3556,40 @@ window.__ModuleLoader__.load({
           const rect = canvas.getBoundingClientRect()
           const x = clientX - rect.left
           const y = clientY - rect.top
-          let best = null
-          let bestDistance = 26
+          const cell = 32
+          const grid = new Map()
           for (const [, entry] of store.nodes) {
             if (entry.alpha < 0.15) continue
-            const distance = Math.hypot(entry.screenX - x, entry.screenY - y)
-            if (distance < Math.max(bestDistance, entry.r + 6) && distance < bestDistance + entry.r) {
-              best = entry
-              bestDistance = distance
+            const key = `${Math.floor(entry.screenX / cell)},${Math.floor(entry.screenY / cell)}`
+            const list = grid.get(key) || []
+            list.push(entry)
+            grid.set(key, list)
+          }
+          let best = null
+          let bestDistance = 26
+          const cx = Math.floor(x / cell)
+          const cy = Math.floor(y / cell)
+          for (let gx = cx - 1; gx <= cx + 1; gx += 1) {
+            for (let gy = cy - 1; gy <= cy + 1; gy += 1) {
+              for (const entry of (grid.get(`${gx},${gy}`) || [])) {
+                const distance = Math.hypot(entry.screenX - x, entry.screenY - y)
+                if (distance < Math.max(bestDistance, entry.r + 6) && distance < bestDistance + entry.r) {
+                  best = entry
+                  bestDistance = distance
+                }
+              }
             }
           }
           return best
         }
         const onPointerDown = (event) => {
+          lastInteraction = performance.now()
           store.dragging = { x: event.clientX, y: event.clientY, yaw: cam.yaw, pitch: cam.pitch }
           store.dragMoved = false
           canvas.style.cursor = 'grabbing'
         }
         const onPointerMove = (event) => {
+          lastInteraction = performance.now()
           if (store.dragging) {
             const dx = event.clientX - store.dragging.x
             const dy = event.clientY - store.dragging.y
@@ -3302,17 +3618,18 @@ window.__ModuleLoader__.load({
           canvas.style.cursor = 'grab'
         }
         const onWheel = (event) => {
+          lastInteraction = performance.now()
           event.preventDefault()
           store.userZoom = true
           cam.dist = Math.min(3200, Math.max(520, cam.dist * (event.deltaY > 0 ? 1.08 : 0.92)))
         }
         resize()
         sync(viewData)
-        const fitCamera = (immediate = false) => {
+        const fitCamera = (immediate = false, scale = 1) => {
           if (store.userZoom && !immediate) return
           let bound = 1
           for (const entry of store.nodes.values()) bound = Math.max(bound, Math.hypot(entry.x, entry.y, entry.z))
-          const target = Math.max(900, Math.min(2800, bound * 2.9))
+          const target = Math.max(900, Math.min(2800, bound * 2.9 * scale))
           if (immediate) {
             cam.dist = target
             store.fit = null
@@ -3320,7 +3637,8 @@ window.__ModuleLoader__.load({
             store.fit = { from: cam.dist, to: target, at: performance.now() }
           }
         }
-        fitCamera(true)
+        // 进入关系图时按“滚轮再放大一档”的默认大小（0.9 = 一次滚轮缩放）。
+        fitCamera(true, 0.9)
         fitRef.current = () => { store.userZoom = false; fitCamera(false) }
         zoomRef.current = (factor) => { store.userZoom = true; cam.dist = Math.min(3200, Math.max(520, cam.dist * factor)) }
         const refreshPalette = () => {
@@ -3336,16 +3654,56 @@ window.__ModuleLoader__.load({
           themeObserver = null
         }
         const onResize = () => { resize(); fitCamera() }
+        const onFullscreen = () => requestAnimationFrame(() => { resize(); fitCamera(true) })
         window.addEventListener('resize', onResize)
+        document.addEventListener('fullscreenchange', onFullscreen)
         window.addEventListener('pointermove', onPointerMove)
         window.addEventListener('pointerup', onPointerUp)
         canvas.addEventListener('pointerdown', onPointerDown)
         canvas.addEventListener('pointerleave', onPointerLeave)
         canvas.addEventListener('wheel', onWheel, { passive: false })
         canvas.style.cursor = 'grab'
+        let pinchDistance = 0
+        const touchSpan = (event) => Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY)
+        const onTouchStart = (event) => {
+          if (event.touches.length !== 2) return
+          pinchDistance = touchSpan(event)
+          store.dragging = null
+          event.preventDefault()
+        }
+        const onTouchMove = (event) => {
+          if (event.touches.length !== 2 || pinchDistance <= 0) return
+          lastInteraction = performance.now()
+          const next = touchSpan(event)
+          if (next > 0 && zoomRef.current) zoomRef.current(pinchDistance / next)
+          pinchDistance = next
+          event.preventDefault()
+        }
+        const onTouchEnd = () => { pinchDistance = 0 }
+        canvas.addEventListener('touchstart', onTouchStart, { passive: false })
+        canvas.addEventListener('touchmove', onTouchMove, { passive: false })
+        canvas.addEventListener('touchend', onTouchEnd)
+        canvas.addEventListener('touchcancel', onTouchEnd)
         let frameCount = 0
         const draw = (now) => {
+          if ((typeof document !== 'undefined' && document.hidden) || !onScreen) {
+            last = now
+            raf = requestAnimationFrame(draw)
+            return
+          }
+          const idle = now - lastInteraction > 2000
+          if (idle && now - lastDrawAt < 32) {
+            last = now
+            raf = requestAnimationFrame(draw)
+            return
+          }
+          lastDrawAt = now
           frameCount += 1
+          if (frameCount % 30 === 0 && typeof window !== 'undefined') {
+            const elapsed = Math.max(1, now - (store.perfAt || now - 500))
+            store.perfAt = now
+            window.__engGraph = { nodes: store.nodes.size, edges: store.edges.size, fps: Math.round(30000 / elapsed), at: Date.now() }
+          }
           if (frameCount % 30 === 0 && paletteKey === 'dsh') palette = readDshGraphPalette(canvas)
           const dt = Math.min(0.05, (now - last) / 1000)
           last = now
@@ -3357,10 +3715,16 @@ window.__ModuleLoader__.load({
             cam.dist = store.fit.from + (store.fit.to - store.fit.from) * eased
             if (progress >= 1) store.fit = null
           }
-          if (rotation !== 0 && store.dragging === null) cam.yaw += rotation * dt
+          if (rotation !== 0 && store.dragging === null) cam.yaw -= rotation * dt
           const cx = width / 2
           const cy = height / 2
           ctx.clearRect(0, 0, width, height)
+          // 很轻的暗角：让视线落在中间的主星上，浅色主题只加一点墨感。
+          const vignette = ctx.createRadialGradient(cx, cy, Math.min(width, height) * 0.18, cx, cy, Math.max(width, height) * 0.72)
+          vignette.addColorStop(0, 'rgba(0, 0, 0, 0)')
+          vignette.addColorStop(1, palette.dark ? 'rgba(0, 0, 0, .30)' : 'rgba(15, 23, 42, .045)')
+          ctx.fillStyle = vignette
+          ctx.fillRect(0, 0, width, height)
           for (const particle of store.dust) {
             particle.x += particle.vx * dt
             particle.y += particle.vy * dt
@@ -3375,9 +3739,34 @@ window.__ModuleLoader__.load({
             ctx.fill()
           }
           for (const entry of store.nodes.values()) {
+            const move = Math.min(1, dt * 3)
+            if (!Number.isFinite(entry.baseX)) {
+              entry.baseX = entry.x
+              entry.baseY = entry.y
+              entry.baseZ = entry.z
+            }
+            if (Number.isFinite(entry.targetX)) entry.baseX += (entry.targetX - entry.baseX) * move
+            if (Number.isFinite(entry.targetY)) entry.baseY += (entry.targetY - entry.baseY) * move
+            if (Number.isFinite(entry.targetZ)) entry.baseZ += (entry.targetZ - entry.baseZ) * move
+            entry.spinAngle = -store.t * (entry.spinSpeed || 0) + entry.phase
             entry.currentWeight += (entry.targetWeight - entry.currentWeight) * Math.min(1, dt * 4)
             entry.alpha += (entry.targetAlpha - entry.alpha) * Math.min(1, dt * 4)
             entry.r += (radiusOf(entry.node, entry.currentWeight) - entry.r) * Math.min(1, dt * 6)
+          }
+          for (const entry of store.nodes.values()) {
+            const parent = entry.parentId ? store.nodes.get(entry.parentId) : null
+            if (parent && parent !== entry) {
+              const angle = parent.spinAngle || 0
+              const dx = entry.baseX - parent.baseX
+              const dz = entry.baseZ - parent.baseZ
+              entry.x = parent.baseX + dx * Math.cos(angle) - dz * Math.sin(angle)
+              entry.z = parent.baseZ + dx * Math.sin(angle) + dz * Math.cos(angle)
+              entry.y = entry.baseY
+            } else {
+              entry.x = entry.baseX
+              entry.y = entry.baseY
+              entry.z = entry.baseZ
+            }
             const projected = project(entry, store.t)
             entry.screenX = projected.x
             entry.screenY = projected.y
@@ -3393,7 +3782,8 @@ window.__ModuleLoader__.load({
               if (edgeState.edge.target === focusId) neighbors.add(edgeState.edge.source)
             }
           }
-          const edgeList = [...store.edges.entries()].sort((left, right) => left[1].currentStrength - right[1].currentStrength)
+          const edgeList = store.edges
+          const pulses = []
           for (const [key, edgeState] of edgeList) {
             edgeState.currentStrength += (edgeState.targetStrength - edgeState.currentStrength) * Math.min(1, dt * 3)
             const from = store.nodes.get(edgeState.edge.source)
@@ -3405,36 +3795,77 @@ window.__ModuleLoader__.load({
             const near = (from.screenF + to.screenF) * 0.5
             const bright = focusId !== null && (edgeState.edge.source === focusId || edgeState.edge.target === focusId)
             const relatedEdge = focusId === null || bright
-            ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : 0.1)
-            const gradient = ctx.createLinearGradient(from.screenX, from.screenY, to.screenX, to.screenY)
+            ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolate ? 0.02 : 0.1))
             const isSuiteEdge = edgeState.edge.kind === 'suite'
-            gradient.addColorStop(0, isSuiteEdge ? (palette.highlight || palette.node) : (palette.nodeLight || palette.node))
-            gradient.addColorStop(1, isSuiteEdge ? (palette.glow || palette.node) : (palette.edge || palette.node))
-            ctx.strokeStyle = gradient
+            ctx.strokeStyle = isSuiteEdge ? (palette.glow || palette.node) : (palette.edge || palette.node)
             ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : (isSuiteEdge ? 2.1 : 1.7))) * near
-            ctx.shadowBlur = bloom ? (4 + strength * 10) * near : 0
+            ctx.setLineDash(edgeState.edge.kind === 'suite' ? [5, 3] : (edgeState.edge.kind === 'derived' ? [2, 3] : []))
+            ctx.shadowBlur = bloom && bright ? (4 + strength * 10) * near : 0
             ctx.shadowColor = edgeState.edge.kind === 'derived' ? palette.node2 : palette.glow
             ctx.beginPath()
             ctx.moveTo(from.screenX, from.screenY)
             ctx.lineTo(to.screenX, to.screenY)
             ctx.stroke()
-            if (strength > 0.12) {
-              for (let index = 0; index < edgeState.particles.length; index += 1) {
-                edgeState.particles[index] = (edgeState.particles[index] + dt * (0.06 + strength * 0.5)) % 1
-                const progress = edgeState.particles[index]
-                const px = from.screenX + (to.screenX - from.screenX) * progress
-                const py = from.screenY + (to.screenY - from.screenY) * progress
-                ctx.globalAlpha = (0.2 + strength * 0.55) * near
-                ctx.fillStyle = palette.highlight
-                ctx.beginPath()
-                ctx.arc(px, py, (0.6 + strength * 1.3) * near, 0, Math.PI * 2)
-                ctx.fill()
+            if (strength > 0.1) {
+              const particles = edgeState.particles
+              particles[0] = (particles[0] + dt * (0.05 + strength * 0.45) * (bright ? 1.7 : 1)) % 1
+              if (pulses.length < 180 || bright) {
+                const progress = particles[0]
+                const dx = to.screenX - from.screenX
+                const dy = to.screenY - from.screenY
+                if (Math.hypot(dx, dy) > 1) {
+                  const px = from.screenX + dx * progress
+                  const py = from.screenY + dy * progress
+                  pulses.push({
+                    x: px,
+                    y: py,
+                    r: Math.max(0.7, (0.6 + strength * 1.3) * near),
+                    alpha: Math.min(0.95, (0.22 + strength * 0.5) * near * (bright ? 1.35 : 1)),
+                    color: bright ? palette.highlight : (palette.glow || palette.highlight),
+                  })
+                }
               }
             }
           }
+          ctx.setLineDash([])
+          ctx.shadowBlur = 0
+          if (pulses.length > 0) {
+            ctx.save()
+            ctx.globalCompositeOperation = 'lighter'
+            // 能量包：外层柔光 + 中层色晕 + 白热核心，整体只有“点”那么大。
+            for (const pulse of pulses) {
+              ctx.fillStyle = pulse.color
+              ctx.globalAlpha = Math.min(0.42, pulse.alpha * 0.16)
+              ctx.beginPath()
+              ctx.arc(pulse.x, pulse.y, pulse.r * 3.2, 0, Math.PI * 2)
+              ctx.fill()
+            }
+            for (const pulse of pulses) {
+              ctx.fillStyle = pulse.color
+              ctx.globalAlpha = Math.min(0.62, pulse.alpha * 0.34)
+              ctx.beginPath()
+              ctx.arc(pulse.x, pulse.y, pulse.r * 1.85, 0, Math.PI * 2)
+              ctx.fill()
+            }
+            for (const pulse of pulses) {
+              ctx.fillStyle = pulse.color
+              ctx.globalAlpha = pulse.alpha
+              ctx.beginPath()
+              ctx.arc(pulse.x, pulse.y, Math.max(0.6, pulse.r), 0, Math.PI * 2)
+              ctx.fill()
+              ctx.globalAlpha = Math.min(1, pulse.alpha * 0.9)
+              ctx.fillStyle = '#ffffff'
+              ctx.beginPath()
+              ctx.arc(pulse.x, pulse.y, Math.max(0.45, pulse.r * 0.42), 0, Math.PI * 2)
+              ctx.fill()
+            }
+            ctx.restore()
+          }
           const ordered = [...store.nodes.values()].sort((left, right) => right.depth - left.depth)
+          let polyBudget = GRAPH_POLY_BUDGET
           for (const entry of ordered) {
             if (entry.alpha <= 0.01) { if (entry.targetAlpha === 0) store.nodes.delete(entry.node.id); continue }
+            if (entry.screenX < -60 || entry.screenX > width + 60 || entry.screenY < -60 || entry.screenY > height + 60) continue
             const node = entry.node
             const isSelected = store.selected !== null && store.selected === node.id
             // 三类节点分开取色：经验=主色、类型=第二停靠点、技能=高亮色。
@@ -3451,7 +3882,7 @@ window.__ModuleLoader__.load({
               }
             }
             const related = focusId === null || neighbors.has(node.id)
-            const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing * energy * (related ? 1 : 0.3)
+            const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing * energy * (related ? 1 : (isolate && focusId !== null ? 0.06 : 0.3)) * (isSelected ? 1.2 : 1)
             const screenRadius = Math.max(0.4, entry.r * entry.screenF * (0.85 + entry.currentWeight * 0.3))
             const paint = (offsetX, offsetY, alphaMultiplier) => {
               ctx.save()
@@ -3460,12 +3891,21 @@ window.__ModuleLoader__.load({
               ctx.shadowBlur = 0
               ctx.shadowColor = 'transparent'
               ctx.scale(breathing, breathing)
+              // L3：缩到 1px 左右只画实心点，不建渐变/光晕/星芒。
+              if (screenRadius <= 1.1) {
+                ctx.fillStyle = color
+                ctx.beginPath()
+                ctx.arc(0, 0, Math.max(0.5, screenRadius), 0, Math.PI * 2)
+                ctx.fill()
+                ctx.restore()
+                return
+              }
               // 恒星感 = 白热星心 + 本体色 + 十字星芒 + 很淡的外晕。
               // 之前外晕太浓太大、星心用中间调，叠在一起就成一团发霉的污渍。
               const glowColor = palette.glow || color
               const hot = lightenColor(color, palette.dark ? 0.55 : 0.72)
               const haloRadius = screenRadius * 2
-              if (screenRadius > 1.6) {
+              if (screenRadius > 2.2) {
                 // 光晕和星芒用叠加混合：亮处更亮（星星是发光体），
                 // 浅色主题上也不会叠出一片脏兮兮的暗晕。
                 ctx.save()
@@ -3482,6 +3922,53 @@ window.__ModuleLoader__.load({
                 if (screenRadius > 3.2) drawStarFlare(ctx, screenRadius * 2.6, glowColor, 0.26)
                 ctx.restore()
               }
+              // 中心主星：外面一层日冕 + 8 条缓慢旋转的恒星芒，里面保留二十面体晶壳。
+              if (node.kind === 'root') {
+                const corona = ctx.createRadialGradient(0, 0, screenRadius * 0.2, 0, 0, screenRadius * 4.6)
+                corona.addColorStop(0, withAlpha(hot, 0.36))
+                corona.addColorStop(0.42, withAlpha(glowColor, 0.16))
+                corona.addColorStop(1, withAlpha(glowColor, 0))
+                ctx.save()
+                ctx.globalCompositeOperation = 'lighter'
+                ctx.fillStyle = corona
+                ctx.beginPath()
+                ctx.arc(0, 0, screenRadius * 4.6, 0, Math.PI * 2)
+                ctx.fill()
+                drawStarRays(ctx, screenRadius * 5.2, palette.highlight, 0.5, entry.spinAngle * 0.35)
+                ctx.restore()
+              }
+              // 正多面体：发光线框 + 半透明面；技能/经验缩小后仍退回 2D 轮廓。
+              const solid = graphSolidForNode(node)
+              const poly = solid && screenRadius > 2.8 && (node.kind === 'type' || node.kind === 'suite' || node.kind === 'root' || isSelected || (node.kind === 'skill' && screenRadius > 4.2)) && (isSelected || polyBudget > 0)
+              if (poly) {
+                polyBudget -= 1
+                drawPolyhedron(ctx, screenRadius * 1.55, color, solid, entry.spinAngle, {
+                  faceAlpha: node.kind === 'root' ? 0.20 : node.kind === 'type' ? 0.38 : node.kind === 'skill' ? 0.42 : 0.42,
+                  edgeAlpha: 0.95,
+                  glow: true,
+                })
+                if (node.kind === 'root') {
+                  const starCore = ctx.createRadialGradient(0, 0, 0, 0, 0, screenRadius * 1.1)
+                  starCore.addColorStop(0, 'rgba(255, 255, 255, .98)')
+                  starCore.addColorStop(0.35, withAlpha(hot, 0.75))
+                  starCore.addColorStop(1, withAlpha(hot, 0))
+                  ctx.save()
+                  ctx.globalCompositeOperation = 'lighter'
+                  ctx.fillStyle = starCore
+                  ctx.beginPath()
+                  ctx.arc(0, 0, screenRadius * 1.1, 0, Math.PI * 2)
+                  ctx.fill()
+                  ctx.restore()
+                }
+                if (screenRadius > 1.4) {
+                  ctx.fillStyle = withAlpha(hot, 0.95)
+                  ctx.beginPath()
+                  ctx.arc(0, 0, Math.max(0.7, screenRadius * 0.26), 0, Math.PI * 2)
+                  ctx.fill()
+                }
+                ctx.restore()
+                return
+              }
               const core = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(0.6, screenRadius))
               core.addColorStop(0, withAlpha(hot, 0.98))
               core.addColorStop(0.5, withAlpha(color, 0.96))
@@ -3490,7 +3977,7 @@ window.__ModuleLoader__.load({
               ctx.fillStyle = core
               ctx.strokeStyle = withAlpha(palette.highlight || color, 0.85)
               ctx.lineWidth = isSelected ? 1.6 : 0.6
-              drawGraphShape(ctx, screenRadius, theme)
+              drawGraphShape(ctx, screenRadius, node.kind)
               if (screenRadius > 1.6) {
                 // 星心那一点高光：整颗星最亮的位置，定出「光源在中心」
                 ctx.fillStyle = withAlpha(hot, 0.95)
@@ -3528,6 +4015,51 @@ window.__ModuleLoader__.load({
               ctx.restore()
             }
           }
+          ctx.font = '11px ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif'
+          const candidates = []
+          const seenLabels = new Set()
+          const addLabel = (entry, priority) => {
+            if (!entry || entry.alpha < 0.1 || seenLabels.has(entry.node.id)) return
+            seenLabels.add(entry.node.id)
+            candidates.push({ entry, priority })
+          }
+          addLabel(store.selected === null ? null : store.nodes.get(store.selected), 0)
+          addLabel(store.hovered === null ? null : store.nodes.get(store.hovered), 0)
+          for (const entry of store.nodes.values()) {
+            if (entry.node.kind === 'type') addLabel(entry, 1)
+            else if (entry.node.kind === 'suite') addLabel(entry, 2)
+            else if (entry.node.kind === 'experience' && entry.screenF > 1.05 && entry.currentWeight >= 0.5) addLabel(entry, 3)
+          }
+          candidates.sort((left, right) => left.priority - right.priority || right.entry.currentWeight - left.entry.currentWeight)
+          const placedLabels = []
+          let labelCount = 0
+          for (const candidate of candidates) {
+            if (labelCount >= 40) break
+            const entry = candidate.entry
+            const raw = String(entry.node.label || entry.node.id || '')
+            if (raw === '') continue
+            const label = raw.length > 26 ? `${raw.slice(0, 25)}…` : raw
+            const textWidth = ctx.measureText(label).width
+            const x = Math.max(6, Math.min(width - textWidth - 20, entry.screenX + Math.max(8, entry.r * entry.screenF) + 6))
+            const y = Math.max(6, Math.min(height - 30, entry.screenY - 10))
+            const box = { x: x - 2, y: y - 2, w: textWidth + 18, h: 24 }
+            if (placedLabels.some((other) => box.x < other.x + other.w && box.x + box.w > other.x && box.y < other.y + other.h && box.y + box.h > other.y)) continue
+            placedLabels.push(box)
+            labelCount += 1
+            ctx.save()
+            ctx.globalAlpha = 0.94
+            ctx.fillStyle = palette.dark ? 'rgba(10, 14, 24, .86)' : 'rgba(255, 255, 255, .94)'
+            ctx.strokeStyle = palette.dark ? 'rgba(255, 255, 255, .18)' : 'rgba(15, 23, 42, .14)'
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, textWidth + 14, 20, 6)
+            else ctx.rect(x, y, textWidth + 14, 20)
+            ctx.fill()
+            ctx.stroke()
+            ctx.fillStyle = palette.dark ? '#f1f5f9' : '#0f172a'
+            ctx.fillText(label, x + 7, y + 14)
+            ctx.restore()
+          }
           ctx.globalAlpha = 1
           ctx.shadowBlur = 0
           raf = requestAnimationFrame(draw)
@@ -3536,68 +4068,191 @@ window.__ModuleLoader__.load({
         return () => {
           cancelAnimationFrame(raf)
           window.removeEventListener('resize', onResize)
+          document.removeEventListener('fullscreenchange', onFullscreen)
           window.removeEventListener('pointermove', onPointerMove)
           window.removeEventListener('pointerup', onPointerUp)
           if (themeObserver !== null) themeObserver.disconnect()
+          if (visibilityObserver !== null) visibilityObserver.disconnect()
           canvas.removeEventListener('pointerdown', onPointerDown)
           canvas.removeEventListener('pointerleave', onPointerLeave)
           canvas.removeEventListener('wheel', onWheel)
+          canvas.removeEventListener('touchstart', onTouchStart)
+          canvas.removeEventListener('touchmove', onTouchMove)
+          canvas.removeEventListener('touchend', onTouchEnd)
+          canvas.removeEventListener('touchcancel', onTouchEnd)
         }
-      }, [viewData, settings.data, paused])
+      }, [viewData, settings.data, paused, isolate])
       const surfaceStyle = surfaceNow === 'dark'
         ? { background: '#0b1020' }
         : surfaceNow === 'light' ? { background: '#f6f8fc' } : undefined
       const typeNodes = graph.data && Array.isArray(graph.data.nodes) ? graph.data.nodes.filter((node) => node.kind === 'type') : []
+      const focusedTypeNode = focusedType === null ? null : (typeNodes.find((node) => node.id === focusedType) || null)
       const graphSummary = graph.data && graph.data.summary ? graph.data.summary : null
       const zoomBy = (factor) => { if (zoomRef.current) zoomRef.current(factor) }
+      const cycleNode = (direction) => {
+        const nodes = (viewData && Array.isArray(viewData.nodes) ? viewData.nodes : []).filter((node) => node.kind !== 'root')
+        if (nodes.length === 0) return
+        const index = nodes.findIndex((node) => selection !== null && node.id === selection.id)
+        const next = nodes[(index + direction + nodes.length) % nodes.length]
+        selectNode(next)
+      }
       return h('div', {
+        ref: wrapRef,
         className: 'eng-graph-canvas-wrap',
         style: surfaceStyle,
         tabIndex: 0,
         role: 'group',
-        'aria-label': '关系图；方向键平移，+/- 缩放，0 适配，空格暂停',
+        'aria-label': '关系图；方向键切换节点，/ 搜索，+/- 缩放，0 适配，空格暂停',
         onKeyDown: (event) => {
+          if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'BUTTON')) return
           if (event.key === '+' || event.key === '=') { zoomBy(0.9); event.preventDefault() }
           else if (event.key === '-') { zoomBy(1.1); event.preventDefault() }
           else if (event.key === '0') { if (fitRef.current) fitRef.current(); event.preventDefault() }
           else if (event.key === ' ') { setPaused((value) => !value); event.preventDefault() }
+          else if (event.key === 'ArrowRight') { cycleNode(1); event.preventDefault() }
+          else if (event.key === 'ArrowLeft') { cycleNode(-1); event.preventDefault() }
+          else if (event.key === 'Escape') {
+            if (panelOpen) { setPanelOpen(false); return }
+            stateRef.current.selected = null
+            setSelection(null)
+            setIsolate(false)
+          }
+          else if (event.key === 'i' || event.key === 'I') { if (selection !== null) setIsolate((value) => !value) }
+          else if (event.key === '/') { setPanelOpen(true); event.preventDefault() }
         },
       },
         h('canvas', { ref: canvasRef, className: 'eng-graph-canvas', 'aria-label': '3D 记忆海' }),
+        h('button', {
+          className: 'eng-graph-fullscreen',
+          type: 'button',
+          title: fullscreen ? '退出全屏' : '全屏',
+          'aria-label': fullscreen ? '退出全屏' : '全屏',
+          'aria-pressed': fullscreen ? 'true' : 'false',
+          onClick: toggleFullscreen,
+        }, h(NavIcon, { name: fullscreen ? 'collapse' : 'expand' })),
+        h('button', {
+          className: 'eng-graph-drawer-toggle',
+          type: 'button',
+          'aria-expanded': panelOpen ? 'true' : 'false',
+          'aria-controls': 'eng-graph-settings',
+          title: '关系图设置（快捷键 / 搜索）',
+          onClick: () => setPanelOpen((value) => !value),
+        }, panelOpen ? '收起设置' : '关系图设置'),
+        panelOpen ? h('div', {
+          id: 'eng-graph-settings',
+          className: 'eng-graph-drawer',
+          role: 'dialog',
+          'aria-label': '关系图设置',
+          onKeyDown: (event) => { if (event.key === 'Escape') { setPanelOpen(false); event.stopPropagation() } },
+        },
+          h('div', { className: 'eng-graph-drawer-head' },
+            h('strong', null, '关系图设置'),
+            h('button', { type: 'button', className: 'eng-graph-drawer-close', onClick: () => setPanelOpen(false), 'aria-label': '关闭设置' }, '关闭')),
+          h('div', { className: 'eng-graph-search' },
+            h('input', {
+              ref: searchRef,
+              className: 'eng-input eng-graph-search-input',
+              placeholder: '搜索节点（Enter 跳转）',
+              value: query,
+              onChange: (event) => setQuery(event.target.value),
+              onKeyDown: (event) => {
+                if (event.key === 'Enter') {
+                  if (searchHits[0]) { selectNode(searchHits[0]); setQuery('') }
+                  event.preventDefault()
+                } else if (event.key === 'Escape') { setQuery(''); setPanelOpen(false); event.stopPropagation() }
+              },
+            }),
+            query.trim() !== '' ? h('div', { className: 'eng-graph-search-hits' },
+              searchHits.length === 0
+                ? h('div', { className: 'eng-muted', style: { padding: '6px 8px' } }, '没有匹配节点')
+                : searchHits.map((node) => h('button', {
+                  key: node.id,
+                  type: 'button',
+                  className: 'eng-graph-search-hit',
+                  onClick: () => { selectNode(node); setQuery('') },
+                }, `${node.label || node.id} · ${node.kind}`))) : null),
+          h('div', { className: 'eng-graph-drawer-label' }, '筛选'),
+          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图类型筛选' },
+            [['all', '全部'], ['experience', '经验'], ['skill', '技能'], ['type', '类型'], ['suite', '套件']].map(([key, label]) => h('button', {
+              key,
+              type: 'button',
+              'data-active': kindFilter === key ? 'true' : 'false',
+              onClick: () => setKindFilter(key),
+            }, label))),
+          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图结果筛选' },
+            [['all', '全部结果'], ['success', '成功'], ['partial', '部分'], ['failed', '失败'], ['unknown', '未知']].map(([key, label]) => h('button', {
+              key,
+              type: 'button',
+              'data-active': resultFilter === key ? 'true' : 'false',
+              onClick: () => setResultFilter(key),
+            }, label)),
+            h('button', {
+              type: 'button',
+              'data-active': recentOnly ? 'true' : 'false',
+              'aria-pressed': recentOnly ? 'true' : 'false',
+              onClick: () => setRecentOnly((value) => !value),
+            }, '最近 30 天')),
+          h('div', { className: 'eng-graph-drawer-label' }, '视图'),
+          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图视图' },
+            h('button', { type: 'button', onClick: () => { if (fitRef.current) fitRef.current() } }, '适配视图'),
+            h('button', { type: 'button', 'data-active': paused ? 'true' : 'false', onClick: () => setPaused((value) => !value) }, paused ? '继续旋转' : '暂停旋转'),
+            h('button', { type: 'button', 'data-active': simple ? 'true' : 'false', 'aria-pressed': simple ? 'true' : 'false', onClick: () => setSimple((value) => !value) }, '精简视图'),
+            selection === null ? null : h('button', { type: 'button', 'data-active': isolate ? 'true' : 'false', 'aria-pressed': isolate ? 'true' : 'false', onClick: () => setIsolate((value) => !value) }, isolate ? '显示全部' : '只看邻居')),
+          h('div', { className: 'eng-graph-drawer-label' }, '图例'),
+          graphSummary ? h('div', { className: 'eng-muted' }, `${graphSummary.types} 类 · ${graphSummary.experiences} 条经验 · ${graphSummary.skills} 个技能 · ${graphSummary.suites} 个套件`) : null,
+          h('div', { className: 'eng-graph-legend-inline' }, typeNodes.slice(0, 10).map((node) => h('button', {
+            key: node.id,
+            type: 'button',
+            className: 'eng-graph-legend-btn',
+            'data-active': focusedType === node.id ? 'true' : 'false',
+            'aria-pressed': focusedType === node.id ? 'true' : 'false',
+            title: `只看「${node.label || node.id}」：本类节点 + 本类经验 + 相关边（再点一次恢复）`,
+            onClick: () => setFocusedType((current) => (current === node.id ? null : node.id)),
+          },
+          h('span', { className: 'eng-legend-dot' }),
+          h('span', { className: 'eng-row-intent', title: node.label }, node.label || node.id),
+          h('span', { className: 'eng-mono' }, String(node.count || 0))))),
+          h('div', { className: 'eng-graph-drawer-label' }, '外观'),
+          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图背景深浅' },
+            [['theme', '跟随主题'], ['light', '浅色'], ['dark', '深色']].map(([key, label]) => h('button', {
+              key,
+              type: 'button',
+              'data-active': surfaceNow === key ? 'true' : 'false',
+              onClick: () => pickSurface(key),
+            }, label))),
+          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图配色' },
+            [['dsh', '跟随主题'], ['codex', '蓝紫星辰']].map(([key, label]) => h('button', {
+              key,
+              type: 'button',
+              'data-active': paletteNow === key ? 'true' : 'false',
+              onClick: () => pickPalette(key),
+            }, label)))) : null,
+        h('ul', { className: 'eng-visually-hidden', 'aria-label': '关系图节点列表' },
+          (viewData && Array.isArray(viewData.nodes) ? viewData.nodes : [])
+            .filter((node) => node.kind !== 'root')
+            .slice(0, 300)
+            .map((node) => h('li', { key: node.id },
+              h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${({ type: '类型', suite: '套件', skill: '技能', experience: '经验' })[node.kind] || node.kind}）`)))),
         (graph.error || (graph.data && graph.data.storeError))
           ? h('div', { style: { position: 'absolute', left: 14, top: 14, right: 14, zIndex: 3 } },
             h(Banner, { bad: true }, graph.error || `经验数据读取失败：${graph.data.storeError.message}${graph.data.storeError.file ? `（${graph.data.storeError.file}）` : ''}`))
           : null,
-        h('div', { className: 'eng-graph-pill eng-graph-pill-top', role: 'group', 'aria-label': '关系图视图' },
-          h('button', { type: 'button', title: '把镜头拉回全图（快捷键 0）', onClick: () => { if (fitRef.current) fitRef.current() } }, '适配视图'),
-          h('button', { type: 'button', 'data-active': paused ? 'true' : 'false', title: '暂停/继续自转（快捷键 空格）', onClick: () => setPaused((value) => !value) }, paused ? '继续旋转' : '暂停旋转'),
-          h('button', { type: 'button', 'data-active': simple ? 'true' : 'false', 'aria-pressed': simple ? 'true' : 'false', title: '隐藏经验节点，只看类型/技能/套件（大图更流畅）', onClick: () => setSimple((value) => !value) }, '精简视图'),
-          h('button', { type: 'button', 'data-active': legendOpen ? 'true' : 'false', 'aria-expanded': legendOpen ? 'true' : 'false', onClick: () => setLegendOpen((value) => !value) }, '图例')),
-        legendOpen ? h('div', { className: 'eng-graph-legend' },
-          h('div', { className: 'eng-strong' }, '图例'),
-          graphSummary ? h('div', { className: 'eng-muted' }, `${graphSummary.types} 类 · ${graphSummary.experiences} 条经验 · ${graphSummary.skills} 个技能 · ${graphSummary.suites} 个套件`) : null,
-          h('div', { className: 'eng-graph-legend-list' }, typeNodes.slice(0, 10).map((node) => h('div', { key: node.id, className: 'eng-graph-legend-row' },
-            h('span', { className: 'eng-legend-dot' }),
-            h('span', { className: 'eng-row-intent', title: node.label }, node.label || node.id),
-            h('span', { className: 'eng-mono' }, String(node.count || 0)))))) : null,
-        h('div', { className: 'eng-graph-pill eng-graph-pill-bottom', role: 'group', 'aria-label': '关系图背景深浅' },
-          [['theme', '跟随主题'], ['light', '浅色'], ['dark', '深色']].map(([key, label]) => h('button', {
-            key,
-            type: 'button',
-            'data-tone': key,
-            'data-active': surfaceNow === key ? 'true' : 'false',
-            title: key === 'theme' ? '背景跟随当前主题（默认）' : key === 'light' ? '固定浅色背景' : '固定深色背景',
-            onClick: () => pickSurface(key),
-          }, label))),
-        h('div', { className: 'eng-graph-pill', role: 'group', 'aria-label': '关系图配色' },
-          [['dsh', '跟随主题'], ['codex', '蓝紫星辰']].map(([key, label]) => h('button', {
-            key,
-            type: 'button',
-            'data-tone': key,
-            'data-active': paletteNow === key ? 'true' : 'false',
-            title: key === 'codex' ? 'dsh-codex-effort-slider 那条推理滑条的蓝紫渐变' : '跟着当前 DSH 主题色走（换主题自动变）',
-            onClick: () => pickPalette(key),
-          }, label))),
+        (graph.data && (graph.data.nodes.length > viewData.nodes.length || viewData.truncated || allowAll))
+          ? h('div', { className: 'eng-graph-note' },
+            h('span', null, `${focusedTypeNode ? `只看「${focusedTypeNode.label || focusedTypeNode.id}」 · ` : ''}${allowAll && !viewData.truncated && viewData.nodes.length === graph.data.nodes.length
+              ? `已显示全部 ${viewData.nodes.length} 个节点`
+              : `已显示 ${viewData.nodes.length} / ${graph.data.nodes.length}${viewData.truncated ? `（上限 ${GRAPH_NODE_CAP}）` : ''}`}`),
+            (viewData.truncated || allowAll)
+              ? h('button', {
+                type: 'button',
+                className: 'eng-graph-note-btn',
+                title: allowAll
+                  ? '恢复 1,200 节点上限'
+                  : (graph.data.nodes.length > GRAPH_NODE_CAP ? '大图可能掉帧：一次渲染全部节点' : '加载全部节点'),
+                onClick: () => setAllowAll((value) => !value),
+              }, allowAll ? `恢复 ${GRAPH_NODE_CAP}` : '加载全部')
+              : null)
+          : null,
         selection === null ? null : h('div', { className: 'eng-graph-detail' },
           h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'type' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'type' ? '类型' : selection.kind === 'suite' ? '套件' : selection.kind === 'skill' ? '技能' : '经验')),
           h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
@@ -4558,6 +5213,11 @@ window.__ModuleLoader__.load({
       Usage,
       Cold,
       pickAccent,
+      layoutGraph,
+      GRAPH_SOLIDS,
+      GRAPH_SOLID_FOR_KIND,
+      graphSolidForNode,
+      drawPolyhedron,
       CommandPalette,
       ShortcutsDialog,
       toast,

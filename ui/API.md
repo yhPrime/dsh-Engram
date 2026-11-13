@@ -475,7 +475,8 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 > Git 备份配置在 `~/.dsh/engram/settings.json` 的 `git` 键：`repoUrl` / `branch` / `token` / `authorName` / `authorEmail` / `autoBackupMinutes`。
 > `token` 只用于 https 的 `http.extraHeader`，不会写进仓库、也不会出现在错误信息里（已打码）。
 
-### GET /graph&#10;→ { nodes, edges, summary, notice, updatedAt }。节点 kind：root/type/experience/skill/suite；边 kind：root/type/derived/suite。套件：总技能是 `skill:*` 节点（带 childCount），无根技能的套件是 `suite:*` 组节点（带 count）；`suite` 边表示「父技能/组 → 子技能」，关系图按这条边把子技能摆在父节点周围。`summary.suites` 是套件树根数。供「关系图」页渲染。
+### GET /graph
+→ { nodes, edges, total, truncated, byKind, summary, notice, storeError, updatedAt }。节点 kind：root/type/experience/skill/suite；边 kind：root/type/derived/suite。套件：总技能是 `skill:*` 节点（带 childCount），无根技能的套件是 `suite:*` 组节点（带 count）；`suite` 边表示「父技能/组 → 子技能」，关系图按这条边把子技能摆在父节点周围。`summary.suites` 是套件树根数。每个节点带 `degree`（按边计数的度）。查询参数（都可选）：`scope=summary`（只裁经验节点）、`limit`（只在 summary 下生效，默认 300、上限 1200）。不带 `scope` 时默认全量，旧 client 行为不变。详见 0.19.0 增量。供「关系图」页渲染。
 
 ## 0.15.0 增量（UI P0 契约对齐）
 
@@ -525,4 +526,23 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 ### POST /recall
 - 新增透传：`all`、`cold`、`cluster`、`detail`、`mark`、`verdicts`（`undefined` 不传，保持内核默认值）。
 - 冷档查询：`{ intent, cold: true }`，回执带 `cold: true`；冷档模式只读、不写盘。
+
+## 0.19.0 增量（graph summary / limit / degree）
+
+### GET /graph
+查询参数（都可选；缺省＝旧行为，全量）：
+
+- `scope=summary`：保留全部 root/type/skill/suite 节点，只把 experience 节点按 `weight` 降序截取（同权重时 `recent` 优先，再按 `lastSeenAt` 降序）；其他值按全量处理。
+- `limit`：summary 模式下最多返回的 experience 节点数，默认 300，夹在 1..1200（`0`/负数→1，非数字或空→300，`99999`→1200）。不带 `scope=summary` 时忽略（仍全量）。
+
+返回新增字段：
+
+- `total: number`：截断前可见经验总数（不是节点总数，也不是 summary 下已返回的经验数）。
+- `truncated: boolean`：experience 节点是否被截断（`total > 返回的 experience 节点数`）；全量模式恒为 `false`。
+- `byKind: object`：本次返回节点按 kind 计数，如 `{ "root": 1, "type": 6, "experience": 300, "skill": 9, "suite": 2 }`。
+- 每个 node 新增 `degree: number`：该节点在本次 `edges` 中出现的次数（按边计数，一次遍历边表累加，O(N+E)）。
+
+截断时 `edges` 同步收敛：被裁掉的 experience 不会留下 type→exp 或 exp→skill 残边，`summary.experiences` 仍是全量可见经验数。
+
+兼容性：字段只增不删；不带 `scope` 时仍返回全量节点与边，旧 client 无需改动。storeError/坏桶行为不变：HTTP 200 + `storeError`（`code: "store-unreadable"`），`total` 为 0、`truncated` 为 `false`，不 500。
 
