@@ -40,7 +40,7 @@ import { importSkills } from '../kernel/import-skill.js'
 import { applySkillNodeAction, buildSkillTree, forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
-import { normalizeContext, writeStore } from '../kernel/store.js'
+import { normalizeContext, readStore, writeStore } from '../kernel/store.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -1103,9 +1103,9 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       if (!active || active.mode !== 'live' || typeof active.hot !== 'function') return fail(res, 400, 'unsupported', '示例数据不支持自动分类')
       const body = await readBody(req)
-      const hot = active.hot()
-      if (hot.error) return fail(res, 500, 'store-unreadable', hot.error)
-      const store = hot.store
+      const dataDir = String(readOf(active).dataDir || '')
+      let store
+      try { store = readStore(dataDir) } catch (error) { return fail(res, 500, 'store-unreadable', String((error && error.message) || error)) }
       const row = (store.experiences || []).find((item) => item.id === String((body && body.id) || ''))
       if (row === undefined) return fail(res, 404, 'not-found', '经验不存在')
       const typeNames = (store.types || []).filter((type) => type && type.system !== true).map((type) => String(type.name || '')).filter(Boolean)
@@ -1129,9 +1129,10 @@ export async function handleRequest(req, res, source, deps = {}) {
       row.typeName = target.name
       const existingTags = normalizeContext(row.context)
       const room = Math.max(0, 8 - existingTags.length)
-      row.context = normalizeContext([...existingTags, ...(Array.isArray(decided.tags) ? decided.tags.slice(0, room) : [])])
-      writeStore(String(readOf(active).dataDir || ''), store)
-      return json(res, 200, { ok: true, data: { id: row.id, typeName: target.name, tags: row.context, classifier: decided.classifier, note: decided.note, model: decided.model || '' } })
+      const addedTags = (Array.isArray(decided.tags) ? decided.tags : []).map(String).filter((tag) => tag !== '' && !existingTags.includes(tag)).slice(0, room)
+      row.context = normalizeContext([...existingTags, ...addedTags])
+      writeStore(dataDir, store)
+      return json(res, 200, { ok: true, data: { id: row.id, typeName: target.name, tags: row.context, addedTags, classifier: decided.classifier, note: decided.note, model: decided.model || '' } })
     }
     if (route === '/graph') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

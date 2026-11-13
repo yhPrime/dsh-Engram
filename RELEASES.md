@@ -35,6 +35,10 @@
 
 ## 当前发布
 
+- **v0.19.36（修复分类写回只读对象；一键分类同步显示标签）**
+  - `/classify` 改用可写 `readStore`，不再对 `hot()` 的冻结对象赋值，修复 `Cannot assign to read only property 'typeId'`
+  - 一键分类回执新增 `addedTags`，UI 显示本次实际新增的标签；无新增时明确显示「未新增标签」
+  - 测试：全量 kernel + UI 通过
 - **v0.19.35（修复经验详情 labelPick 未定义崩溃）**
   - 详情面板补上标签编辑器状态 `labelPick/newLabel/labelBusy/labelMessage` 与切换经验时的重置
   - 回归测试：带标签/一键分类 props 渲染详情，防止再出现 “labelPick is not defined”

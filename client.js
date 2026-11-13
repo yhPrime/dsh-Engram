@@ -1332,7 +1332,7 @@ window.__ModuleLoader__.load({
                 typeof props.onAutoAssign === 'function' ? h(Button, { small: true, disabled: assigning, onClick: async () => {
                   setAssigning(true)
                   setAssignMessage('')
-                  try { const out = await props.onAutoAssign(row.id); setAssignMessage(`已分到「${out.typeName}」${out.classifier === 'local' ? '（本地兜底，未耗模型）' : '（临时会话）'}`) } catch (error) { setAssignMessage(error && error.message ? error.message : '自动分类失败') } finally { setAssigning(false) }
+                  try { const out = await props.onAutoAssign(row.id); const tagPart = Array.isArray(out.addedTags) && out.addedTags.length > 0 ? `，标签：${out.addedTags.join('、')}` : '，未新增标签'; setAssignMessage(`已分到「${out.typeName}」${tagPart}${out.classifier === 'local' ? '（本地兜底，未耗模型）' : '（临时会话）'}`) } catch (error) { setAssignMessage(error && error.message ? error.message : '自动分类失败') } finally { setAssigning(false) }
                 } }, '一键分类') : null,
                 typeof props.onAutoAssign === 'function' ? h(Tip, { text: '一键分类会拉起一次性临时会话（不注入工具/历史、只发最小文本），会产生额外 Token 消费' }) : null) : null,
               typeof props.onAddLabels === 'function' ? h('div', { className: 'eng-actions', style: { marginBottom: 12, flexWrap: 'wrap' } },

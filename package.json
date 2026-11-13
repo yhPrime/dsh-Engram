@@ -1,6 +1,6 @@
 {
   "name": "dsh-engram",
-  "version": "0.19.35",
+  "version": "0.19.36",
   "description": "Engram（记忆痕迹）：经验与技能引擎 + 经验库控制台，一个标准 DSH 插件。",
   "type": "module",
   "main": "./index.js",
