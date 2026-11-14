@@ -4906,7 +4906,7 @@ window.__ModuleLoader__.load({
         section === 'storage' ? [
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '存储位置'),
-          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '经验库根目录（含 exp-lib.json / manifest.json 的那个目录）。点「选择文件夹…」在系统窗口里挑；也可以直接粘贴路径后回车。'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '选一个父目录，经验库会自动建在它下面的 .exp 里；也可以直接选已有的 .exp。'),
           h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
             h('input', {
               className: 'eng-input',
@@ -4918,7 +4918,7 @@ window.__ModuleLoader__.load({
                 event.preventDefault()
                 if (rootInput.trim() !== '') saveRoot(rootInput.trim())
               },
-              placeholder: '例如：C:/Users/yh/WorkDeepSeek/.exp',
+              placeholder: '例如：C:/Users/yh/WorkDeepSeek（会自动建 .exp）',
             }),
             h(Button, { kind: 'primary', disabled: busy, onClick: pickRoot }, '选择文件夹…'),
             rootInput.trim() !== '' && rootInput.trim() !== String(data.currentRoot || '')

@@ -49,6 +49,19 @@ export function defaultDataDir(env = process.env) {
   return path.join(dshHome(env), '.exp')
 }
 
+/**
+ * 用户在设置里选的是父目录：默认在下面建 .exp。
+ * 已经是 .exp，或本身就是一个旧的经验库根（有 manifest/exp-lib），保持原样。
+ */
+export function storageRootFor(selected) {
+  const raw = String(selected || '').trim()
+  if (raw === '') return defaultDataDir()
+  const base = expand(raw)
+  if (path.basename(base).toLowerCase() === '.exp') return base
+  if (fs.existsSync(path.join(base, 'manifest.json')) || fs.existsSync(path.join(base, 'exp-lib.json'))) return base
+  return path.join(base, '.exp')
+}
+
 export function resolveEngramDataDir(config = {}, env = process.env) {
   const explicit = String((config && config.dataDir) || (env && env.ENGRAM_DATA_DIR) || '').trim()
   if (explicit !== '') return expand(explicit)
