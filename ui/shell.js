@@ -1174,8 +1174,10 @@ export async function handleRequest(req, res, source, deps = {}) {
           try {
             if (path.resolve(oldRoot) !== path.resolve(newRoot)) moveDataRoot(oldRoot, newRoot)
             setCurrentRoot(rawRoot)
-            // 用户第一次选择存储位置（或走默认根）：空库初始化默认主分类；已有数据不动。
-            ensureDefaultTypes(resolveEngramDataDir())
+            // 用户第一次选择存储位置（或走默认根）：先保证目录存在，再种默认主分类；已有数据不动。
+            const activeRoot = resolveEngramDataDir()
+            fs.mkdirSync(activeRoot, { recursive: true })
+            ensureDefaultTypes(activeRoot)
           } catch (error) {
             return fail(res, 409, 'root-move-failed', error && error.message ? error.message : '切换存储位置失败')
           }

@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { createTools } from './engine.js'
-import { renderHint } from './store.js'
+import { ensureDefaultTypes, renderHint } from './store.js'
 import { readEngineConfig, resolveEngramDataDir } from './settings.js'
 
 export const name = 'dsh-engram'
@@ -37,6 +37,14 @@ export async function apply(ctx, rawConfig = {}) {
     },
   })
   let defineTool = (definition) => definition
+  // 首次安装 / 换到全新目录：开箱即用的默认主分类。
+  // 已有业务类型或经验时 ensureDefaultTypes 自己会跳过，不覆盖用户数据。
+  try {
+    const seeded = ensureDefaultTypes(resolveEngramDataDir(config))
+    audit(config, `apply: default types ensured (${seeded.types.length})`)
+  } catch (error) {
+    audit(config, `apply: default types failed: ${error && error.message ? error.message : String(error)}`)
+  }
   try {
     const toolsSdk = await import('@deepseek-ai/dsh-tools')
     if (toolsSdk && typeof toolsSdk.defineTool === 'function') defineTool = toolsSdk.defineTool
