@@ -32,7 +32,7 @@ import {
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { defaultDataDir, moveDataRoot, readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
+import { defaultDataDir, moveDataRoot, readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, storageRootFor, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { ensureDefaultTypes } from '../kernel/store.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
@@ -1170,10 +1170,11 @@ export async function handleRequest(req, res, source, deps = {}) {
         if (body && Object.prototype.hasOwnProperty.call(body, 'currentRoot')) {
           const rawRoot = String(body.currentRoot || '').trim()
           const oldRoot = resolveEngramDataDir()
-          const newRoot = rawRoot === '' ? defaultDataDir() : rawRoot
+          const newRoot = rawRoot === '' ? defaultDataDir() : storageRootFor(rawRoot)
           try {
             if (path.resolve(oldRoot) !== path.resolve(newRoot)) moveDataRoot(oldRoot, newRoot)
-            setCurrentRoot(rawRoot)
+            // 存实际数据根（.exp），不是用户选的父目录；下次切根才不会再套一层。
+            setCurrentRoot(newRoot)
             // 用户第一次选择存储位置（或走默认根）：先保证目录存在，再种默认主分类；已有数据不动。
             const activeRoot = resolveEngramDataDir()
             fs.mkdirSync(activeRoot, { recursive: true })
