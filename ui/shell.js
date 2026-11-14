@@ -964,7 +964,19 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/types') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       const read = active.read() || {}
-      return json(res, 200, { ok: true, data: { types: typeListOf(active, read) } })
+      let types = typeListOf(active, read)
+      // 老安装可能先落了经验、后升级：启动时的种分类被 experiences>0 挡掉过。
+      // 类型页自己再兜一次，保证空业务类型时一定补默认分类。
+      if (!types.some((type) => type && type.system !== true)) {
+        const dataDir = String(read.dataDir || '').trim() || resolveEngramDataDir()
+        try {
+          ensureDefaultTypes(dataDir)
+          types = readStore(dataDir).types
+        } catch {
+          // 读不到/写不了就保持原样，页面仍显示「未分类」，错误由其它接口暴露。
+        }
+      }
+      return json(res, 200, { ok: true, data: { types } })
     }
     if (route === '/skills') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

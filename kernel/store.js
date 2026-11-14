@@ -536,7 +536,9 @@ export function clearStoreReadCache(dataDir) {
  */
 export function ensureDefaultTypes(dataDir) {
   const store = readStore(dataDir)
-  if (store.experiences.length > 0 || store.types.some((type) => type.system !== true)) return store
+  // 只看有没有业务类型；已经记过经验但没建过类型时也要补默认分类，
+  // 否则首次安装时先落了经验会把默认分类永久挡掉。
+  if (store.types.some((type) => type.system !== true)) return store
   const next = {
     ...store,
     types: [...PRESET_TYPES.map((type) => ({ ...type })), { ...SYSTEM_TYPE }],
