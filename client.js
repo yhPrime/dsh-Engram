@@ -3835,8 +3835,9 @@ window.__ModuleLoader__.load({
       }, [query, viewData])
       const stateRef = useRef({
         nodes: new Map(), edges: new Map(), dust: [],
-        cam: { yaw: -0.42, pitch: 0.26, dist: 1420, panX: 0, panY: 0 },
+        cam: { yaw: -0.42, pitch: 0.26, dist: 1420, panX: 0, panY: 0, velYaw: 0, velPitch: 0 },
         selected: null, hovered: null, pulse: 0, t: 0, dragging: null, dragMoved: false, userZoom: false, fit: null,
+        viewYaw: 0, viewPitch: 0,
       })
       const selectNode = (node) => {
         if (!node) return
@@ -3957,10 +3958,10 @@ window.__ModuleLoader__.load({
           const wx = entry.x + Math.sin(time / 3200 + entry.phase) * 7
           const wy = entry.y + Math.cos(time / 4100 + entry.phase) * 5
           const wz = entry.z + Math.sin(time / 2700 + entry.phase * 1.3) * 7
-          const cy = Math.cos(cam.yaw)
-          const sy = Math.sin(cam.yaw)
-          const cp = Math.cos(cam.pitch)
-          const sp = Math.sin(cam.pitch)
+          const cy = Math.cos(cam.yaw + (store.viewYaw || 0))
+          const sy = Math.sin(cam.yaw + (store.viewYaw || 0))
+          const cp = Math.cos(cam.pitch + (store.viewPitch || 0))
+          const sp = Math.sin(cam.pitch + (store.viewPitch || 0))
           const x1 = wx * cy - wz * sy
           const z1 = wx * sy + wz * cy
           const y1 = wy * cp - z1 * sp
@@ -4072,7 +4073,16 @@ window.__ModuleLoader__.load({
           if (event.button !== 0) return
           lastInteraction = performance.now()
           store.autoPauseUntil = 0
-          store.dragging = { x: event.clientX, y: event.clientY, yaw: cam.yaw, pitch: cam.pitch, pointerId: event.pointerId }
+          cam.velYaw = 0
+          cam.velPitch = 0
+          store.viewYaw = 0
+          store.viewPitch = 0
+          store.dragging = {
+            x: event.clientX, y: event.clientY,
+            lastX: event.clientX, lastY: event.clientY, lastAt: performance.now(),
+            yaw: cam.yaw, pitch: cam.pitch, velYaw: 0, velPitch: 0,
+            pointerId: event.pointerId,
+          }
           store.dragMoved = false
           canvas.style.cursor = 'grabbing'
           try { if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId) } catch {}
@@ -4083,9 +4093,18 @@ window.__ModuleLoader__.load({
             const dx = event.clientX - store.dragging.x
             const dy = event.clientY - store.dragging.y
             if (Math.hypot(dx, dy) > 4) store.dragMoved = true
+            const now = performance.now()
+            const moveDt = Math.max(8, now - (store.dragging.lastAt || now))
+            const stepYaw = (event.clientX - (store.dragging.lastX === undefined ? store.dragging.x : store.dragging.lastX)) * 0.006
+            const stepPitch = (event.clientY - (store.dragging.lastY === undefined ? store.dragging.y : store.dragging.lastY)) * 0.006
             cam.yaw = store.dragging.yaw + dx * 0.006
             // 拖拽方向贴手：往下拖，画面跟着往下走。
             cam.pitch = Math.max(-1.35, Math.min(1.35, store.dragging.pitch + dy * 0.006))
+            store.dragging.velYaw = Math.max(-2.4, Math.min(2.4, stepYaw / (moveDt / 1000)))
+            store.dragging.velPitch = Math.max(-1.6, Math.min(1.6, stepPitch / (moveDt / 1000)))
+            store.dragging.lastX = event.clientX
+            store.dragging.lastY = event.clientY
+            store.dragging.lastAt = now
             return
           }
           if (event.target !== canvas) { store.hovered = null; return }
@@ -4103,6 +4122,11 @@ window.__ModuleLoader__.load({
             store.selected = hit === null ? null : hit.node.id
             store.pulse = 0
             setSelection(hit === null ? null : hit.node)
+          }
+          if (store.dragging) {
+            const stalled = performance.now() - (store.dragging.lastAt || 0) > 90
+            cam.velYaw = stalled ? 0 : (store.dragging.velYaw || 0)
+            cam.velPitch = stalled ? 0 : (store.dragging.velPitch || 0)
           }
           store.dragging = null
           // 松手后先停自转 1.2s，给用户看一眼刚拖到的角度；再恢复。
@@ -4219,6 +4243,23 @@ window.__ModuleLoader__.load({
             cam.dist = store.fit.from + (store.fit.to - store.fit.from) * eased
             if (progress >= 1) store.fit = null
           }
+          // 松手惯性：拖拽的角速度继续滑一小段，再衰减；不覆盖原来的自动旋转。
+          if (store.dragging === null) {
+            if (Math.abs(cam.velYaw) > 0.0005 || Math.abs(cam.velPitch) > 0.0005) {
+              cam.yaw += cam.velYaw * dt
+              cam.pitch = Math.max(-1.35, Math.min(1.35, cam.pitch + cam.velPitch * dt))
+              const damp = Math.exp(-dt / 0.22)
+              cam.velYaw *= damp
+              cam.velPitch *= damp
+            } else {
+              cam.velYaw = 0
+              cam.velPitch = 0
+            }
+          }
+          const calm = store.dragging === null ? Math.max(0, Math.min(1, (now - lastInteraction - 1500) / 1800)) : 0
+          // 空闲呼吸只加在渲染视角上，不回写 cam.yaw/pitch；鼠标一动很快归零。
+          store.viewYaw = Math.sin(store.t * 0.9) * 0.012 * calm
+          store.viewPitch = Math.cos(store.t * 0.7) * 0.007 * calm
           if (rotation !== 0 && store.dragging === null && now > (store.autoPauseUntil || 0)) cam.yaw += rotation * dt
           const cx = width / 2
           const cy = height / 2
