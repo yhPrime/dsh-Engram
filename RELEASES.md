@@ -35,6 +35,13 @@
 
 ## 当前发布
 
+- **v0.20.7（黑盒迭代修复：错误码 / 标签归一 / 坏库检测）**
+  - `/review`、`/record` 的校验与业务错误按文档返回 400/404/409，坏 JSON → 400
+  - `/recall` 顶层透传 `lifecycleNote`（slim/detail 都有）
+  - 列表/详情/关系图 label 边统一标签归一；未登记自由标签保留
+  - 坏 manifest 无分片/无 legacy 时明确 `store-unreadable`
+  - 空库 `/types` 行带数字 `count`
+  - 黑盒回归：qa 38/0、安装/页面 33/33、完整 npm test 通过
 - **v0.20.6（关系图设置：可隐藏同标签经验连线）**
   - 设置「视图」增加隐藏/显示同标签连线开关，localStorage 持久化
   - 只过滤 label 边，不影响类型/技能/套件边与选择筛选
