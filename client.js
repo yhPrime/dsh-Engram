@@ -4305,9 +4305,18 @@ window.__ModuleLoader__.load({
             ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolate ? 0.02 : 0.1))
             const isSuiteEdge = edgeState.edge.kind === 'suite'
             const isLabelEdge = edgeState.edge.kind === 'label'
+            // 同标签关系是“弱连接”，但必须看得见：原先 0.025 + 0.32×strength ≈ 0.08 透明度，
+            // 在深色背景上几乎等于没有线。这里单独给 label 边一个可见基线。
+            if (isLabelEdge) {
+              ctx.globalAlpha = Math.min(0.78, (0.16 + strength * 0.9) * near) * (relatedEdge ? 1 : (isolate ? 0.03 : 0.18)) * (bright ? 1.3 : 1)
+            } else {
+              ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolate ? 0.02 : 0.1))
+            }
             ctx.strokeStyle = isLabelEdge ? (palette.node2 || palette.edge) : (isSuiteEdge ? (palette.glow || palette.node) : (palette.edge || palette.node))
-            ctx.lineWidth = (0.2 + strength * (bright ? 2.4 : (isSuiteEdge ? 2.1 : (isLabelEdge ? 1.0 : 1.7)))) * near
-            ctx.setLineDash(isLabelEdge ? [1, 4] : (edgeState.edge.kind === 'suite' ? [5, 3] : (edgeState.edge.kind === 'derived' ? [2, 3] : [])))
+            ctx.lineWidth = isLabelEdge
+              ? (0.7 + strength * 2.4) * near
+              : (0.2 + strength * (bright ? 2.4 : (isSuiteEdge ? 2.1 : 1.7))) * near
+            ctx.setLineDash(isLabelEdge ? [3, 5] : (edgeState.edge.kind === 'suite' ? [5, 3] : (edgeState.edge.kind === 'derived' ? [2, 3] : [])))
             ctx.shadowBlur = !isLabelEdge && bloom && bright ? (4 + strength * 10) * near : 0
             ctx.shadowColor = edgeState.edge.kind === 'derived' ? palette.node2 : palette.glow
             ctx.beginPath()
