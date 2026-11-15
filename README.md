@@ -2,7 +2,7 @@
 
 Engram（记忆痕迹）：经验与技能引擎 + **经验库控制台**，一个标准 DSH 插件。
 
-当前版本：**0.20.6**。
+当前版本：**0.20.7**。
 
 ## 最近能力（0.20.x）
 
@@ -16,7 +16,7 @@ Engram（记忆痕迹）：经验与技能引擎 + **经验库控制台**，一�
 
 ```bash
 npm pack
-dsh plugin --profile <profile> add ./dsh-engram-0.20.6.tgz
+dsh plugin --profile <profile> add ./dsh-engram-0.20.7.tgz
 ```
 
 重启 DSH 后只出现**一个**插件行「dsh-engram」：左侧栏多出「经验库」，控制台含概览 / 关系图 / 经验 / 检索 / 记录 / 技能 / 类型 / 冷档 / 使用记录 / 设置；工具面 `exp_record / exp_recall / exp_feedback / exp_consolidate / exp_type / exp_skill_attach / exp_review` 同包内的 `/exp-ui/api` 一并生效。

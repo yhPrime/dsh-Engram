@@ -454,13 +454,20 @@ export function rebuildManifest(dataDir, options = {}) {
 export function readManifest(dataDir) {
   let manifest = null
   let broken = false
+  let parseError = null
   try {
     manifest = readManifestFile(dataDir)
-  } catch {
+  } catch (error) {
     broken = true
+    parseError = error
   }
   const sharded = hasShardFiles(dataDir)
   if (!broken && manifest !== null && !shardsMismatch(dataDir, manifest)) return manifest
+  // manifest 存在但解析失败、磁盘上又没有分片或旧库可回退时，不能当成「空库」：
+  // 用户会以为数据凭空消失，下一次写入还可能覆盖掉现场。这里明确报不可读。
+  if (broken && !sharded && !fs.existsSync(storeFile(dataDir))) {
+    throw new Error(`经验库 manifest.json 解析失败：${String((parseError && parseError.message) || parseError)}（${manifestPath(dataDir)}）`)
+  }
   // 没有分片可参考：要么是还没迁移的老库（有 exp-lib.json），要么本来就是空库。
   if (manifest === null && !sharded) return null
   if (!sharded && fs.existsSync(storeFile(dataDir))) return null

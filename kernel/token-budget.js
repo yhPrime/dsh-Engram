@@ -173,6 +173,8 @@ export function slimRecall(payload, options = {}) {
   if (note !== '') out.note = note
   const warning = cut(payload.warning, CUT_TEXT)
   if (warning !== '') out.warning = warning
+  const lifecycleNote = cut(payload.lifecycleNote, CUT_TEXT)
+  if (lifecycleNote !== '') out.lifecycleNote = lifecycleNote
   // 簇路由只留三样（name / score / fallback）：整块 route 有 200+ 字符，模型用不到细节。
   const route = payload.route
   if (route !== null && typeof route === 'object') {

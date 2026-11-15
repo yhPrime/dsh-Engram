@@ -517,13 +517,45 @@ export function buildRecall(source, body = {}) {
 
 export function buildRecord(source, body = {}) {
   if (!source || typeof source.record !== 'function') throw codedError('read-only', '当前数据源不支持写入经验')
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw codedError('bad-request', '请求体必须是对象')
+  const intent = String(body.intent === undefined || body.intent === null ? '' : body.intent).trim()
+  if (intent === '') throw codedError('intent-required', '缺少 intent')
+  const action = String(body.action === undefined || body.action === null ? '' : body.action).trim()
+  if (action === '') throw codedError('action-required', '缺少 action')
+  const outcome = String(body.outcome === undefined || body.outcome === null ? '' : body.outcome).trim()
+  if (outcome !== '' && !['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'].includes(outcome)) {
+    throw codedError('bad-outcome', `outcome 不合法：${outcome}`)
+  }
   return source.record(body)
 }
 
 /** `/review` 的 data：时效复核（due / verify / stale / retire / revive），经验与技能同一入口。 */
 export function buildReview(source, body = {}) {
   if (!source || typeof source.review !== 'function') throw codedError('unsupported', '当前数据源不支持时效复核')
-  return source.review(body)
+  const args = body !== null && typeof body === 'object' && !Array.isArray(body) ? body : {}
+  const action = String(args.action === undefined || args.action === null ? '' : args.action).trim().toLowerCase()
+  const reviewActions = ['due', 'verify', 'stale', 'retire', 'revive']
+  if (!reviewActions.includes(action)) {
+    throw codedError('bad-action', `action 只能是 ${reviewActions.join(' / ')}，收到：${action || '(空)'}`)
+  }
+  const id = String(args.id === undefined || args.id === null ? '' : args.id).trim()
+  if (action !== 'due' && id === '') throw codedError('id-required', '缺少 id（经验 id 或 skill:<slug>）')
+  const note = String(args.note === undefined || args.note === null ? '' : args.note).trim()
+  if (action === 'revive' && note === '') throw codedError('reason-required', 'revive 需要 note 说明理由')
+  const reviewAfter = String(args.reviewAfter === undefined || args.reviewAfter === null ? '' : args.reviewAfter).trim()
+  if (reviewAfter !== '' && !Number.isFinite(Date.parse(reviewAfter))) {
+    throw codedError('bad-request', `reviewAfter 不是合法时间：${reviewAfter}`)
+  }
+  try {
+    return source.review({ ...args, action })
+  } catch (error) {
+    const message = String((error && error.message) || error)
+    if (/没有这条经验|没有这个技能/.test(message)) throw codedError('not-found', message)
+    if (/已被.*取代|已删除|已退休/.test(message)) throw codedError('not-feedbackable', message)
+    if (/revive 需要 note/.test(message)) throw codedError('reason-required', message)
+    if (/不是合法时间/.test(message)) throw codedError('bad-request', message)
+    throw error
+  }
 }
 
 export function buildConsolidate(source, body = {}) {
@@ -991,7 +1023,7 @@ export async function handleRequest(req, res, source, deps = {}) {
         const dataDir = String(read.dataDir || '').trim() || resolveEngramDataDir()
         try {
           ensureDefaultTypes(dataDir)
-          types = readStore(dataDir).types
+          types = typesOf(readStore(dataDir))
         } catch {
           // 读不到/写不了就保持原样，页面仍显示「未分类」，错误由其它接口暴露。
         }
@@ -1411,6 +1443,8 @@ export async function handleRequest(req, res, source, deps = {}) {
     }
     return fail(res, 404, 'not-found', `没有这个路由：${route}`)
   } catch (error) {
+    // 请求体解析失败是调用方错误，不是内部错误；否则所有坏 JSON 都会被压成 500。
+    if (error instanceof SyntaxError) return fail(res, 400, 'bad-request', '请求体不是合法 JSON')
     const code = error && typeof error.code === 'string' ? error.code : 'internal'
     const message = String((error && error.message) || error)
     const status = code === 'unsupported'

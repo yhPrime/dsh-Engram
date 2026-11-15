@@ -16,6 +16,7 @@
 
 import { statsEntries } from '../kernel/shard-store.js'
 import { lifecycleMetaOf } from '../kernel/retrieval.js'
+import { canonicalTag } from '../kernel/store.js'
 
 /** 反馈 EMA 系数，与真实经验库一致。 */
 export const FEEDBACK_ETA = 0.35
@@ -93,7 +94,17 @@ export function rowOf(experience) {
     note: String(experience.note || ''),
     origin: String(experience.origin || 'manual'),
     kind: String(experience.kind || 'task'),
-    context: Array.isArray(experience.context) ? experience.context.map(String) : [],
+    context: Array.isArray(experience.context)
+      ? experience.context
+        .map((tag) => {
+          const raw = String(tag === undefined || tag === null ? '' : tag).trim()
+          if (raw === '') return ''
+          // 旧数据里可能有未登记的自由标签：规范名优先，但不要因为不在词表就丢掉。
+          return canonicalTag(raw) || raw
+        })
+        .filter((tag) => tag !== '')
+        .filter((tag, index, list) => list.findIndex((other) => other.toLowerCase() === tag.toLowerCase()) === index)
+      : [],
     dimensions: Array.isArray(experience.dimensions) ? experience.dimensions.map(String) : [],
     expectedG: Number.isFinite(Number(experience.expectedG)) ? Number(experience.expectedG) : null,
     verdict: String(experience.verdict || ''),
