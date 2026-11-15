@@ -3750,6 +3750,16 @@ window.__ModuleLoader__.load({
       const [selection, setSelection] = useState(null)
       const [paused, setPaused] = useState(false)
       const [simple, setSimple] = useState(false)
+      const [hideTagEdges, setHideTagEdges] = useState(() => {
+        try { return localStorage.getItem('eng:graphTagEdges') === 'hide' } catch { return false }
+      })
+      const toggleTagEdges = () => {
+        setHideTagEdges((value) => {
+          const next = !value
+          try { localStorage.setItem('eng:graphTagEdges', next ? 'hide' : 'show') } catch { /* 隐私模式忽略 */ }
+          return next
+        })
+      }
       const [query, setQuery] = useState('')
       const [kindFilter, setKindFilter] = useState('all')
       const [resultFilter, setResultFilter] = useState('all')
@@ -3781,6 +3791,7 @@ window.__ModuleLoader__.load({
       const viewData = useMemo(() => {
         if (!graph.data) return graph.data
         let data = graph.data
+        if (hideTagEdges) data = { ...data, edges: (data.edges || []).filter((edge) => edge.kind !== 'label') }
         const allNodes = Array.isArray(data.nodes) ? data.nodes : []
         if (!allowAll && allNodes.length > GRAPH_NODE_CAP) {
           const structural = allNodes.filter((node) => node.kind !== 'experience')
@@ -3826,7 +3837,7 @@ window.__ModuleLoader__.load({
         const ids = new Set(nodes.map((node) => node.id))
         const edges = (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target))
         return { ...data, nodes, edges }
-      }, [graph.data, allowAll, focusedType, simple, kindFilter, resultFilter, recentOnly])
+      }, [graph.data, allowAll, focusedType, simple, hideTagEdges, kindFilter, resultFilter, recentOnly])
       const searchHits = useMemo(() => {
         const term = query.trim().toLowerCase()
         if (term === '') return []
@@ -4784,6 +4795,7 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', onClick: () => { if (fitRef.current) fitRef.current() } }, '适配视图'),
             h('button', { type: 'button', 'data-active': paused ? 'true' : 'false', onClick: () => setPaused((value) => !value) }, paused ? '继续旋转' : '暂停旋转'),
             h('button', { type: 'button', 'data-active': simple ? 'true' : 'false', 'aria-pressed': simple ? 'true' : 'false', onClick: () => setSimple((value) => !value) }, '精简视图'),
+            h('button', { type: 'button', 'data-active': hideTagEdges ? 'true' : 'false', 'aria-pressed': hideTagEdges ? 'true' : 'false', title: '隐藏/显示共同标签的小经验之间的虚线', onClick: toggleTagEdges }, hideTagEdges ? '显示同标签连线' : '隐藏同标签连线'),
             selection === null ? null : h('button', { type: 'button', 'data-active': isolate ? 'true' : 'false', 'aria-pressed': isolate ? 'true' : 'false', onClick: () => setIsolate((value) => !value) }, isolate ? '显示全部' : '只看邻居')),
           h('div', { className: 'eng-graph-drawer-label' }, '图例'),
           graphSummary ? h('div', { className: 'eng-muted' }, `${graphSummary.types} 类 · ${graphSummary.experiences} 条经验 · ${graphSummary.skills} 个技能 · ${graphSummary.suites} 个套件`) : null,
