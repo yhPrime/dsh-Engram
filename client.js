@@ -3657,7 +3657,10 @@ window.__ModuleLoader__.load({
           const y = list.length === 1 ? 0.18 : 0.55 - (index / (list.length - 1)) * 1.1
           const ring = Math.sqrt(Math.max(0, 1 - y * y))
           const phi = index * 2.399963 + rand(`${node.id}a`) * 0.3
-          const rr = 22 + (1 - Math.pow(weight, 0.65)) * 34 + rand(`${node.id}r`) * 2
+          // 经验云离分类主星至少 90：旧半径 22–56 会让小节点堆在分类节点脸上。
+          // 同类型越多，壳层跟着放大，避免节点数一多又挤成一团。
+          const cloud = 82 + Math.min(60, Math.sqrt(Math.max(1, list.length)) * 8)
+          const rr = cloud + (1 - Math.pow(weight, 0.65)) * 36 + rand(`${node.id}r`) * 3
           positions.set(node.id, {
             x: center.x + Math.cos(phi) * ring * rr,
             y: center.y + y * rr * 0.72,
