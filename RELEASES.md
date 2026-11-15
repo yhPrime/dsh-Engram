@@ -35,6 +35,12 @@
 
 ## 当前发布
 
+- **v0.20.2（关系图经验云外扩：小经验节点不再挤在分类主星上）**
+  - 经验云半径从 22–56 外扩到 90–180 左右，按同类型节点数自适应扩壳
+  - 保留权重分层；类型节点、技能带、相机默认缩放不变
+  - 回归：关系图静态守卫/client 测试
+- **v0.20.1（修复宿主 schema：appliesTo/currentEnv 显式 additionalProperties）**
+  - 0.20.0 在严格宿主 schema 校验下激活失败；本版补齐 `additionalProperties: false`
 - **v0.20.0（经验时效 + 标签分类 P0/P1）**
   - P0：经验/技能生命周期（`active/stale/retired/superseded`）、半衰期 freshness、`appliesTo`、`exp_review`
   - P0：标签词表 registry（对象/动作/主题/质量四面、core、别名、严格命名）；`DSH-Engram → DSH插件`、`EigenFlux → 智能体平台`
