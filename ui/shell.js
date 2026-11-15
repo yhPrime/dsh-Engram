@@ -32,7 +32,7 @@ import {
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { defaultDataDir, moveDataRoot, readEngineConfig, readGitConfig, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, storageRootFor, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
+import { defaultDataDir, moveDataRoot, readEngineConfig, readGitConfig, readRuntimeEnv, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, storageRootFor, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { ensureDefaultTypes } from '../kernel/store.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
@@ -40,7 +40,8 @@ import { importSkills } from '../kernel/import-skill.js'
 import { applySkillNodeAction, buildSkillTree, forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
-import { normalizeContext, readStore, tagCatalog, writeStore } from '../kernel/store.js'
+import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
+import { validateTagSet } from '../kernel/tag-registry.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -77,6 +78,10 @@ export const SETTINGS_SPEC = {
     { key: 'mergeThreshold', label: '类型合并阈值', type: 'number', tip: '重记一条「没写类型」的经验时，若同做法的旧经验相似度达到这个阈值，就继承它的类型。注意：类型名互相包含（如「文档写作」/「文档写作文案」）会直接合并，不受这个阈值影响。' },
     { key: 'replaceThreshold', label: '经验取代阈值', type: 'number', tip: '新记录与旧经验意图相似度达到这个阈值时，旧条标记为「被取代」（保留历史但不再参与召回）。' },
     { key: 'typeSimilarity', label: '类型相似度阈值', type: 'number', tip: '新建类型时，名字与已有类型的相似度（二元组 Jaccard）达到这个值就并入已有类型，不新建。' },
+    // 运行环境（P1）：用于经验 appliesTo 门控；不填 = 未声明，不会因此拦掉任何经验。
+    { key: 'currentModel', label: '当前模型', type: 'string', group: '运行环境', hint: '如 deepseek-flash；留空＝未声明', tip: '只用于判断经验 appliesTo.models 是否匹配：模型不在声明里 → 该经验默认不召回（includeMismatched 可查看）。不会去读宿主内部模型名。' },
+    { key: 'currentTool', label: '工具版本', type: 'string', group: '运行环境', hint: '如 dsh-engram@0.19.46', tip: '对应经验 appliesTo.tools。升级插件后记得改这里：旧版本的具体步骤/命令会因此被默认隐藏，而不是被当成命令照做。' },
+    { key: 'currentEnvironment', label: '运行环境', type: 'string', group: '运行环境', hint: '如 Windows / WSL / 沙箱', tip: '对应经验 appliesTo.environment，大小写不敏感。只用于范围匹配，不影响 G/Â。' },
   ],
   ui: [
     { key: 'source', label: '数据源', type: 'enum', values: ['live', 'mock'], hint: 'mock 仅用于界面演示', tip: 'live：读真实经验库；mock：读内置示例数据（只用于看界面效果，不写真实库）。' },
@@ -513,6 +518,12 @@ export function buildRecall(source, body = {}) {
 export function buildRecord(source, body = {}) {
   if (!source || typeof source.record !== 'function') throw codedError('read-only', '当前数据源不支持写入经验')
   return source.record(body)
+}
+
+/** `/review` 的 data：时效复核（due / verify / stale / retire / revive），经验与技能同一入口。 */
+export function buildReview(source, body = {}) {
+  if (!source || typeof source.review !== 'function') throw codedError('unsupported', '当前数据源不支持时效复核')
+  return source.review(body)
 }
 
 export function buildConsolidate(source, body = {}) {
@@ -961,6 +972,15 @@ export async function handleRequest(req, res, source, deps = {}) {
         },
       })
     }
+    if (route === '/tag-registry') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      // 标签词表视图（0.20.0 P0）：core + 已复用(≥2) 按面分组，UI 的标签选择器直接照这份渲染。
+      // 示例数据没有真实数据目录，只回内建词（不入用户覆盖）。
+      const read = readOf(active)
+      const dataDir = active !== null && active.mode === 'live' ? String(read.dataDir || '').trim() : ''
+      const store = storeOf(active)
+      return json(res, 200, { ok: true, data: tagRegistryView(store, dataDir === '' ? {} : { dataDir }) })
+    }
     if (route === '/types') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       const read = active.read() || {}
@@ -1026,6 +1046,10 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/record') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       return json(res, 200, { ok: true, data: buildRecord(active, await readBody(req)) })
+    }
+    if (route === '/review') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      return json(res, 200, { ok: true, data: buildReview(active, await readBody(req)) })
     }
     if (route === '/consolidate') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
@@ -1127,7 +1151,7 @@ export async function handleRequest(req, res, source, deps = {}) {
       const row = (store.experiences || []).find((item) => item.id === String((body && body.id) || ''))
       if (row === undefined) return fail(res, 404, 'not-found', '经验不存在')
       const typeNames = (store.types || []).filter((type) => type && type.system !== true).map((type) => String(type.name || '')).filter(Boolean)
-      const tagNames = tagCatalog(store, { limit: 60 }).map((item) => item.name)
+      const tagNames = tagCatalog(store, { limit: 60, dataDir }).map((item) => item.name)
       const text = [row.intent, row.action, row.note].filter(Boolean).join('\n')
       let decided = null
       try {
@@ -1139,7 +1163,8 @@ export async function handleRequest(req, res, source, deps = {}) {
           tagNames,
         })
       } catch { decided = null }
-      if (decided === null) decided = localClassifyExperience({ text, typeNames, tagNames })
+      // 本地兜底也只能从词表里选（core + 已复用），不许自己造实例标签。
+      if (decided === null) decided = localClassifyExperience({ text, typeNames, tagNames, allowedTags: tagNames })
       const target = (store.types || []).find((type) => type && type.name === decided.category && type.system !== true)
         || (store.types || []).find((type) => type && type.system !== true)
       if (target === undefined) return fail(res, 400, 'no-type', '没有可用的主分类')
@@ -1150,7 +1175,9 @@ export async function handleRequest(req, res, source, deps = {}) {
       const addedTags = (Array.isArray(decided.tags) ? decided.tags : []).map(String).filter((tag) => tag !== '' && !existingTags.includes(tag)).slice(0, room)
       row.context = normalizeContext([...existingTags, ...addedTags])
       writeStore(dataDir, store)
-      return json(res, 200, { ok: true, data: { id: row.id, typeName: target.name, tags: row.context, addedTags, classifier: decided.classifier, note: decided.note, model: decided.model || '' } })
+      // 自动分类只补标签，不替用户凑面：补完仍缺对象/动作就回 tagWarning（UI 黄字提示）。
+      const tagCheck = validateTagSet(row.context)
+      return json(res, 200, { ok: true, data: { id: row.id, typeName: target.name, tags: row.context, addedTags, classifier: decided.classifier, note: decided.note, model: decided.model || '', tagWarning: tagCheck.warning === '' ? undefined : tagCheck.warning } })
     }
     if (route === '/graph') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
@@ -1202,7 +1229,7 @@ export async function handleRequest(req, res, source, deps = {}) {
         return json(res, 200, { ok: true, data: { action: 'saved' } })
       }
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET/POST')
-      return json(res, 200, { ok: true, data: { ...buildSettings(active), config: readEngineConfig(), ui: readUiConfig(), git: readGitConfig(), spec: SETTINGS_SPEC } })
+      return json(res, 200, { ok: true, data: { ...buildSettings(active), config: readEngineConfig(), ui: readUiConfig(), git: readGitConfig(), runtime: readRuntimeEnv(), spec: SETTINGS_SPEC } })
     }
     if (route === '/sync') {
       const dataDir = String((active.read && active.read().dataDir) || '').trim() || resolveEngramDataDir()

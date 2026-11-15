@@ -226,6 +226,36 @@
 { "ok": true, "data": { "types": [ { "id": "ty_ppt", "name": "PPT / 课件", "description": "…", "system": false, "count": 4 } ] } }
 ```
 
+> 口径（0.20.0）：类型只用于归档、筛选、统计，**不参与召回排序**；分类信号由标签承担。
+
+### `GET /tag-registry`
+
+标签词表（0.20.0 P0）：core 种子词 + 已复用（≥2 条经验）+ 用户登记，按「面」分组。标签选择器直接照这份渲染。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "facets": ["object", "action", "topic", "quality"],
+    "labels": { "object": "对象/项目类型", "action": "动作/任务", "topic": "主题/场景", "quality": "质量/异常", "other": "其他已用标签" },
+    "hints": { "object": "再补一个对象标签，例如 代码/PPT/课件/DSH插件", "action": "再补一个动作标签，例如 提交/推送/校验/验收" },
+    "required": ["object", "action"],
+    "emptyFacets": [],
+    "groups": {
+      "object": [ { "name": "PPT", "facet": "object", "core": true, "count": 15, "description": "演示文稿本体…", "status": "active", "source": "core" } ],
+      "action": [ { "name": "提交", "facet": "action", "core": true, "count": 0, "description": "git commit、表单提交…", "status": "active", "source": "core" } ],
+      "topic": [], "quality": [], "other": []
+    },
+    "total": 47,
+    "maxCount": 8
+  }
+}
+```
+
+- `core: true`：0 次使用也返回（种子词例外，计划书 §5.2）；用户标签使用 <2 次不返回。
+- `other`：词表里没有面的历史一次性标签（旧数据兼容，读得到但不算「对象/动作」）。
+- 别名归一在服务端完成：`DSH-Engram` 读成 `DSH插件`，`EigenFlux` 读成 `智能体平台`（都只作隐藏别名，不再作为规范标签出现在词表里）。
+
 ### `GET /skills`
 
 固化技能列表。来源是 exp-lib 的 `exp_consolidate` 写出的 `.exp/skills/<slug>/`（`SKILL.md` + `skill.json`）；mock 模式给 5 条示例技能。
@@ -545,4 +575,104 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 截断时 `edges` 同步收敛：被裁掉的 experience 不会留下 type→exp 或 exp→skill 残边，`summary.experiences` 仍是全量可见经验数。
 
 兼容性：字段只增不删；不带 `scope` 时仍返回全量节点与边，旧 client 无需改动。storeError/坏桶行为不变：HTTP 200 + `storeError`（`code: "store-unreadable"`），`total` 为 0、`truncated` 为 `false`，不 500。
+
+## 0.20.0 增量（经验/技能时效治理 P0）
+
+> 只增字段：旧字段、旧路由语义不变；`retired_at` / `superseded_by` 仍是最高优先级状态。
+
+### GET /experiences（筛选参数 + 行字段）
+
+查询参数新增（都不传＝旧行为：只给未退休、未被取代的可见行）：
+
+- `lifecycle`：`active` / `stale` / `retired` / `superseded` / `visible`（默认）/ `all`（含历史，仍不含已删除墓碑）。
+- `volatility`：`stable` / `semi` / `perishable`。
+- `due=1`：只看到期或已标 stale 的行。
+
+行新增字段：
+
+```json
+{
+  "lifecycle": { "state": "stale", "supersededBy": "", "retiredAt": "", "retiredReason": "", "deletedAt": "" },
+  "freshness": 0.42,
+  "volatility": "semi",
+  "lastVerifiedAt": "2026-06-01T…" ,
+  "reviewAfter": "2026-08-30T…",
+  "reviewDue": true,
+  "applicability": "unscoped",
+  "appliesTo": null,
+  "staleAt": "2026-10-01T…",
+  "staleReason": "review-due",
+  "reviewNote": ""
+}
+```
+
+- `lifecycle.state`：`active / stale / retired / superseded / deleted`（旧 `lifecycle` 对象字段全部保留，只加 `state`）。
+- `volatility` 缺省按 `semi` 解释（技能默认 `perishable`）；`lastVerifiedAt` 缺失时 `reviewAfter` 由 `lastSeenAt/ts + 半衰期` 推算（读时计算，不写回）。
+- `applicability`：`unscoped`（未声明/当前环境不可比）/ `match` / `partial` / `mismatch`。
+
+### POST /review
+
+时效复核，经验与技能同一入口：
+
+```json
+{ "action": "verify", "id": "ex_… 或 skill:<slug>", "note": "复核结论", "volatility": "semi", "reviewAfter": "2027-01-01T00:00:00.000Z", "appliesTo": { "models": [], "tools": [], "environment": "" }, "reason": "manual", "limit": 20 }
+```
+
+| action | 行为 |
+|---|---|
+| `due` | 只读：列出到期/待复核的经验（`rows`）与技能（`skills`）；`limit` 默认 20（≤50） |
+| `verify` | 刷新 `lastVerifiedAt` / `reviewAfter`，清 `stale_*`；不改 G/outcome |
+| `stale` | 标 `stale_at` + `stale_reason`；不删除、不退休 |
+| `retire` | 标 `retired_at`（保留正文与历史，可 `revive`） |
+| `revive` | 恢复 active，清 `stale_*` / `retired_*`；**必须带 `note` 理由**，否则 400 `reason-required` |
+
+- 成功回执：`{ action, id, lifecycle, volatility, freshness, lastVerifiedAt, reviewAfter, reviewDue, staleAt?, retiredAt? }`（技能为 `<slug>` + 同名字段）。
+- 错误：缺 id → 400 `id-required`；未知 action → 400 `bad-action`；把已取代的经验拿来复核 → 409 `not-feedbackable`；示例数据源同样支持（只改内存）。
+- 只改时效字段：`G` / `outcome` / `GOutcome` / `feedback_log` 一律不动；冷冻档、历史记录不删。
+
+### GET /skills（行字段）
+
+技能行新增（`skill.json` meta 缺字段时按默认值解释，读路径不写回）：
+
+- `lifecycle`（`active / stale / retired`）、`freshness`、`volatility`（默认 `perishable`）、`lastVerifiedAt`、`reviewAfter`、`reviewDue`、`appliesTo`、`staleAt`、`staleReason`、`reviewNote`、`retiredAt`、`retiredReason`。
+
+### POST /recall（生命周期元数据）
+
+- 每条候选新增：`lifecycle`（字符串）、`volatility`、`freshness`、`lastVerifiedAt`、`reviewAfter`、`reviewDue`、`applicability`，stale 候选另带 `lifecycle_note`；
+- 顶层：有 stale 候选时带 `lifecycleNote`；appliesTo 明确不匹配的行默认不返回（可用请求参数 `includeMismatched: true` 带出，回执顶层给 `applicabilityFiltered` 计数）；
+- 排序仍不改 `G`/`Â`：stale 只降权（×0.55）并强制排在 active 之后；`retired` / `superseded` / `deleted` 默认不召回。
+
+## 0.20.1 增量（P1：运行环境 + appliesTo 门控）
+
+### 设置（存储位置：`settings.config`）
+
+新增三个字符串键，全部可选，缺省＝未声明（旧配置文件不需要迁移）：
+
+- `currentModel`：当前模型名，例如 `deepseek-flash`；
+- `currentTool`：当前工具版本，例如 `dsh-engram@0.20.0`（对应经验 `appliesTo.tools`）；
+- `currentEnvironment`：运行环境，例如 `Windows` / `WSL`（大小写不敏感）。
+
+只通过设置/插件 config 读取；不读取 DSH 宿主内部模型名，也不改宿主。
+
+### GET /settings
+
+- `config` 里原样包含上面三个键（留空不落盘）；
+- 新增 `runtime` 摘要：`{ currentModel, currentTool, currentEnvironment, models: string[], tools: string[], environment }`（直接可用于解释 applicability）；
+- `spec.config` 里三个字段带 `group: "运行环境"`，设置页据此渲染分组；
+- 保存仍走 `POST /settings { config: {...} }`，保存后下一次请求即生效（无需重启）。
+
+### POST /recall
+
+- 新增可选 `currentEnv`：`{ models?: string[]|string, tools?: string[]|string, model?: string, tool?: string, environment?: string }`；**字段级覆盖**设置里的运行环境（未给的字段沿用设置）。
+- 回执新增：
+  - `currentEnv`：本次实际使用的运行环境（三项全空时不回显）；
+  - `applicabilityFiltered`：被 appliesTo 门控隐藏的候选数；
+  - `applicabilityNote`：人话说明（隐藏了几条 / 几条 partial 被降权 / 显式 includeMismatched 后返回的是历史参考）。
+- 门控语义（`applicabilityOf`）：
+  - 经验没写 `appliesTo`，或当前环境对应维度未声明 → `unscoped`，不拦；
+  - 所有可比较维度都匹配 → `match`；
+  - 部分维度匹配 → `partial`，保留但排序降权（×0.85）；
+  - 所有可比较维度都不匹配 → `mismatch`，默认不返回；传 `includeMismatched: true` 才返回并标注。
+
+
 

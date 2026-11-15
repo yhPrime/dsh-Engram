@@ -14,6 +14,14 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 
 import { abstractState, stateSimilarity } from './kernel.js'
+import {
+  DEFAULT_SKILL_VOLATILITY,
+  HALF_LIFE_DAYS,
+  lifecycleMetaOf,
+  normalizeAppliesTo,
+  normalizeIsoDate,
+  normalizeVolatility,
+} from './retrieval.js'
 
 export const SKILLS_DIRNAME = 'skills'
 export const SCRIPTS_DIRNAME = 'scripts'
@@ -235,6 +243,17 @@ export function defaultMeta(id) {
     order: 90,
     files: [],
     pendingCommit: false,
+    // 时效治理（0.20 P0）：技能比经验更易腐，旧技能缺字段时按 perishable 解释（计划书 §7.1）。
+    volatility: 'perishable',
+    lastVerifiedAt: null,
+    reviewAfter: null,
+    verifiedBy: null,
+    appliesTo: null,
+    stale_at: null,
+    stale_reason: null,
+    review_note: '',
+    retired_at: null,
+    retired_reason: null,
   }
 }
 
@@ -253,6 +272,17 @@ function normalizeMeta(raw, id) {
   meta.files = Array.isArray(raw && raw.files)
     ? raw.files.filter((item) => item && typeof item.path === 'string')
     : []
+  // 时效字段（0.20 P0）：旧技能缺字段按 perishable 解释，读时不写回；只有真正改技能时才落盘。
+  meta.volatility = normalizeVolatility(raw && raw.volatility) || DEFAULT_SKILL_VOLATILITY
+  meta.lastVerifiedAt = normalizeIsoDate(raw && raw.lastVerifiedAt)
+  meta.reviewAfter = normalizeIsoDate(raw && raw.reviewAfter)
+  meta.verifiedBy = raw && raw.verifiedBy ? String(raw.verifiedBy).slice(0, 80) : null
+  meta.appliesTo = normalizeAppliesTo(raw && raw.appliesTo)
+  meta.stale_at = normalizeIsoDate(raw && raw.stale_at)
+  meta.stale_reason = raw && raw.stale_reason ? String(raw.stale_reason).slice(0, 60) : null
+  meta.review_note = raw && raw.review_note ? String(raw.review_note).slice(0, 240) : ''
+  meta.retired_at = normalizeIsoDate(raw && raw.retired_at)
+  meta.retired_reason = raw && raw.retired_reason ? String(raw.retired_reason).slice(0, 120) : null
   return meta
 }
 
@@ -693,8 +723,32 @@ export function updateSkillMeta(dataDir, slug, patch = {}) {
   if (patch.order !== undefined && Number.isFinite(Number(patch.order))) {
     meta.order = Math.max(0, Math.min(100, Math.round(Number(patch.order))))
   }
+  // 时效字段（0.20 P0）：只写显式给的；改易腐层没给复核时间时按新半衰期重排。
+  if (patch.volatility !== undefined) {
+    const next = normalizeVolatility(patch.volatility)
+    if (next !== '') meta.volatility = next
+    if (patch.reviewAfter === undefined && meta.lastVerifiedAt) {
+      meta.reviewAfter = new Date(Date.parse(meta.lastVerifiedAt) + (HALF_LIFE_DAYS[meta.volatility] || HALF_LIFE_DAYS.semi) * 86400000).toISOString()
+    }
+  }
+  if (patch.lastVerifiedAt !== undefined) meta.lastVerifiedAt = normalizeIsoDate(patch.lastVerifiedAt)
+  if (patch.reviewAfter !== undefined) meta.reviewAfter = normalizeIsoDate(patch.reviewAfter)
+  if (patch.verifiedBy !== undefined) meta.verifiedBy = patch.verifiedBy === null ? null : String(patch.verifiedBy || '').slice(0, 80)
+  if (patch.appliesTo !== undefined) meta.appliesTo = normalizeAppliesTo(patch.appliesTo)
+  if (patch.stale_at !== undefined) meta.stale_at = normalizeIsoDate(patch.stale_at)
+  if (patch.stale_reason !== undefined) meta.stale_reason = patch.stale_reason === null ? null : String(patch.stale_reason || '').slice(0, 60)
+  if (patch.review_note !== undefined) meta.review_note = String(patch.review_note || '').slice(0, 240)
+  if (patch.retired_at !== undefined) meta.retired_at = normalizeIsoDate(patch.retired_at)
+  if (patch.retired_reason !== undefined) meta.retired_reason = patch.retired_reason === null ? null : String(patch.retired_reason || '').slice(0, 120)
   const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), meta, `skill(${slug}): meta`)
-  return { slug, typeName: meta.typeName, typeNames: meta.typeNames, notes: meta.notes, commit: committed }
+  return {
+    slug,
+    typeName: meta.typeName,
+    typeNames: meta.typeNames,
+    notes: meta.notes,
+    commit: committed,
+    lifecycle: lifecycleMetaOf(meta),
+  }
 }
 
 /** 忘记技能 = 删除这个技能目录（注册着的先取消注册，免得留悬空链接）。 */

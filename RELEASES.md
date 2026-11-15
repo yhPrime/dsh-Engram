@@ -35,6 +35,15 @@
 
 ## 当前发布
 
+- **v0.20.0（经验时效 + 标签分类 P0/P1）**
+  - P0：经验/技能生命周期（`active/stale/retired/superseded`）、半衰期 freshness、`appliesTo`、`exp_review`
+  - P0：标签词表 registry（对象/动作/主题/质量四面、core、别名、严格命名）；`DSH-Engram → DSH插件`、`EigenFlux → 智能体平台`
+  - P1：运行环境设置 + `appliesTo` 门控；`recall` 可用 `currentEnv` 覆盖
+  - P1：`tools/migrate-tags-v2.mjs`（默认 dry-run、`--apply` 前整包备份、幂等、只改 context）
+  - P1：`tagShadow` 影子对比（默认关闭，不改变现有召回顺序）
+  - 验证：94 个测试文件全绿（沙箱 git EPERM 已绕开）
+  - 审计修复：标签回执按实际落盘、重记全非法标签不再清空旧 context、appliesTo 字符串归一、非法 reviewAfter 报错、技能 reason 回退 manual、due limit 全局上限、迁移对象 context 拒绝写盘并加写前预检
+  - 发布清单：补齐 tag-registry/tag-rank，迁移工具随包发布，新增发布清单守卫
 - **v0.19.46（有经验但没业务类型时也补默认分类）**
   - 修复首次安装先落了经验、导致 ensureDefaultTypes 被 experiences>0 挡住、默认分类永久不出现
   - 判断改为只看有没有业务类型；空业务类型就补六个默认分类，保留已有经验

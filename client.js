@@ -429,6 +429,21 @@ window.__ModuleLoader__.load({
 .eng-kbd { display: inline-flex; align-items: center; height: var(--eng-kbd-h); padding: 0 var(--eng-s-1); border: 1px solid var(--dsw-alias-border-l1); border-bottom-width: 2px; border-radius: var(--eng-r-1); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-micro); font-family: inherit; }
 /* 焦点环：键盘可见，鼠标不打扰 */
 .eng-btn:focus-visible, .eng-row:focus-visible, .eng-skill-row:focus-visible, .eng-chip:focus-visible, .eng-input:focus-visible, .eng-select:focus-visible, .eng-textarea:focus-visible { outline: var(--eng-focus-w) solid var(--eng-accent-text); outline-offset: var(--eng-focus-offset); }
+/* 标签选择器（0.20.0 P0：按面分组 + 缺面提示） */
+.eng-tagpicker { display: flex; flex-direction: column; gap: var(--eng-s-2); min-width: 0; }
+.eng-tag-selected { display: flex; flex-wrap: wrap; gap: var(--eng-s-1); align-items: center; min-height: 24px; }
+.eng-tag-selected .eng-chip { cursor: pointer; }
+.eng-tag-hint { padding: var(--eng-s-1) var(--eng-s-2); border-left: 3px solid var(--eng-tone-warn-fg); border-radius: var(--eng-r-1); background: var(--eng-tone-warn-bg); color: var(--eng-tone-warn-fg); font-size: var(--eng-fs-micro); }
+.eng-tag-groups { display: flex; flex-direction: column; gap: var(--eng-s-1); }
+.eng-tag-group { border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-2); background: var(--dsw-alias-bg-layer-1); }
+.eng-tag-group-title { padding: var(--eng-s-1) var(--eng-s-2); font-size: var(--eng-fs-micro); font-weight: var(--eng-fw-strong); color: var(--dsw-alias-label-secondary); cursor: pointer; user-select: none; }
+.eng-req-mark { color: var(--eng-tone-bad-fg); font-weight: var(--eng-fw-normal); }
+.eng-tag-chips { display: flex; flex-wrap: wrap; gap: var(--eng-s-1); padding: 0 var(--eng-s-2) var(--eng-s-2); }
+.eng-tag-chips .eng-chip { cursor: pointer; }
+.eng-chip-count { margin-left: 2px; opacity: .6; font-variant-numeric: tabular-nums; }
+.eng-tag-new { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-2); }
+.eng-tag-groups-inline { display: flex; flex-direction: column; gap: 2px; }
+.eng-tag-inline-group { display: block; }
 /* 系统减弱动效：无位移、无 shimmer、无缩放（放在 PANEL_CSS 最后） */
 @media (prefers-reduced-motion: reduce) {
   .eng-app *, .eng-app *::before, .eng-app *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
@@ -448,6 +463,113 @@ window.__ModuleLoader__.load({
     }
 
     const TONES = { ok: true, warn: true, bad: true, muted: true, brand: true }
+
+    /**
+     * 标签面（0.20.0 P0）：与 kernel/tag-registry.js 的 TAG_FACET_LABELS 对齐。
+     * UI 只负责「按面分组展示 + 缺面提示」，面的真相在服务端词表（GET /tag-registry）。
+     */
+    const TAG_FACET_ORDER = ['object', 'action', 'topic', 'quality', 'other']
+    const TAG_FACET_LABELS = { object: '对象/项目类型', action: '动作/任务', topic: '主题/场景', quality: '质量/异常', other: '其他已用标签' }
+    const TAG_FACET_HINTS = {
+      object: '再补一个对象标签，例如 代码/PPT/课件/DSH插件',
+      action: '再补一个动作标签，例如 提交/推送/校验/验收',
+    }
+    const TAG_LIMIT = 8
+
+    /** 标签在词表里的面；没登记返回 null（UI 当「其他」）。 */
+    function tagFacetOf(name, groups) {
+      const key = String(name || '').trim()
+      if (key === '') return null
+      for (const facet of TAG_FACET_ORDER) {
+        const list = groups && Array.isArray(groups[facet]) ? groups[facet] : []
+        if (list.some((item) => item.name === key)) return facet
+      }
+      return null
+    }
+
+    /** 缺哪些必填面（object/action）。 */
+    function missingTagFacets(tags, groups) {
+      const list = Array.isArray(tags) ? tags : []
+      return ['object', 'action'].filter((facet) => !list.some((name) => tagFacetOf(name, groups) === facet))
+    }
+
+    /** 组的并集：词表里所有标签（已选/未选都要能点）。 */
+    function tagEntriesOf(groups, facet) {
+      return groups && Array.isArray(groups[facet]) ? groups[facet] : []
+    }
+
+    /**
+     * 标签选择器：按面分组（计划书 §10.1）。
+     * - 已选标签在顶部，可单个移除；
+     * - 每组可折叠，core 标签 0 次使用也在；
+     * - 缺对象/缺动作黄字提示，但不阻止保存（计划书 §3.4）。
+     */
+    function TagPicker(props) {
+      const view = props.view || null
+      const groups = view && view.groups ? view.groups : {}
+      const hints = view && view.hints ? view.hints : TAG_FACET_HINTS
+      const value = Array.isArray(props.value) ? props.value : []
+      const [draft, setDraft] = useState('')
+      const [draftFacet, setDraftFacet] = useState('topic')
+      const toggle = (name) => {
+        const next = value.includes(name) ? value.filter((item) => item !== name) : (value.length >= TAG_LIMIT ? value : [...value, name])
+        if (typeof props.onChange === 'function') props.onChange(next)
+      }
+      const addDraft = () => {
+        const name = draft.trim()
+        if (name === '') return
+        if (!value.includes(name) && value.length < TAG_LIMIT) {
+          if (typeof props.onChange === 'function') props.onChange([...value, name])
+        }
+        setDraft('')
+      }
+      const missing = missingTagFacets(value, groups)
+      const known = new Set(TAG_FACET_ORDER.flatMap((facet) => tagEntriesOf(groups, facet).map((item) => item.name)))
+      return h('div', { className: 'eng-tagpicker' },
+        h('div', { className: 'eng-tag-selected' },
+          value.length === 0
+            ? h('span', { className: 'eng-muted' }, `还没选标签（最多 ${TAG_LIMIT} 个，推荐 2–6 个）`)
+            : value.map((name) => {
+              const facet = tagFacetOf(name, groups)
+              return h('button', {
+                key: name, type: 'button', className: 'eng-chip', 'data-on': 'true',
+                'data-facet': facet === null ? 'other' : facet,
+                title: '点一下移除',
+                onClick: () => toggle(name),
+              }, `${name} ×`)
+            })),
+        missing.length > 0
+          ? h('div', { className: 'eng-tag-hint' }, missing.map((facet) => hints[facet] || TAG_FACET_HINTS[facet]).join('；'))
+          : null,
+        h('div', { className: 'eng-tag-groups' }, TAG_FACET_ORDER.filter((facet) => facet !== 'other' ? true : tagEntriesOf(groups, 'other').length > 0).map((facet) => {
+          const entries = tagEntriesOf(groups, facet)
+          if (entries.length === 0 && !(facet === 'object' || facet === 'action')) return null
+          const required = facet === 'object' || facet === 'action'
+          return h('details', { key: facet, className: 'eng-tag-group', open: required || facet === 'topic' },
+            h('summary', { className: 'eng-tag-group-title' }, TAG_FACET_LABELS[facet], required ? h('span', { className: 'eng-req-mark' }, ' 必填至少 1 个') : null, h('span', { className: 'eng-muted' }, ` · ${entries.length}`)),
+            h('div', { className: 'eng-tag-chips' }, entries.length === 0
+              ? h('span', { className: 'eng-muted' }, '还没有可用标签')
+              : entries.map((item) => h('button', {
+                key: item.name, type: 'button', className: 'eng-chip',
+                'data-on': value.includes(item.name) ? 'true' : 'false',
+                title: [item.description, item.core ? '种子词' : '', item.count > 0 ? `已用 ${item.count} 次` : ''].filter(Boolean).join(' · '),
+                onClick: () => toggle(item.name),
+              }, item.name, item.count > 0 ? h('span', { className: 'eng-chip-count' }, String(item.count)) : null))))
+        })),
+        h('div', { className: 'eng-tag-new' },
+          h('input', {
+            className: 'eng-input', style: { width: 160 }, value: draft,
+            placeholder: '新建标签（1–12 字短名词）…',
+            onChange: (event) => setDraft(event.target.value),
+            onKeyDown: (event) => { if (event.key === 'Enter') { event.preventDefault(); addDraft() } },
+          }),
+          h('select', { className: 'eng-select', style: { width: 132 }, value: draftFacet, onChange: (event) => setDraftFacet(event.target.value), title: '新标签属于哪个面' },
+            TAG_FACET_ORDER.filter((facet) => facet !== 'other').map((facet) => h('option', { key: facet, value: facet }, TAG_FACET_LABELS[facet]))),
+          h(Button, { small: true, disabled: draft.trim() === '' || value.length >= TAG_LIMIT, onClick: addDraft }, '加上'),
+          draft.trim() !== '' && !known.has(draft.trim())
+            ? h('span', { className: 'eng-muted' }, `「${draft.trim()}」是词表外的新标签，按 ${TAG_FACET_LABELS[draftFacet]} 归类`)
+            : null))
+    }
 
     const OUTCOMES = {
       success: ['成功', 'ok'], accepted: ['通过', 'ok'], partial: ['部分', 'warn'],
@@ -661,6 +783,33 @@ window.__ModuleLoader__.load({
     function Button(props) {
       const kind = props.kind === 'primary' ? 'eng-btn eng-btn-primary' : props.kind === 'danger' ? 'eng-btn eng-btn-danger' : 'eng-btn'
       return h('button', { type: 'button', className: `${kind}${props.small ? ' eng-btn-sm' : ''}`, disabled: props.disabled, onClick: props.onClick, title: props.title }, props.children)
+    }
+    /** 生命周期状态（0.20 P0）：与内核 retrieval.lifecycleOf 同一套取值。 */
+    const LIFECYCLE_LABELS = {
+      active: '有效',
+      stale: '待复核',
+      retired: '已退休',
+      superseded: '已被取代',
+      deleted: '已删除',
+    }
+    const VOLATILITY_LABELS = { stable: '稳定', semi: '半稳定', perishable: '易腐' }
+    function lifecycleStateOf(row) {
+      if (row === null || row === undefined) return 'active'
+      if (row.lifecycle !== null && typeof row.lifecycle === 'object' && typeof row.lifecycle.state === 'string') return row.lifecycle.state
+      if (typeof row.lifecycle === 'string' && row.lifecycle !== '') return row.lifecycle
+      if (typeof row.lifecycleState === 'string' && row.lifecycleState !== '') return row.lifecycleState
+      return 'active'
+    }
+    /** 行内轻量徽标：只有非 active 才显示，避免每行都挂一个「有效」噪声。 */
+    function LifecycleBadge(props) {
+      const state = props.state
+      if (state === 'active' || state === undefined || LIFECYCLE_LABELS[state] === undefined) return null
+      const tone = state === 'stale' ? 'warn' : state === 'deleted' ? 'bad' : 'muted'
+      return h(Badge, { tone }, LIFECYCLE_LABELS[state])
+    }
+    function VolatilityBadge(props) {
+      if (props.volatility !== 'perishable') return null
+      return h(Badge, { tone: 'muted' }, '易腐')
     }
     /**
      * 悬浮说明层：挂在 <body> 下、`position: fixed` 定位。
@@ -1133,6 +1282,7 @@ window.__ModuleLoader__.load({
       const [searchDraft, setSearchDraft] = useState('')
       const [type, setType] = useState('')
       const [outcome, setOutcome] = useState('')
+      const [lifecycle, setLifecycle] = useState('')
       const [sort, setSort] = useState('recent')
       const [pageSize, setPageSize] = useState(50)
       const [page, setPage] = useState(0)
@@ -1145,10 +1295,11 @@ window.__ModuleLoader__.load({
         const params = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize), sort })
         if (type !== '') params.set('type', type)
         if (outcome !== '') params.set('outcome', outcome)
+        if (lifecycle !== '') params.set('lifecycle', lifecycle)
         return request(`/experiences?${params.toString()}`)
-      }, [type, outcome, sort, page, pageSize]))
+      }, [type, outcome, lifecycle, sort, page, pageSize]))
       // 换筛选/排序/页大小时回到第一页，避免停在越界页码。
-      useEffect(() => { setPage(0) }, [type, outcome, sort, pageSize])
+      useEffect(() => { setPage(0) }, [type, outcome, lifecycle, sort, pageSize])
       useRefreshEvent(list.reload)
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
       // 窄面板下列表与详情会被压成一列：选中后把详情卡片滚进视野，否则看起来「点了没反应」。
@@ -1213,11 +1364,33 @@ window.__ModuleLoader__.load({
         await Promise.all([list.reload(), detail.reload()])
         props.onChanged()
       }
+      /** 时效复核（0.20 P0）：确认有效 / 标待复核 / 退休 / 恢复；只改时效字段，不动 G。 */
+      const review = async (action, note) => {
+        if (selected === null || sending) return
+        setSending(true)
+        setNotice('')
+        try {
+          const body = { id: selected, action }
+          if (typeof note === 'string' && note !== '') body.note = note
+          await request('/review', { method: 'POST', body })
+          await Promise.all([list.reload(), detail.reload()])
+          if (typeof props.onChanged === 'function') props.onChanged()
+          setNotice(action === 'verify' ? '已确认仍有效（刷新了复核时间）'
+            : action === 'stale' ? '已标为待复核（不会删除，也不会退休）'
+              : action === 'retire' ? '已退休（正文与历史都保留，可恢复）'
+                : '已恢复为有效')
+        } catch (error) {
+          setNotice(error && error.message ? error.message : String(error))
+        } finally {
+          setSending(false)
+        }
+      }
       const labelCatalog = useLoad(useCallback(() => request('/type', { method: 'POST', body: { action: 'labels' } }), []))
-      const addLabels = async (id, tags) => {
-        await request('/type', { method: 'POST', body: { action: 'label', id, labels: tags } })
+      const addLabels = async (id, tags, facet) => {
+        const out = await request('/type', { method: 'POST', body: { action: 'label', id, labels: tags, ...(facet === undefined ? {} : { facet }) } })
         await Promise.all([list.reload(), detail.reload(), labelCatalog.reload()])
         props.onChanged()
+        return out
       }
       const autoAssign = async (id) => {
         const out = await request('/classify', { method: 'POST', body: { id } })
@@ -1235,6 +1408,13 @@ window.__ModuleLoader__.load({
             h('option', { value: '' }, '全部类型'), types.map((item) => h('option', { key: item.id, value: item.id }, item.name))),
           h('select', { className: 'eng-select', value: outcome, onChange: (event) => setOutcome(event.target.value) },
             h('option', { value: '' }, '全部结果'), Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0]))),
+          h('select', { className: 'eng-select', style: { width: 128 }, value: lifecycle, onChange: (event) => setLifecycle(event.target.value), title: '按生命周期筛选：stale 是待复核，retired/superseded 默认不在列表里' },
+            h('option', { value: '' }, '全部生命周期'),
+            h('option', { value: 'active' }, '有效'),
+            h('option', { value: 'stale' }, '待复核'),
+            h('option', { value: 'retired' }, '已退休'),
+            h('option', { value: 'superseded' }, '已被取代'),
+            h('option', { value: 'all' }, '全部（含历史）')),
           h('select', { className: 'eng-select', style: { width: 120 }, value: sort, onChange: (event) => setSort(event.target.value) },
             h('option', { value: 'recent' }, '最近'),
             h('option', { value: 'g' }, 'G'),
@@ -1251,6 +1431,8 @@ window.__ModuleLoader__.load({
               const [label, tone] = outcomeOf(row.outcome)
               return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
                 h(Badge, { tone }, label),
+                h(LifecycleBadge, { state: lifecycleStateOf(row) }),
+                h(VolatilityBadge, { volatility: row.volatility }),
                 h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
                 h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
@@ -1262,7 +1444,7 @@ window.__ModuleLoader__.load({
               h(Button, { small: true, disabled: page <= 0, onClick: () => setPage(page - 1) }, '上一页'),
               h(Button, { small: true, disabled: page + 1 >= pages, onClick: () => setPage(page + 1) }, '下一页'))),
           h('div', { className: 'eng-card eng-detail-card', ref: detailRef },
-            h(DetailPane, { key: selected === null ? 'empty' : selected, selected, detail, send, busy: sending, types, onAssign: assign, labelOptions: (labelCatalog.data && labelCatalog.data.labels) || [], onAddLabels: addLabels, onAutoAssign: autoAssign, onClose: () => setSelected(null) }))))
+            h(DetailPane, { key: selected === null ? 'empty' : selected, selected, detail, send, busy: sending, types, onAssign: assign, labelOptions: (labelCatalog.data && labelCatalog.data.labels) || [], onAddLabels: addLabels, onAutoAssign: autoAssign, onReview: review, onClose: () => setSelected(null) }))))
     }
 
     /**
@@ -1276,6 +1458,7 @@ window.__ModuleLoader__.load({
       const [assignMessage, setAssignMessage] = useState('')
       const [labelPick, setLabelPick] = useState('')
       const [newLabel, setNewLabel] = useState('')
+      const [newLabelFacet, setNewLabelFacet] = useState('topic')
       const [labelBusy, setLabelBusy] = useState(false)
       const [labelMessage, setLabelMessage] = useState('')
       const [pane, setPane] = useState('overview')
@@ -1292,10 +1475,22 @@ window.__ModuleLoader__.load({
         life.retiredAt ? `退休 ${fmtTime(life.retiredAt)}` : '',
         life.deletedAt ? `删除 ${fmtTime(life.deletedAt)}` : '',
       ].filter((item) => item !== '')
+      const reviewState = lifecycleStateOf(row)
       const events = Array.isArray(data.history) ? data.history : []
       const feedbackLog = Array.isArray(data.feedbackLog) ? data.feedbackLog : []
       const types = Array.isArray(props.types) ? props.types.filter((item) => item && item.system !== true) : []
       const assignable = typeof props.onAssign === 'function' && types.length > 0
+      // 标签按面分组（计划书 §10.2）：面的真相来自 /type labels（tagCatalog 带 facet），未登记的落「其他」。
+      const labelCatalogOf = Array.isArray(props.labelOptions) ? props.labelOptions : []
+      const facetOfRowTag = (name) => {
+        const hit = labelCatalogOf.find((item) => item.name === name)
+        return hit && TAG_FACET_ORDER.includes(hit.facet) ? hit.facet : 'other'
+      }
+      const rowTags = Array.isArray(row.context) ? row.context : []
+      const rowTagGroups = TAG_FACET_ORDER
+        .map((facet) => [facet, rowTags.filter((name) => facetOfRowTag(name) === facet)])
+        .filter(([, names]) => names.length > 0)
+      const rowMissing = rowTags.length === 0 ? [] : ['object', 'action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
       const copyJson = () => {
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(data, null, 2))
@@ -1337,22 +1532,37 @@ window.__ModuleLoader__.load({
                 typeof props.onAutoAssign === 'function' ? h(Tip, { text: '一键分类会拉起一次性临时会话（不注入工具/历史、只发最小文本），会产生额外 Token 消费' }) : null) : null,
               typeof props.onAddLabels === 'function' ? h('div', { className: 'eng-actions', style: { marginBottom: 12, flexWrap: 'wrap' } },
                 h('span', { className: 'eng-label' }, '标签'),
-                h('select', { className: 'eng-select', style: { width: 150 }, value: labelPick, onChange: (event) => setLabelPick(event.target.value) },
+                h('select', { className: 'eng-select', style: { width: 170 }, value: labelPick, onChange: (event) => setLabelPick(event.target.value) },
                   h('option', { value: '' }, '选择已有标签…'),
-                  (Array.isArray(props.labelOptions) ? props.labelOptions : []).filter((item) => !(Array.isArray(row.context) && row.context.includes(item.name))).map((item) => h('option', { key: item.name, value: item.name }, `${item.name} (${item.count})`))),
+                  TAG_FACET_ORDER.map((facet) => {
+                    const options = (Array.isArray(props.labelOptions) ? props.labelOptions : []).filter((item) => (item.facet === null || item.facet === undefined ? 'other' : item.facet) === facet && !(Array.isArray(row.context) && row.context.includes(item.name)))
+                    if (options.length === 0) return null
+                    return h('optgroup', { key: facet, label: TAG_FACET_LABELS[facet] }, options.map((item) => h('option', { key: item.name, value: item.name }, `${item.name}${item.count > 0 ? ` (${item.count})` : ' · 种子'}`)))
+                  })),
                 h('input', { className: 'eng-input', style: { width: 140 }, placeholder: '新建标签…', value: newLabel, onChange: (event) => setNewLabel(event.target.value) }),
+                h('select', { className: 'eng-select', style: { width: 132 }, value: newLabelFacet, onChange: (event) => setNewLabelFacet(event.target.value), title: '新标签必须指定面（计划书 §5.2）' },
+                  TAG_FACET_ORDER.filter((facet) => facet !== 'other').map((facet) => h('option', { key: facet, value: facet }, TAG_FACET_LABELS[facet]))),
                 h(Button, { small: true, disabled: labelBusy || (labelPick === '' && newLabel.trim() === ''), onClick: async () => {
-                  const tags = [...(labelPick === '' ? [] : [labelPick]), ...newLabel.split(/[,，]/).map((item) => item.trim()).filter(Boolean)]
+                  const created = newLabel.split(/[,，]/).map((item) => item.trim()).filter(Boolean)
+                  const tags = [...(labelPick === '' ? [] : [labelPick]), ...created]
                   setLabelBusy(true)
                   setLabelMessage('')
-                  try { await props.onAddLabels(row.id, tags); setLabelMessage('标签已添加'); setLabelPick(''); setNewLabel('') } catch (error) { setLabelMessage(error && error.message ? error.message : '添加失败') } finally { setLabelBusy(false) }
+                  try {
+                    const out = await props.onAddLabels(row.id, tags, created.length > 0 ? newLabelFacet : undefined)
+                    setLabelMessage(out && out.tagWarning ? `标签已添加；${out.tagWarning}` : '标签已添加')
+                    setLabelPick('')
+                    setNewLabel('')
+                  } catch (error) { setLabelMessage(error && error.message ? error.message : '添加失败') } finally { setLabelBusy(false) }
                 } }, labelBusy ? '添加中…' : '添加标签'),
                 labelMessage ? h('span', { className: 'eng-muted' }, labelMessage) : null) : null,
               h('dl', { className: 'eng-kv' },
                 h('dt', null, '做法'), h('dd', null, row.action || '—'),
                 h('dt', null, '分类'), h('dd', null, row.typeName || '未分类'),
                 h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
-                h('dt', null, '标签'), h('dd', null, Array.isArray(row.context) && row.context.length ? row.context.join('、') : '无'),
+                h('dt', null, '标签'), h('dd', null, rowTagGroups.length === 0 ? '无' : h('span', { className: 'eng-tag-groups-inline' }, rowTagGroups.map(([facet, names]) => h('span', { key: facet, className: 'eng-tag-inline-group' },
+                  h('span', { className: 'eng-muted' }, `${TAG_FACET_LABELS[facet]}：`), names.join('、'))))),
+                rowMissing.length > 0 ? h('dt', null, '') : null,
+                rowMissing.length > 0 ? h('dd', { className: 'eng-tag-hint' }, `缺${rowMissing.map((facet) => TAG_FACET_LABELS[facet]).join('、')}：${rowMissing.map((facet) => TAG_FACET_HINTS[facet]).join('；')}`) : null,
                 Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dt', null, '维度') : null,
                 Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dd', null, row.dimensions.join('、')) : null,
                 row.expectedG === null || row.expectedG === undefined ? null : h('dt', null, '预期 G'),
@@ -1361,6 +1571,22 @@ window.__ModuleLoader__.load({
                 row.retrievals > 0 ? h('dt', null, '主动提取') : null,
                 row.retrievals > 0 ? h('dd', null, `${row.retrievals} 次`) : null,
                 h('dt', null, '判定'), h('dd', null, row.verdict === 'pending' ? '待判定' : (row.verdict || '—')),
+                h('dt', null, '时效'), h('dd', null, [
+                  h(LifecycleBadge, { key: 'lifecycle', state: lifecycleStateOf(row) }),
+                  h('span', { key: 'volatility' }, `${VOLATILITY_LABELS[row.volatility] || row.volatility || '半稳定'}${row.freshness === undefined ? '' : ` · 新鲜度 ${fmtNumber(row.freshness)}`}`),
+                ]),
+                row.lastVerifiedAt ? h('dt', null, '最后验证') : null,
+                row.lastVerifiedAt ? h('dd', { className: 'eng-mono' }, fmtTime(row.lastVerifiedAt)) : null,
+                row.reviewAfter ? h('dt', null, '建议复核') : null,
+                row.reviewAfter ? h('dd', { className: 'eng-mono' }, `${fmtTime(row.reviewAfter)}${row.reviewDue ? '（已到期）' : ''}`) : null,
+                row.appliesTo ? h('dt', null, '适用范围') : null,
+                row.appliesTo ? h('dd', null, [].concat(
+                  Array.isArray(row.appliesTo.models) && row.appliesTo.models.length > 0 ? [`模型：${row.appliesTo.models.join('、')}`] : [],
+                  Array.isArray(row.appliesTo.tools) && row.appliesTo.tools.length > 0 ? [`工具：${row.appliesTo.tools.join('、')}`] : [],
+                  row.appliesTo.environment ? [`环境：${row.appliesTo.environment}`] : [],
+                ).join(' · ')) : null,
+                row.reviewNote ? h('dt', null, '复核记录') : null,
+                row.reviewNote ? h('dd', null, row.reviewNote) : null,
                 h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
               row.note ? h('div', { className: 'eng-note' }, h('div', { className: 'eng-label' }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null)
       return h('div', { className: 'eng-detail' },
@@ -1376,6 +1602,13 @@ window.__ModuleLoader__.load({
           h(Button, { small: true, disabled: busy, onClick: () => send('helped') }, '有帮助'),
           h(Button, { small: true, disabled: busy, onClick: () => send('hurt') }, '没帮上'),
           h(Button, { small: true, disabled: busy, onClick: () => send('neutral') }, '中性'),
+          typeof props.onReview === 'function' && (reviewState === 'active' || reviewState === 'stale' || reviewState === 'retired') ? (
+            h('span', { style: { display: 'inline-flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' } },
+              reviewState !== 'retired' ? h(Button, { small: true, disabled: busy, onClick: () => props.onReview('verify') }, '确认仍有效') : null,
+              reviewState === 'active' ? h(Button, { small: true, disabled: busy, onClick: () => props.onReview('stale') }, '标待复核') : null,
+              reviewState !== 'retired' ? h(Button, { small: true, disabled: busy, onClick: () => props.onReview('retire') }, '退休') : null,
+              reviewState !== 'active' ? h(Button, { small: true, disabled: busy, onClick: () => props.onReview('revive', '控制台恢复使用') }, '恢复') : null)
+          ) : null,
           h(Button, { small: true, onClick: onClose }, '收起')))
     }
 
@@ -1536,6 +1769,11 @@ window.__ModuleLoader__.load({
       const [receipt, setReceipt] = useState(null)
       const [error, setError] = useState('')
       const [busy, setBusy] = useState(false)
+      // 标签词表（按面分组）：选择器用；读不到就退化成手动输入，不阻塞记录。
+      const registry = useLoad(useCallback(() => request('/tag-registry'), []))
+      const tagGroups = registry.data && registry.data.groups ? registry.data.groups : null
+      const pickedTags = form.context.split(/[,，]/).map((item) => item.trim()).filter(Boolean)
+      const missingFacets = missingTagFacets(pickedTags, tagGroups || {})
       useEffect(() => {
         try { sessionStorage.setItem('eng:record-draft', JSON.stringify(form)) } catch { /* 隐私模式忽略 */ }
       }, [form])
@@ -1584,13 +1822,29 @@ window.__ModuleLoader__.load({
           receipt ? h('div', { className: 'eng-receipt' },
             h('div', { className: 'eng-receipt-title' }, '已记录'),
             h('div', { className: 'eng-muted' }, `action=${receipt.action} · id=${receipt.id} · G=${fmtNumber(receipt.G)}${receipt.skillWarning ? ` · ${receipt.skillWarning}` : ''}`),
+            Array.isArray(receipt.tags) && receipt.tags.length > 0
+              ? h('div', { className: 'eng-muted' }, `标签：${receipt.tags.join('、')}`)
+              : null,
+            Array.isArray(receipt.tagsRejected) && receipt.tagsRejected.length > 0
+              ? h('div', { className: 'eng-bad-text' }, `已丢弃不合规标签：${receipt.tagsRejected.join('、')}（项目实例名/版本/路径不能当标签）`)
+              : null,
+            receipt.tagWarning ? h('div', { className: 'eng-warn-text' }, `标签提醒：${receipt.tagWarning}`) : null,
             h('div', { className: 'eng-actions' }, h(Button, { small: true, onClick: reset }, '再记一条'))) : null,
           group('必填（意图 / 做法 / 结果 / 类型）', [
             h(Field, { key: 'intent', label: '意图（做什么）', wide: true }, h('input', { className: 'eng-input', value: form.intent, onChange: update('intent'), placeholder: '例如：给研学课 PPT 插一页过渡页' })),
             h(Field, { key: 'action', label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
             h(Field, { key: 'outcome', label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
             h(Field, { key: 'type', label: '类型' }, h('input', { className: 'eng-input', value: form.type, onChange: update('type'), placeholder: 'PPT / 课件' })),
-            h(Field, { key: 'context', label: '标签（逗号分隔）' }, h('input', { className: 'eng-input', value: form.context, onChange: update('context'), placeholder: '插件, 主题, 性能' })),
+            h(Field, { key: 'context', label: `标签（至少 1 个对象 + 1 个动作，≤${TAG_LIMIT} 个）`, wide: true, hint: '标签只写类型不写实例名：写 DSH插件，不写 DSH-Engram；项目名放 intent/artifacts' },
+              h(TagPicker, {
+                view: registry.data || null,
+                value: pickedTags,
+                onChange: (tags) => setForm({ ...form, context: tags.join(',') }),
+              }),
+              registry.error ? h('span', { className: 'eng-muted' }, `词表读取失败（${registry.error}），可直接手输标签`) : null,
+              missingFacets.length > 0 && pickedTags.length > 0
+                ? h('div', { className: 'eng-tag-hint' }, '保存仍可用，但这条记录会带 tagWarning：', missingFacets.map((facet) => TAG_FACET_HINTS[facet]).join('；'))
+                : null),
           ], true),
           group('任务与步骤（可选，记录多步任务时）', [
             h(Field, { key: 'taskId', label: '任务 id' }, h('input', { className: 'eng-input', value: form.taskId, onChange: update('taskId') })),
@@ -1669,6 +1923,7 @@ window.__ModuleLoader__.load({
       const [openMap, setOpenMap] = useState(() => readSuiteOpen())
       const [query, setQuery] = useState('')
       const [status, setStatus] = useState('')
+      const [lifecycleFilter, setLifecycleFilter] = useState('')
       const rows = skills.data ? skills.data.skills || [] : []
       const tree = useMemo(() => normalizeSkillTree(skills.data), [skills.data])
       const current = selected === null ? null : rowAtPath(rows, selected)
@@ -1692,13 +1947,14 @@ window.__ModuleLoader__.load({
       const isSimple = isGroup === false && isChild === false && isRootSkill === false
       const allRegistered = skillCount > 0 && registeredCount >= skillCount
       // 只渲染展开路径上的节点：默认收起时就是顶层节点
-      const filtering = query.trim() !== '' || status !== ''
+      const filtering = query.trim() !== '' || status !== '' || lifecycleFilter !== ''
       const visible = useMemo(() => {
         if (filtering) {
           const needle = query.trim().toLowerCase()
           return rows
             .filter((row) => {
               if (status !== '' && row.status !== status) return false
+              if (lifecycleFilter !== '' && lifecycleStateOf(row) !== lifecycleFilter) return false
               if (needle === '') return true
               const haystack = [row.name, row.description, row.path, row.id, ...(Array.isArray(row.notes) ? row.notes : [])].join(' ').toLowerCase()
               return haystack.includes(needle)
@@ -1715,7 +1971,7 @@ window.__ModuleLoader__.load({
         }
         walk(tree, 0)
         return out
-      }, [tree, openMap, filtering, rows, query, status])
+      }, [tree, openMap, filtering, rows, query, status, lifecycleFilter])
       const toggleNode = (path) => {
         setOpenMap((previous) => {
           const next = { ...previous }
@@ -1905,6 +2161,7 @@ window.__ModuleLoader__.load({
             clickable ? h('button', { type: 'button', onClick: () => jumpTo(target) }, segment) : h('span', { 'data-current': isLast ? 'true' : 'false' }, segment))
         }))
         : null
+      const currentReviewState = current === null ? 'active' : lifecycleStateOf(current)
       const detail = node === null
         ? h('div', { className: 'eng-card eng-detail-card' }, h(Empty, null, '选一个技能看正文'))
         : h('div', { className: 'eng-card eng-detail-card' },
@@ -1917,6 +2174,13 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } }, '这个目录只用于收纳，没有 SKILL.md；注册 / 取消注册 / 忘记都会作用于整棵子树。'))
               : h('div', null,
                 h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, current === null ? '（读取中…）' : (current.description || '—')),
+                current === null ? null : h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } },
+                  h(LifecycleBadge, { state: lifecycleStateOf(current) }),
+                  `时效：${VOLATILITY_LABELS[current.volatility] || current.volatility || '易腐'}`,
+                  current.freshness === undefined ? '' : ` · 新鲜度 ${fmtNumber(current.freshness)}`,
+                  current.lastVerifiedAt ? ` · 最后验证 ${fmtTime(current.lastVerifiedAt)}` : ' · 未登记验证时间',
+                  current.reviewAfter ? ` · 建议复核 ${fmtTime(current.reviewAfter)}${current.reviewDue ? '（已到期）' : ''}` : '',
+                  current.reviewNote ? ` · 复核记录：${current.reviewNote}` : ''),
                 isRootSkill
                   ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } }, `套件：${Math.max(0, skillCount - 1)} 个子技能 · 已注册 ${registeredCount}/${skillCount}`)
                   : null,
@@ -1928,10 +2192,14 @@ window.__ModuleLoader__.load({
                     `整包：${current.packageFiles} 个文件 / ${fmtBytes(current.packageBytes)}${Array.isArray(current.packageDirs) && current.packageDirs.length > 0 ? ` · ${current.packageDirs.join('、')}` : ''}（导入时随 SKILL.md 一起复制）`)
                   : null,
                 current === null ? null : h(SkillMetaEditor, { key: current.id || pathOfCurrent, row: current, onSaved: async (message) => { await skills.reload(); props.onChanged(); setNotice(message) } }),
-                current === null ? null : h('div', { className: 'eng-actions', style: { marginBottom: 10 } },
+                current === null ? null : h('div', { className: 'eng-actions', style: { marginBottom: 10, flexWrap: 'wrap' } },
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id || pathOfCurrent, result: 'helped' } }); return '已记「有帮助」' }) }, '有帮助'),
                   h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id || pathOfCurrent, result: 'hurt' } }); return '已记「没帮上」' }) }, '没帮上'),
-                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id || pathOfCurrent, result: 'neutral' } }); return '已记「中性」' }) }, '中性')),
+                  h(Button, { small: true, onClick: () => act(async () => { await request('/skill-feedback', { method: 'POST', body: { slug: current.id || pathOfCurrent, result: 'neutral' } }); return '已记「中性」' }) }, '中性'),
+                  currentReviewState !== 'retired' ? h(Button, { small: true, title: '刷新最后验证时间与建议复核时间，清掉待复核标记', onClick: () => act(async () => { await request('/review', { method: 'POST', body: { id: `skill:${current.id || pathOfCurrent}`, action: 'verify', note: '控制台确认仍有效' } }); return '已确认技能仍有效' }) }, '确认仍有效') : null,
+                  currentReviewState === 'active' ? h(Button, { small: true, onClick: () => act(async () => { await request('/review', { method: 'POST', body: { id: `skill:${current.id || pathOfCurrent}`, action: 'stale', reason: 'manual' } }); return '已标为待复核（不删除）' }) }, '标待复核') : null,
+                  currentReviewState !== 'retired' ? h(Button, { small: true, onClick: () => act(async () => { await request('/review', { method: 'POST', body: { id: `skill:${current.id || pathOfCurrent}`, action: 'retire', note: '控制台退休' } }); return '已退休（正文保留，可恢复）' }) }, '退休') : null,
+                  currentReviewState !== 'active' ? h(Button, { small: true, onClick: () => act(async () => { await request('/review', { method: 'POST', body: { id: `skill:${current.id || pathOfCurrent}`, action: 'revive', note: '控制台恢复使用' } }); return '已恢复技能' }) }, '恢复') : null),
                 h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } }, isRootSkill || isChild
                   ? (allRegistered
                     ? `已全部注册到全局（${registeredCount}/${skillCount}）：DSH 会把它们当普通技能加载，经验库不再排序/召回。`
@@ -1951,6 +2219,11 @@ window.__ModuleLoader__.load({
           h('select', { className: 'eng-select', style: { width: 130 }, value: status, onChange: (event) => setStatus(event.target.value) },
             h('option', { value: '' }, '全部状态'),
             ['solid', 'trial', 'risky', 'blocked', 'new'].map((key) => h('option', { key, value: key }, SKILL_STATES[key] ? SKILL_STATES[key][0] : key))),
+          h('select', { className: 'eng-select', style: { width: 128 }, value: lifecycleFilter, onChange: (event) => setLifecycleFilter(event.target.value), title: '按生命周期筛选技能：技能默认易腐，复核到期会变成待复核' },
+            h('option', { value: '' }, '全部生命周期'),
+            h('option', { value: 'active' }, '有效'),
+            h('option', { value: 'stale' }, '待复核'),
+            h('option', { value: 'retired' }, '已退休')),
           h('span', { className: 'eng-muted' }, filtering ? `${visible.length} 个匹配` : `共 ${rows.length} 个技能`)),
         h('div', { className: 'eng-split', 'data-open': node === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
@@ -1998,6 +2271,8 @@ window.__ModuleLoader__.load({
                       : null),
                   h('div', { className: 'eng-actions', style: { marginTop: 6 } },
                     itemKind === 'skill' && row !== null ? h(Badge, { tone }, label) : null,
+                    itemKind === 'skill' && row !== null ? h(LifecycleBadge, { state: lifecycleStateOf(row) }) : null,
+                    itemKind === 'skill' && row !== null ? h(VolatilityBadge, { volatility: row.volatility }) : null,
                     itemKind === 'skill'
                       ? h('span', { className: 'eng-muted' }, `uses ${row !== null ? row.uses || 0 : 0} · helped ${row !== null ? row.helped || 0 : 0} · hurt ${row !== null ? row.hurt || 0 : 0}`)
                       : h('span', { className: 'eng-muted' }, `已注册 ${itemRegistered}/${itemCount}`),
@@ -2439,13 +2714,15 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'eng-fill' },
         types.error ? h(Banner, { bad: true }, types.error) : null,
         notice ? h(Banner, null, notice) : null,
+        // 文案口径（计划书 §10.3）：类型只做归档/筛选/统计，召回由标签承担。
+        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '类型只用于归档、筛选和统计，不参与召回排序；分类信号由「标签」承担（对象 + 动作 + 主题 + 质量）。类型路由（兼容）仅作对照保留，0.20.0 不改召回结果。'),
         h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14 } },
           h('div', { className: 'eng-form-grid' },
             h(Field, { label: '新类型名称' }, h('input', { className: 'eng-input', value: name, onChange: (event) => setName(event.target.value) })),
             h(Field, { label: '描述（可选）' }, h('input', { className: 'eng-input', value: description, onChange: (event) => setDescription(event.target.value) }))),
           h(Button, { kind: 'primary', disabled: name.trim() === '', onClick: () => op({ action: 'create', name: name.trim(), description: description.trim() }) }, '新建类型')),
         h('div', { className: 'eng-card eng-section-card', style: { marginBottom: 14 } },
-          h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '类型分布'), h('span', { className: 'eng-muted' }, `${totalCount} 条可见经验`)),
+          h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '类型分布（只归档，不参与排序）'), h('span', { className: 'eng-muted' }, `${totalCount} 条可见经验`)),
           distRows.length === 0 ? h(Empty, null, '还没有类型数据') : h('div', { className: 'eng-dist' }, distRows.map((row) => h('div', { key: row.id, className: 'eng-dist-row' },
             h('span', { className: 'eng-row-intent', title: row.name }, row.name),
             h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round(((Number(row.count) || 0) / distMax) * 100)}%` } })),
@@ -4868,25 +5145,35 @@ window.__ModuleLoader__.load({
         await saveRoot(picked.path, picked.note)
       }
       const draftSetter = (setter) => (key, value) => setter((previous) => ({ ...previous, [key]: value }))
-      const renderFields = (fields, draft, setDraft) => (fields || []).map((field) => {
-        const value = draft[field.key]
-        const update = draftSetter(setDraft)
-        let control
-        if (field.type === 'boolean') {
-          control = h('label', { className: 'eng-actions', style: { fontWeight: 400 } },
-            h('input', { type: 'checkbox', checked: value === true, onChange: (event) => update(field.key, event.target.checked) }),
-            h('span', { className: 'eng-muted' }, value === true ? '开' : '关'))
-        } else if (field.type === 'enum') {
-          control = h('select', { className: 'eng-select', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) },
-            h('option', { value: '' }, '默认'),
-            (field.values || []).map((option) => h('option', { key: option, value: option }, (field.labels && field.labels[option]) || option)))
-        } else if (field.type === 'number') {
-          control = h('input', { className: 'eng-input', type: 'number', step: 'any', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
-        } else {
-          control = h('input', { className: 'eng-input', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
+      const renderFields = (fields, draft, setDraft) => {
+        const output = []
+        let group = ''
+        for (const field of fields || []) {
+          // 分组标题（P1「运行环境」）：同一组字段只出现一次小标题；没有 group 的按原样平铺。
+          if (typeof field.group === 'string' && field.group !== '' && field.group !== group) {
+            group = field.group
+            output.push(h('div', { key: `group-${field.group}`, className: 'eng-label', style: { gridColumn: '1 / -1', marginTop: 8 } }, field.group))
+          }
+          const value = draft[field.key]
+          const update = draftSetter(setDraft)
+          let control
+          if (field.type === 'boolean') {
+            control = h('label', { className: 'eng-actions', style: { fontWeight: 400 } },
+              h('input', { type: 'checkbox', checked: value === true, onChange: (event) => update(field.key, event.target.checked) }),
+              h('span', { className: 'eng-muted' }, value === true ? '开' : '关'))
+          } else if (field.type === 'enum') {
+            control = h('select', { className: 'eng-select', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) },
+              h('option', { value: '' }, '默认'),
+              (field.values || []).map((option) => h('option', { key: option, value: option }, (field.labels && field.labels[option]) || option)))
+          } else if (field.type === 'number') {
+            control = h('input', { className: 'eng-input', type: 'number', step: 'any', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
+          } else {
+            control = h('input', { className: 'eng-input', placeholder: '默认', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) })
+          }
+          output.push(h(Field, { key: field.key, label: field.label, hint: field.hint, tip: field.tip }, control))
         }
-        return h(Field, { key: field.key, label: field.label, hint: field.hint, tip: field.tip }, control)
-      })
+        return output
+      }
       if (settings.error) return h(Banner, { bad: true }, settings.error)
       const data = settings.data || {}
       const storage = data.storage !== null && typeof data.storage === 'object' ? data.storage : null
@@ -5444,6 +5731,8 @@ window.__ModuleLoader__.load({
     return {
       // 暴露给测试：详情面板/设置页/各页面都要能单独渲染，防「点击后空白」「设置页堆成一坨」「整页滚」回归。
       DetailPane,
+      // 标签选择器单独导出：按面分组与缺面提示都要能被渲染测试盯住（0.20.0 P0）。
+      TagPicker,
       ImportSkillDialog,
       PushConflictDialog,
       Console,

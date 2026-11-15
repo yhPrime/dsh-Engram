@@ -218,6 +218,8 @@ export function createEngine(options = {}) {
     feedback: (input = {}) => call('exp_feedback', input),
     consolidate: (input = {}) => call('exp_consolidate', input),
     types: (input = { action: 'list' }) => call('exp_type', input),
+    /** 时效复核（0.20 P0）：due / verify / stale / retire / revive。 */
+    review: (input = {}) => call('exp_review', input),
     tools: () => tools.map((tool) => tool.name),
     listSkills: () => listSkills(dataDir),
     readSkill: (slug) => readSkillBySlug(dataDir, slug),

@@ -4,5 +4,5 @@
 
 export { name, inject, apply } from './plugin.js'
 export { API_PREFIX, APP_NAME } from './ui/shell.js'
-export { createSource, buildState, buildExperiences, buildExperience, buildSkills } from './ui/shell.js'
+export { createSource, buildState, buildExperiences, buildExperience, buildSkills, buildReview } from './ui/shell.js'
 export { createEngine } from './kernel/engine.js'

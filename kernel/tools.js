@@ -7,21 +7,25 @@
 
 import {
   FEEDBACK_ETA,
+  REVIEW_ACTIONS,
+  REVIEW_NOTE_LIMIT,
+  REVIEW_REASONS,
   SYSTEM_TYPE,
   applyFeedback,
   assignType,
   buildInduction,
   createType,
   deleteType,
+  dueReviewRows,
   findType,
   listTypes,
   logUsage,
-  canonicalTag,
-  isValidTag,
   mergeTypes,
+  nextReviewAfter,
   normalizeContext,
   pendingTasks,
   rankExperiences,
+  reviewExperience,
   tagCatalog,
   readColdStore,
   readManifest,
@@ -35,14 +39,23 @@ import {
   upsertExperience,
   writeStore,
 } from './store.js'
+import {
+  lifecycleMetaOf,
+  normalizeIsoDate,
+  normalizeVolatility,
+} from './retrieval.js'
 import { readRecordsByIds, readShardRecordsOfTypes, recordShardWrite, writeTypeShards } from './shard-store.js'
 import { findActiveSession, findRecordBinding, userMessageForRecord } from './session.js'
 import { measure, slimRecall, slimReceipt } from './token-budget.js'
+import { rankByTags } from './tag-rank.js'
+import { ensureTagOverrides } from './tag-registry.js'
 import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
 import { ensureClusters, routeCluster } from './cluster.js'
-import { resolveEngramDataDir } from './settings.js'
-import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId } from './skills.js'
+import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
+import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, updateSkillMeta } from './skills.js'
+// 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
+import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, facetOf, groupByFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
@@ -50,6 +63,13 @@ const TRIAL_MIN_SIMILARITY = 0.18
 
 function renderJson(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value) }]
+}
+
+/** 可选时间字段：未给=null；给了但解析不了就明确报错，不能静默改走推算。 */
+function checkedIsoDate(value, field) {
+  if (value === undefined || value === null || String(value).trim() === '') return undefined
+  if (normalizeIsoDate(value) === null) throw new Error(`${field} 不是合法时间（请用 ISO，例如 2026-12-31T00:00:00.000Z）`)
+  return value
 }
 
 /**
@@ -147,7 +167,7 @@ export function buildTools(defineTool, config = {}) {
 
   const record = defineTool({
     name: 'exp_record',
-    description: '记录一条工作经验（做法 + 结果）。同一做法会就地更新 hits，近似替换会写新条并标记旧条被取代。次级分类用 labels 数组挂多个标签（≤8），优先复用 exp_type action=labels 的已有标签，已有无法满足才新建。',
+    description: '记录一条工作经验（做法 + 结果）。同一做法会就地更新 hits，近似替换会写新条并标记旧条被取代。标签（context/labels，≤8）请凑出「至少 1 个对象 + 1 个动作」：对象如 代码/PPT/课件/DSH插件，动作如 提交/推送/校验/验收；只写大类会回 tagWarning。标签只写类型不写实例名（DSH-Engram 会被归一成 DSH插件，yxjd-explib 这类仓库名会被丢弃并记 tagsRejected）。',
     parameters: {
       intent: { type: 'string', required: true, description: '要做的任务/意图。' },
       action: { type: 'string', required: true, description: '采取的做法或方案名。' },
@@ -168,6 +188,11 @@ export function buildTools(defineTool, config = {}) {
       labels: { type: 'array', description: '可选：次级分类标签（≤8），与 context 合并；优先用 exp_type action=labels 列出的已有标签，已有无法满足才新建。' },
       artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
       dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
+      // 时效治理（0.20 P0）：全部可选；不填就是旧行为（读时按 semi 解释）。
+      volatility: { type: 'string', enum: ['stable', 'semi', 'perishable'], description: '可选：易腐层。stable=偏好/硬约束，semi=判断原则（默认），perishable=具体步骤/命令/API。只影响召回降权与复核，不改 G。' },
+      appliesTo: { type: 'object', description: '可选：适用范围 { models?: string[], tools?: string[], environment?: string }；不声明=unscoped（不硬拦）。', properties: { models: { type: 'array', items: { type: 'string' } }, tools: { type: 'array', items: { type: 'string' } }, environment: { type: 'string' } } },
+      reviewAfter: { type: 'string', description: '可选：建议下次复核时间（ISO）；不填则按 lastVerifiedAt/创建时间 + 半衰期推算。' },
+      reviewNote: { type: 'string', description: '可选：复核结论（≤240 字）。' },
       verdicts: { type: 'array', description: '可选：回填回执里的 pending，[{id,outcome,dimensions?}]；一次可回填多条。' },
       cwd: { type: 'string', description: '可选：工作区路径（headless/脚本调用时给；给了才能对手改产物做 diff）。' },
       skillId: { type: 'string', description: '可选：本次使用的技能（技能 id 或 skill:<slug>）；记录后更新技能 confidence/障碍并提交。' },
@@ -220,6 +245,23 @@ export function buildTools(defineTool, config = {}) {
         }
       }
       const sessionId = binding !== null ? binding.sessionId : (activeSession === null ? undefined : activeSession.sessionId)
+      // 标签写入规则（0.20.0 P0）：别名归一 + 命名校验 + 面覆盖。
+      // 违规的标签**不落盘**（新记录不能保存项目实例名，计划书 §13-P0 验收），但也不整条拒收：
+      // 记录本身是主要产物，标签问题以 tagWarning 回执给模型补（计划书 §3.4「不静默通过」）。
+      //
+      // context 与 labels 必须**各自**校验、各自回填：store 的重复分支里
+      // `context` 是「替换」而 `labels` 是「追加」，把两者合并成一个字段会改掉重记语义。
+      const ctxGiven = args.context !== undefined
+      const lblGiven = args.labels !== undefined
+      const reviewAfterInput = checkedIsoDate(args.reviewAfter, 'reviewAfter')
+      const contextProvidedNonEmpty = Array.isArray(args.context)
+        ? args.context.length > 0
+        : (typeof args.context === 'string' && args.context.trim() !== '')
+      const ctxCheck = validateTagSet(args.context)
+      const lblCheck = validateTagSet(args.labels)
+      const allTags = [...ctxCheck.tags, ...lblCheck.tags]
+        .filter((name, index, list) => list.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
+      const rejectedTags = [...ctxCheck.rejected, ...lblCheck.rejected]
       // 写入口的入参/选项：fast / slow 两条路径共用（保证语义只在一处定义）。
       const upsertInput = {
         intent: args.intent,
@@ -236,6 +278,10 @@ export function buildTools(defineTool, config = {}) {
         type: typeName,
         typeDescription: args.typeDescription,
         note: args.note,
+        volatility: args.volatility,
+        appliesTo: args.appliesTo,
+        reviewAfter: reviewAfterInput,
+        reviewNote: args.reviewNote,
         taskId: args.taskId,
         kind: args.kind,
         stepIndex: args.stepIndex,
@@ -244,8 +290,11 @@ export function buildTools(defineTool, config = {}) {
         stepRewards: args.stepRewards,
         expectedOutcome: args.expectedOutcome,
         expectedG: args.expectedG,
-        context: args.context,
-        labels: args.labels,
+        // 显式给空数组=清空；给了非空但全部被拒=保留旧标签，避免“只写了一个实例名”把旧标签静默清空。
+        context: ctxGiven
+          ? (ctxCheck.tags.length === 0 && contextProvidedNonEmpty ? undefined : ctxCheck.tags)
+          : undefined,
+        labels: lblGiven ? lblCheck.tags : undefined,
         skillId: args.skillId,
       }
       const upsertOptions = {
@@ -375,6 +424,21 @@ export function buildTools(defineTool, config = {}) {
       }
       const typeInfo = result.type || {}
       const sanitized = result.sanitized || {}
+      // 回执必须说实际落盘的标签：store.normalizeContext 会去重/截到 8 个，
+      // 不能把调用方传的 9 个原样报成成功。
+      const savedTags = normalizeContext(result.experience.context)
+      const savedFacets = groupByFacet(savedTags)
+      const savedMissingFacets = ['object', 'action'].filter((facet) => savedFacets[facet].length === 0)
+      const overflowTags = allTags.filter((tag) => !savedTags.some((saved) => saved.toLowerCase() === tag.toLowerCase()))
+      const finalTagWarning = (ctxGiven || lblGiven)
+        ? [
+          ...savedMissingFacets.map((facet) => TAG_FACET_HINTS[facet]),
+          ...rejectedTags.map((item) => `已忽略「${item.value}」：${item.reason}`),
+          overflowTags.length > 0
+            ? `标签最多保留 ${TAG_MAX_COUNT} 个，已保留：${savedTags.join('、')}；被截断/丢弃：${overflowTags.join('、')}`
+            : '',
+        ].filter(Boolean).join('；')
+        : ''
       const pending = config.pendingReceipt === false
         ? []
         : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item), edit: pendingEdit(item) }) }))
@@ -402,6 +466,10 @@ export function buildTools(defineTool, config = {}) {
           : undefined,
         verdicts: verdictSummary(verdictResults),
         pending: pending.length > 0 ? pending : undefined,
+        // 标签：归一后的清单 + 被丢弃的原文 + 缺面提示。模型看到 tagWarning 就能当场补一个动作标签。
+        tags: savedTags.length > 0 ? savedTags : undefined,
+        tagsRejected: rejectedTags.length > 0 ? rejectedTags.map((item) => item.value) : undefined,
+        tagWarning: finalTagWarning === '' ? undefined : finalTagWarning,
         ...(skillResult === null ? {} : { skill: skillResult }),
         ...(skillWarning === null ? {} : { skillWarning }),
       })
@@ -443,6 +511,9 @@ export function buildTools(defineTool, config = {}) {
       all: { type: 'boolean', description: '可选：强制全库检索，忽略路由。' },
       cold: { type: 'boolean', description: '可选：查冷档（超出容量上限被下沉的老经验，默认不参与召回）。只读，不写盘。' },
       detail: { type: 'boolean', description: '可选：返回完整回执（含全部字段与长 note）；默认瘦身档省 token。' },
+      includeMismatched: { type: 'boolean', description: '可选：appliesTo 明确不匹配当前环境的经验默认不返回；传 true 时返回并标注 applicability=mismatch。' },
+      currentEnv: { type: 'object', description: '可选：本次调用覆盖设置里的运行环境 { models?: string[], tools?: string[], environment?: string }；未给的字段沿用设置。', properties: { models: { type: 'array', items: { type: 'string' } }, tools: { type: 'array', items: { type: 'string' } }, environment: { type: 'string' }, model: { type: 'string' }, tool: { type: 'string' } } },
+      tagShadow: { type: 'boolean', description: '可选：只计算标签排序的影子对照（tagShadow 元数据：queryTags / tagTop 前 5 / 当前候选前 5 / overlapAt5），不改变 candidates 的顺序与数量；默认关闭，也可由 config.tagShadow 打开。' },
       verdicts: { type: 'array', description: '可选：顺手回填回执里的 pending，[{id,outcome,dimensions?}]。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
@@ -553,9 +624,35 @@ export function buildTools(defineTool, config = {}) {
       if (store === null) store = fullStore()
       // autoBind=false 是显式「不绑会话」模式（headless/脚本/运维）：发 recentAllSessions 拿全量。
       // 默认模式认不出会话时 recent 默认 fail-closed（store.js），绝不跨会话泄漏。
-      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText }
+      // 运行环境（P1）：设置里的 currentModel/currentTool/currentEnvironment 为默认，
+      // 本次调用的 currentEnv 字段级覆盖；都没有时是空环境 → applicability=unscoped（不硬拦）。
+      const currentEnv = mergeRuntimeEnv(readRuntimeEnv(config), args.currentEnv)
+      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
       if (Array.isArray(recentRows)) rankOptions.recentRows = recentRows
       const result = rankExperiences(store, String(args.intent || ''), recallLimit, rankOptions)
+      // 类型路由影子（P1）：只在显式 tagShadow / config.tagShadow 时计算；只读、不碰 candidates。
+      const tagShadowEnabled = args.tagShadow === true || config.tagShadow === true
+      const buildTagShadow = (routingCandidates = result.candidates) => {
+        // 用户覆盖词表（<dataDir>/tag-registry.json）也参与影子；按目录缓存，读一次。
+        try {
+          ensureTagOverrides(dataDir)
+        } catch {
+          // 覆盖文件读坏不拖垮召回：影子按内建词表算。
+        }
+        const ranked = rankByTags(fullStore(), String(args.intent || ''), { limit: 5 })
+        const typeRoutingTop = (routingCandidates || [])
+          .map((candidate) => ((candidate.evidence || [])[0] || {}).id)
+          .filter((id) => typeof id === 'string' && id !== '')
+          .slice(0, 5)
+        const tagTopIds = ranked.top.map((item) => item.id)
+        return {
+          queryTags: ranked.queryTags,
+          tagTop: ranked.top,
+          typeRoutingTop,
+          overlapAt5: tagTopIds.filter((id) => typeRoutingTop.includes(id)).length,
+          ...(ranked.note === undefined ? {} : { note: ranked.note }),
+        }
+      }
       // 相似度低于 0.20 且判 weak：不展示噪声候选（无关任务时避免「1 条沾边候选」被当推荐）。
       if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
       result.pendingSkills = pendingSkills
@@ -651,6 +748,7 @@ export function buildTools(defineTool, config = {}) {
                 ? ' 经验候选都不够相关（最高相似度低），别当参考。'
                 : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : '')))),
         }
+        if (tagShadowEnabled) skillPayload.tagShadow = buildTagShadow(candidates)
         logUsage(dataDir, {
           tool: 'exp_recall',
           intent: String(args.intent || ''),
@@ -704,10 +802,26 @@ export function buildTools(defineTool, config = {}) {
         if (typeof result.induction === 'string') payload.induction = result.induction
         if (Number(result.marked) > 0) payload.marked = Number(result.marked)
         payload.pendingSkills = pendingSkills
+        // 运行环境回执（P1）：让模型知道「这次按什么环境判断适用性」，以及哪些经验被环境门控隐藏/降权。
+        const envDeclared = currentEnv.models.length > 0 || currentEnv.tools.length > 0 || currentEnv.environment !== ''
+        if (envDeclared) payload.currentEnv = { models: currentEnv.models, tools: currentEnv.tools, environment: currentEnv.environment }
+        const applicabilityNotes = []
+        if (Number(result.applicabilityFiltered) > 0) {
+          payload.applicabilityFiltered = Number(result.applicabilityFiltered)
+          applicabilityNotes.push(`有 ${result.applicabilityFiltered} 条经验的适用范围与当前运行环境不匹配，已默认隐藏（需要历史方案时传 includeMismatched:true）。`)
+        }
+        const shownCandidates = Array.isArray(payload.candidates) ? payload.candidates : []
+        const partialCount = shownCandidates.filter((candidate) => candidate && candidate.applicability === 'partial').length
+        const mismatchCount = shownCandidates.filter((candidate) => candidate && candidate.applicability === 'mismatch').length
+        if (partialCount > 0) applicabilityNotes.push(`${partialCount} 条只部分匹配当前环境，已降权。`)
+        if (mismatchCount > 0) applicabilityNotes.push(`${mismatchCount} 条明确不匹配当前环境（includeMismatched 显式打开），仅作历史参考。`)
+        if (applicabilityNotes.length > 0) payload.applicabilityNote = applicabilityNotes.join(' ')
         if (coldMode) {
           payload.cold = true
           payload.note = `冷档查询：只返回超出容量上限被下沉的老经验（默认召回不含它们）。${payload.note === undefined ? '' : payload.note}`
         }
+        // 类型路由影子（P1）：只追加元数据，candidates 保持原顺序/数量（上面所有步骤已完成）。
+        if (tagShadowEnabled) payload.tagShadow = buildTagShadow()
       }
       logUsage(dataDir, {
         tool: 'exp_recall',
@@ -897,6 +1011,8 @@ export function buildTools(defineTool, config = {}) {
       id: { type: 'string', description: 'assign 时的经验 id（exp_recall 证据里的 id）。' },
       // 不叫 description：与 JSON Schema 的 description 关键字同名，provider 严格校验会误读。
       typeDescription: { type: 'string', description: 'create/rename 时可选写描述（≤120 字）。' },
+      facet: { type: 'string', enum: [...TAG_FACETS], description: `label 时给**新标签**指定面（已登记标签不用给）：${TAG_FACETS.map((key) => `${key}=${TAG_FACET_LABELS[key]}`).join('、')}。新标签会登记进 .exp/tag-registry.json。` },
+      tagDescription: { type: 'string', description: 'label 登记新标签时的说明（≤120 字，给人看，不是标签本身）。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
     execute(args = {}) {
@@ -910,13 +1026,35 @@ export function buildTools(defineTool, config = {}) {
         if (row === undefined) throw new Error('经验不存在')
         const existing = normalizeContext(row.context)
         const rawLabels = Array.isArray(args.labels) ? args.labels : (args.labels === undefined || args.labels === null || args.labels === '' ? [] : [args.labels])
-        if (rawLabels.some((label) => canonicalTag(label) === null)) {
-          const error = new Error('标签需为 1–12 字短名词，不能是句子或带标点')
+        const wanted = rawLabels.map((item) => String(item === undefined || item === null ? '' : item).trim()).filter((item) => item !== '')
+        // 手动加标签 = 写入口：命名规则从严（项目实例名/版本/路径/句子一律拒绝，不再静默丢弃）。
+        const problems = []
+        const resolved = []
+        for (const raw of wanted) {
+          const check = validateNewTagName(raw)
+          if (!check.ok) {
+            problems.push(`「${raw}」${check.reason}`)
+            continue
+          }
+          if (!resolved.some((name) => name.toLowerCase() === check.name.toLowerCase())) resolved.push(check.name)
+        }
+        if (problems.length > 0) {
+          const error = new Error(`标签不合规：${problems.join('；')}`)
           error.code = 'invalid'
           throw error
         }
-        const incoming = normalizeContext(args.labels)
-        const merged = [...new Set([...existing, ...incoming])]
+        // 未登记的新标签必须指定面（计划书 §5.2 / §8.1-4），登记进 .exp/tag-registry.json 后立即可用。
+        const unknown = resolved.filter((name) => facetOf(name) === null)
+        if (unknown.length > 0) {
+          const facet = String(args.facet || '').trim()
+          if (!TAG_FACETS.includes(facet)) {
+            const error = new Error(`新标签 ${unknown.map((name) => `「${name}」`).join('')} 必须指定面：facet 取 ${TAG_FACETS.map((key) => `${key}(${TAG_FACET_LABELS[key]})`).join(' / ')}`)
+            error.code = 'invalid'
+            throw error
+          }
+          for (const name of unknown) saveTagOverride(dataDir, { name, facet, description: args.tagDescription })
+        }
+        const merged = [...new Set([...existing, ...resolved])]
         if (merged.length > 8) {
           const error = new Error('标签最多 8 个，请先删掉一些旧标签')
           error.code = 'invalid'
@@ -924,11 +1062,18 @@ export function buildTools(defineTool, config = {}) {
         }
         row.context = normalizeContext(merged)
         writeStore(dataDir, store)
-        return { action, id: row.id, labels: row.context }
+        const check = validateTagSet(row.context)
+        return {
+          action,
+          id: row.id,
+          labels: row.context,
+          tags: row.context,
+          tagWarning: check.warning === '' ? undefined : check.warning,
+        }
       }
       if (action === 'labels') {
         const store = readStore(dataDir)
-        const labels = tagCatalog(store, { limit: 60 })
+        const labels = tagCatalog(store, { limit: 60, dataDir })
         return { action, labels, total: labels.length }
       }
       // T4：list/create 只读 manifest（stats.tasksByType 提供唯一任务数），不加载全量经验。
@@ -1003,11 +1148,149 @@ export function buildTools(defineTool, config = {}) {
     },
   })
 
+  const reviewTool = defineTool({
+    name: 'exp_review',
+    description: '经验/技能的时效复核：due 列到期/待复核清单（只读）；verify 确认仍有效（刷新 lastVerifiedAt / reviewAfter，清 stale）；stale 标待复核（不删除、不退休）；retire 退休（保留正文与历史，可 revive）；revive 恢复 active（需要 note 说明理由）。只改时效字段，不改 G / outcome / 反馈账本。',
+    parameters: {
+      action: { type: 'string', enum: ['due', 'verify', 'stale', 'retire', 'revive'], required: true, description: '要执行的复核动作。' },
+      id: { type: 'string', description: '经验 id；技能用 skill:<slug>。verify/stale/retire/revive 必填。' },
+      note: { type: 'string', description: '复核结论或理由（≤240 字）；revive 必填。' },
+      volatility: { type: 'string', enum: ['stable', 'semi', 'perishable'], description: '可选：修正易腐层。' },
+      reviewAfter: { type: 'string', description: '可选：指定下一次复核时间（ISO）；不填按半衰期推算。' },
+      appliesTo: { type: 'object', description: '可选：修正适用范围 { models?, tools?, environment? }。', properties: { models: { type: 'array', items: { type: 'string' } }, tools: { type: 'array', items: { type: 'string' } }, environment: { type: 'string' } } },
+      reason: { type: 'string', enum: ['manual', 'review-due', 'negative-feedback', 'model-upgrade'], description: '可选：stale / retire 的原因，默认 manual。' },
+      limit: { type: 'number', description: 'due 时返回条数，默认 20（≤50）。' },
+    },
+    output: { schema: OUTPUT_SCHEMA, render: renderJson },
+    execute(args = {}) {
+      const dataDir = dataDirOf()
+      const action = String(args.action || '').trim().toLowerCase()
+      if (!REVIEW_ACTIONS.includes(action)) {
+        throw new Error(`action 只能是 ${REVIEW_ACTIONS.join(' / ')}，收到：${action || '(空)'}`)
+      }
+      if (action === 'due') {
+        const store = readStore(dataDir)
+        const limit = Math.max(1, Math.min(50, Math.trunc(Number(args.limit) || 20)))
+        const dueAll = dueReviewRows(store, { limit: 50 })
+        const skillsAll = listSkills(dataDir)
+          .map((skill) => ({ skill, meta: lifecycleMetaOf(skill.meta) }))
+          .filter((item) => item.meta.reviewDue || item.meta.lifecycle === 'stale')
+          .sort((left, right) => String(left.meta.reviewAfter || '').localeCompare(String(right.meta.reviewAfter || '')))
+        const due = dueAll.slice(0, limit)
+        const skills = skillsAll.slice(0, Math.max(0, limit - due.length))
+          .map(({ skill, meta }) => ({
+            id: `skill:${skill.id}`,
+            slug: skill.id,
+            name: skill.name,
+            lifecycle: meta.lifecycle,
+            volatility: meta.volatility,
+            freshness: meta.freshness,
+            lastVerifiedAt: meta.lastVerifiedAt,
+            reviewAfter: meta.reviewAfter,
+            reviewDue: meta.reviewDue,
+          }))
+        logUsage(dataDir, { tool: 'exp_review', op: 'due', due: due.length, skills: skills.length }, usageOptions)
+        return {
+          action,
+          total: due.length + skills.length,
+          rows: due.map(({ row, meta }) => ({
+            id: row.id,
+            intent: row.intent,
+            action: row.action,
+            typeName: row.typeName,
+            lifecycle: meta.lifecycle,
+            volatility: meta.volatility,
+            freshness: meta.freshness,
+            lastVerifiedAt: meta.lastVerifiedAt,
+            reviewAfter: meta.reviewAfter,
+            reviewDue: meta.reviewDue,
+          })),
+          skills,
+        }
+      }
+      const id = String(args.id || '').trim()
+      if (id === '') throw new Error('缺少 id（经验 id 或 skill:<slug>）')
+      const note = String(args.note || '').replace(/\s+/gu, ' ').trim().slice(0, REVIEW_NOTE_LIMIT)
+      const reason = String(args.reason || '').trim()
+      const reviewAfterInput = checkedIsoDate(args.reviewAfter, 'reviewAfter')
+      if (id.startsWith('skill:')) {
+        const slug = resolveSkillId(dataDir, id.slice('skill:'.length))
+        const skill = readSkillBySlug(dataDir, slug)
+        if (skill === null) throw new Error(`没有这个技能：${slug}`)
+        const skillLife = lifecycleMetaOf(skill.meta)
+        if (skill.meta.retired_at && (action === 'verify' || action === 'stale')) throw new Error('技能已退休，先 revive 再复核')
+        if (action === 'revive' && !skill.meta.retired_at && !skill.meta.stale_at && !skillLife.reviewDue) throw new Error('技能当前不是 retired/stale/到期，不需要 revive')
+        if (action === 'revive' && note === '') throw new Error('revive 需要 note 说明理由')
+        const effectiveReason = REVIEW_REASONS.includes(reason) ? reason : 'manual'
+        const now = new Date()
+        const nowIso = now.toISOString()
+        const effectiveVolatility = normalizeVolatility(args.volatility) || skill.meta.volatility || 'perishable'
+        const patch = {
+          ...(args.volatility !== undefined ? { volatility: args.volatility } : {}),
+          ...(args.appliesTo !== undefined ? { appliesTo: args.appliesTo } : {}),
+          ...(reviewAfterInput !== undefined ? { reviewAfter: reviewAfterInput } : {}),
+          ...(note === '' ? {} : { review_note: note }),
+        }
+        if (action === 'verify') {
+          patch.lastVerifiedAt = nowIso
+          patch.reviewAfter = reviewAfterInput || nextReviewAfter(now, effectiveVolatility)
+          patch.verifiedBy = 'manual'
+          patch.stale_at = null
+          patch.stale_reason = null
+        } else if (action === 'stale') {
+          patch.stale_at = nowIso
+          patch.stale_reason = effectiveReason
+        } else if (action === 'retire') {
+          patch.retired_at = nowIso
+          patch.retired_reason = effectiveReason
+          patch.stale_at = null
+          patch.stale_reason = null
+        } else if (action === 'revive') {
+          patch.retired_at = null
+          patch.retired_reason = null
+          patch.stale_at = null
+          patch.stale_reason = null
+          patch.lastVerifiedAt = nowIso
+          patch.verifiedBy = 'manual'
+          patch.reviewAfter = reviewAfterInput || nextReviewAfter(now, effectiveVolatility)
+        }
+        const out = updateSkillMeta(dataDir, slug, patch)
+        logUsage(dataDir, { tool: 'exp_review', op: action, id, slug, volatility: effectiveVolatility }, usageOptions)
+        return { action, id, slug, commit: out.commit, ...out.lifecycle }
+      }
+      return withStoreLock(dataDir, () => {
+        const store = readStore(dataDir)
+        const out = reviewExperience(store, id, { ...args, action }, { now: new Date() })
+        if (out.ok !== true) throw new Error(out.error || '复核失败')
+        writeStore(dataDir, store)
+        logUsage(dataDir, {
+          tool: 'exp_review',
+          op: action,
+          id,
+          volatility: out.meta.volatility,
+          lifecycle: out.meta.lifecycle,
+        }, usageOptions)
+        return {
+          action,
+          id,
+          lifecycle: out.meta.lifecycle,
+          volatility: out.meta.volatility,
+          freshness: out.meta.freshness,
+          lastVerifiedAt: out.meta.lastVerifiedAt,
+          reviewAfter: out.meta.reviewAfter,
+          reviewDue: out.meta.reviewDue,
+          staleAt: out.meta.staleAt,
+          retiredAt: out.meta.retiredAt,
+        }
+      })
+    },
+  })
+
   // 失败调用也要留痕：否则「调用次数」的分母只含成功调用，使用率会被高估。
   // 成功行由各工具自己写（带业务字段）；这里只兜异常。
   // 注意：必须把宿主执行上下文 exec 原样透传（tool.execute(args, exec)），
   // 否则 exp_record/exp_recall 拿不到 agent.session.header.cwd 与 agent.id（B7）。
-  const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool].map((tool) => ({
+  const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool, reviewTool].map((tool) => ({
     ...tool,
     execute(args = {}, exec) {
       try {

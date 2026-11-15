@@ -131,6 +131,63 @@ export function readUiConfig(env = process.env) {
   return ui !== null && typeof ui === 'object' ? ui : {}
 }
 
+/* -------------------------------------------------------------------------- */
+/* 运行环境（P1）：当前模型 / 工具版本 / 环境，用于 appliesTo 门控              */
+/* -------------------------------------------------------------------------- */
+
+/** 运行环境在设置里的三个键（都存 settings.config，空串=未声明）。 */
+export const RUNTIME_ENV_KEYS = Object.freeze(['currentModel', 'currentTool', 'currentEnvironment'])
+
+/** 读运行环境：插件 config 覆盖设置（与其它内核参数同一套优先级），只做字符串归一。 */
+export function readRuntimeEnv(config = {}, env = process.env) {
+  const saved = readEngineConfig(env)
+  const pick = (key) => {
+    const fromConfig = config !== null && config !== undefined && typeof config === 'object' ? config[key] : undefined
+    const value = fromConfig === undefined || fromConfig === null ? saved[key] : fromConfig
+    return String(value === undefined || value === null ? '' : value).trim()
+  }
+  const currentModel = pick('currentModel')
+  const currentTool = pick('currentTool')
+  const currentEnvironment = pick('currentEnvironment')
+  return {
+    currentModel,
+    currentTool,
+    currentEnvironment,
+    // applicabilityOf 的形状：单值包成数组；全空 → 空对象（unscoped）。
+    models: currentModel === '' ? [] : [currentModel],
+    tools: currentTool === '' ? [] : [currentTool],
+    environment: currentEnvironment,
+  }
+}
+
+/** 把 exp_recall 的 currentEnv 覆盖合并到设置里的默认环境（字段级，未给的不覆盖）。 */
+export function mergeRuntimeEnv(base = {}, override = null) {
+  if (override === null || override === undefined || typeof override !== 'object') return base
+  const listOf = (value) => {
+    if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter((item) => item !== '')
+    const text = String(value === undefined || value === null ? '' : value).trim()
+    return text === '' ? [] : [text]
+  }
+  const models = override.models !== undefined
+    ? listOf(override.models)
+    : (override.model !== undefined ? listOf(override.model) : (Array.isArray(base.models) ? base.models : []))
+  const tools = override.tools !== undefined
+    ? listOf(override.tools)
+    : (override.tool !== undefined ? listOf(override.tool) : (Array.isArray(base.tools) ? base.tools : []))
+  const environment = override.environment !== undefined
+    ? String(override.environment || '').trim()
+    : String(base.environment || '').trim()
+  return {
+    models,
+    tools,
+    environment,
+    currentModel: models[0] || '',
+    currentTool: tools[0] || '',
+    currentEnvironment: environment,
+  }
+}
+
+
 export function writeUiConfig(patch, env = process.env) {
   const current = readUiConfig(env)
   const next = { ...current }

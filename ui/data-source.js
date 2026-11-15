@@ -15,12 +15,13 @@
  */
 
 import { statsEntries } from '../kernel/shard-store.js'
+import { lifecycleMetaOf } from '../kernel/retrieval.js'
 
 /** 反馈 EMA 系数，与真实经验库一致。 */
 export const FEEDBACK_ETA = 0.35
 
 /** `/recall` 里原样透传给内核的高级参数（A4）：外壳与 live 共用同一份清单，避免漂移。 */
-export const RECALL_PASSTHROUGH_KEYS = ['all', 'cold', 'cluster', 'detail', 'mark', 'verdicts']
+export const RECALL_PASSTHROUGH_KEYS = ['all', 'cold', 'cluster', 'detail', 'mark', 'verdicts', 'includeMismatched', 'currentEnv']
 
 /** 建一个空库（读不到数据时用它兜底，界面不崩）。 */
 export function emptyStore() {
@@ -77,6 +78,7 @@ function jaccard(left, right) {
 /** 一条经验的展示行（字段全部是 JSON 值，界面直接可用）。 */
 export function rowOf(experience) {
   const feedback = experience.feedback !== null && typeof experience.feedback === 'object' ? experience.feedback : null
+  const meta = lifecycleMetaOf(experience)
   return {
     id: String(experience.id || ''),
     intent: String(experience.intent || ''),
@@ -112,11 +114,23 @@ export function rowOf(experience) {
           lastResult: String(feedback.lastResult || ''),
         },
     lifecycle: {
+      // state 是状态机值（active/stale/retired/superseded/deleted）；其余是原有生命周期事实。
+      state: meta.lifecycle,
       supersededBy: String(experience.superseded_by || ''),
       retiredAt: String(experience.retired_at || ''),
       retiredReason: String(experience.retired_reason || ''),
       deletedAt: String(experience.deleted_at || ''),
     },
+    freshness: meta.freshness,
+    volatility: meta.volatility,
+    lastVerifiedAt: meta.lastVerifiedAt,
+    reviewAfter: meta.reviewAfter,
+    reviewDue: meta.reviewDue,
+    applicability: meta.applicability,
+    appliesTo: meta.appliesTo,
+    staleAt: meta.staleAt,
+    staleReason: meta.staleReason,
+    reviewNote: meta.reviewNote,
   }
 }
 
@@ -156,11 +170,31 @@ export function listOf(store, params) {
   const offset = numberParam(params.get('offset'), 0, Number.MAX_SAFE_INTEGER)
   const typeFilter = String(params.get('type') || '')
   const outcomeFilter = String(params.get('outcome') || '')
+  const lifecycleFilter = String(params.get('lifecycle') || '')
+  const volatilityFilter = String(params.get('volatility') || '')
+  const dueOnly = String(params.get('due') || '') === '1'
   const sort = String(params.get('sort') || 'recent')
-  const all = visibleOf(store).map(rowOf)
+  // 生命周期筛选要看 retired/superseded，所以从全部未删除行出发；默认仍只给可见行（与旧行为一致）。
+  const raw = Array.isArray(store && store.experiences)
+    ? store.experiences.filter((item) => item && typeof item === 'object' && !item.deleted_at)
+    : []
+  const all = raw.map(rowOf)
   const counts = {}
-  for (const row of all) counts[row.typeId] = (counts[row.typeId] || 0) + 1
-  const rows = all
+  for (const row of all) {
+    if (row.lifecycle.state !== 'active' && row.lifecycle.state !== 'stale') continue
+    counts[row.typeId] = (counts[row.typeId] || 0) + 1
+  }
+  const visible = all.filter((row) => row.lifecycle.state !== 'retired' && row.lifecycle.state !== 'superseded')
+  const pool = lifecycleFilter === 'all' || lifecycleFilter === 'retired' || lifecycleFilter === 'superseded'
+    ? all
+    : visible
+  const rows = pool
+    .filter((row) => {
+      if (lifecycleFilter === '' || lifecycleFilter === 'visible' || lifecycleFilter === 'all') return true
+      return row.lifecycle.state === lifecycleFilter
+    })
+    .filter((row) => volatilityFilter === '' || row.volatility === volatilityFilter)
+    .filter((row) => !dueOnly || row.reviewDue === true || row.lifecycle.state === 'stale')
     .filter((row) => typeFilter === '' || row.typeId === typeFilter)
     .filter((row) => outcomeFilter === '' || row.outcome === outcomeFilter)
   const sorted = sortRows(rows, sort)
@@ -222,6 +256,8 @@ export function recallOf(store, query, limit) {
     const meanG = items.reduce((sum, entry) => sum + (Number(entry.experience.G) || 0), 0) / support
     const advantage = meanG - value
     const confidence = support / (support + 2)
+    const head = rowOf(items[0].experience)
+    const freshness = items.reduce((sum, entry) => sum + lifecycleMetaOf(entry.experience).freshness, 0) / support
     return {
       action: bucket.action,
       typeName: String(items[0].experience.typeName || '未分类'),
@@ -232,6 +268,13 @@ export function recallOf(store, query, limit) {
       support,
       meanSimilarity: round4(meanSimilarity),
       evidenceStrength: 0,
+      freshness: round4(freshness),
+      lifecycle: head.lifecycle.state,
+      volatility: head.volatility,
+      lastVerifiedAt: head.lastVerifiedAt,
+      reviewAfter: head.reviewAfter,
+      reviewDue: head.reviewDue,
+      applicability: head.applicability,
       evidence: items.slice(0, 5).map((entry) => {
         const row = rowOf(entry.experience)
         return {
@@ -245,6 +288,9 @@ export function recallOf(store, query, limit) {
           note: row.note,
           feedback: row.feedback,
           lifecycle: row.lifecycle,
+          freshness: row.freshness,
+          lastVerifiedAt: row.lastVerifiedAt,
+          reviewAfter: row.reviewAfter,
         }
       }),
     }
@@ -263,6 +309,8 @@ export function recallOf(store, query, limit) {
       : b.rankScore - a.rankScore || b.advantage - a.advantage || b.meanSimilarity - a.meanSimilarity
   ))
   if (degenerate) for (const candidate of candidates) candidate.rankScore = candidate.evidenceStrength
+  // 与内核同口径：stale 排在 active 之后（只降权，不隐藏）。
+  candidates.splice(0, candidates.length, ...candidates.filter((item) => item.lifecycle !== 'stale'), ...candidates.filter((item) => item.lifecycle === 'stale'))
 
   const allNegative = candidates.length > 0 && candidates.every((candidate) => candidate.evidence.every((item) => (Number(item.G) || 0) < 0))
   return {
@@ -523,6 +571,20 @@ export function skillRowOf(input = {}) {
   const hurt = Math.max(0, Math.trunc(Number(input.hurt) || 0))
   const openObstacles = Math.max(0, Math.trunc(Number(input.openObstacles) || 0))
   const state = skillStatusOf({ helped, hurt, openObstacles })
+  // 技能默认更易腐（计划书 §7.1）：旧技能缺 volatility 时按 perishable 解释。
+  const lifecycle = lifecycleMetaOf({
+    volatility: input.volatility || 'perishable',
+    lastVerifiedAt: input.lastVerifiedAt,
+    reviewAfter: input.reviewAfter,
+    appliesTo: input.appliesTo,
+    stale_at: input.staleAt !== undefined ? input.staleAt : input.stale_at,
+    stale_reason: input.staleReason !== undefined ? input.staleReason : input.stale_reason,
+    review_note: input.reviewNote !== undefined ? input.reviewNote : input.review_note,
+    retired_at: input.retiredAt !== undefined ? input.retiredAt : input.retired_at,
+    retired_reason: input.retiredReason !== undefined ? input.retiredReason : input.retired_reason,
+    lastSeenAt: input.lastUsedAt || input.lastSeenAt,
+    ts: input.updatedAt || input.ts,
+  })
   return {
     id: String(input.id || ''),
     path: String(input.path || input.id || ''),
@@ -561,6 +623,20 @@ export function skillRowOf(input = {}) {
     lastUsedAt: String(input.lastUsedAt || ''),
     updatedAt: String(input.updatedAt || ''),
     dir: String(input.dir || ''),
+    // 时效治理（0.20 P0）：与经验同一套状态机；技能没有 deleted/superseded。
+    lifecycle: lifecycle.lifecycle,
+    lifecycleState: lifecycle.lifecycle,
+    freshness: lifecycle.freshness,
+    volatility: lifecycle.volatility,
+    lastVerifiedAt: lifecycle.lastVerifiedAt,
+    reviewAfter: lifecycle.reviewAfter,
+    reviewDue: lifecycle.reviewDue,
+    appliesTo: lifecycle.appliesTo,
+    staleAt: lifecycle.staleAt,
+    staleReason: lifecycle.staleReason,
+    reviewNote: lifecycle.reviewNote,
+    retiredAt: lifecycle.retiredAt,
+    retiredReason: lifecycle.retiredReason,
   }
 }
 

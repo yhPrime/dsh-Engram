@@ -116,6 +116,16 @@ function readSkillRow(dir) {
     lastUsedAt: confidence.lastUsedAt || '',
     updatedAt,
     path: dir,
+    // 时效字段（0.20 P0）：meta 里没有就用默认（技能默认 perishable，由 ui/data-source 兜底）。
+    volatility: meta.volatility,
+    lastVerifiedAt: meta.lastVerifiedAt,
+    reviewAfter: meta.reviewAfter,
+    appliesTo: meta.appliesTo,
+    staleAt: meta.stale_at,
+    staleReason: meta.stale_reason,
+    reviewNote: meta.review_note,
+    retiredAt: meta.retired_at,
+    retiredReason: meta.retired_reason,
   })
 }
 
@@ -182,6 +192,16 @@ function skillRowFromEngine(skill) {
     lastUsedAt: confidence.lastUsedAt || '',
     updatedAt,
     dir: skill.dir,
+    // 时效字段（0.20 P0）：从 skill.json 的 meta 原样映射到界面行。
+    volatility: meta.volatility,
+    lastVerifiedAt: meta.lastVerifiedAt,
+    reviewAfter: meta.reviewAfter,
+    appliesTo: meta.appliesTo,
+    staleAt: meta.stale_at,
+    staleReason: meta.stale_reason,
+    reviewNote: meta.review_note,
+    retiredAt: meta.retired_at,
+    retiredReason: meta.retired_reason,
   })
 }
 
@@ -359,6 +379,11 @@ export function createLiveSource(config = {}) {
     },
     record(args = {}) {
       return engine.record(args)
+    },
+    /** 时效复核（0.20 P0）：due / verify / stale / retire / revive；技能用 id=skill:<slug>。 */
+    review(args = {}) {
+      if (engine === null) throw codedError('no-data-dir', '没有数据目录，无法执行时效复核。')
+      return engine.review(args)
     },
     consolidate(args = {}) {
       return engine.consolidate({ intent: String(args.intent || ''), context: args.context })

@@ -120,6 +120,15 @@ function slimCandidate(candidate, index) {
   if (candidate.typeName) out.typeName = candidate.typeName
   if (candidate.mean_similarity !== undefined) out.mean_similarity = round(candidate.mean_similarity)
   if (candidate.contextMatch !== undefined) out.contextMatch = candidate.contextMatch
+  // 时效元数据（0.20 P0）：只带判断要用的几个；stale 的提示语必须留着，否则模型会把旧经验当命令。
+  if (candidate.lifecycle !== undefined) out.lifecycle = candidate.lifecycle
+  if (candidate.volatility !== undefined) out.volatility = candidate.volatility
+  if (candidate.freshness !== undefined) out.freshness = round(candidate.freshness)
+  if (candidate.lastVerifiedAt) out.lastVerifiedAt = candidate.lastVerifiedAt
+  if (candidate.reviewAfter) out.reviewAfter = candidate.reviewAfter
+  if (candidate.reviewDue === true) out.reviewDue = true
+  if (candidate.applicability !== undefined) out.applicability = candidate.applicability
+  if (candidate.lifecycle_note !== undefined) out.lifecycle_note = cut(candidate.lifecycle_note, CUT_TEXT)
   const evidence = Array.isArray(candidate.evidence) ? candidate.evidence : []
   const kept = evidence.slice(0, 1)
   // 额外证据先保「正负对照」与「带生命周期」的（判断必需），再按顺序补到最多 4 条；

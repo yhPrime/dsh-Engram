@@ -7,6 +7,8 @@
  *  - 返回值明确 classifier='session' 或 'local'，调用方要如实告诉用户。
  */
 import { isValidTag } from './store.js'
+// 0.20.0 P0：自动分类只能从「core 种子 + 已复用」的词表里选，不许自己造实例标签（计划书 §5.2 / §12）。
+import { canonicalRegisteredName, isCoreTag } from './tag-registry.js'
 
 export const EXPERIENCE_SESSION_MAX_TOKENS = 120
 export const EXPERIENCE_SESSION_TIMEOUT_MS = 15_000
@@ -16,7 +18,9 @@ export const EXPERIENCE_TAG_LIMIT = 4
 const SYSTEM = [
   '你是经验归档器。只输出一个 JSON 对象，不要解释、不要代码块、不要调用任何工具。',
   '字段：category（必须是给定主分类之一；都不合适就给空字符串）、tags（1-4 个短标签，只能从给定已有标签里选，不得新建；没有合适就给空数组）。',
-  '例：{"category":"办公","tags":["PPT","版式"]}',
+  '标签要能拼出任务：至少 1 个「对象/项目类型」（如 代码/PPT/课件/DSH插件）+ 1 个「动作」（如 提交/推送/校验/验收）。只给大类会被要求补动作。',
+  '不要用具体项目名/仓库名/版本号当标签。',
+  '例：{"category":"办公","tags":["PPT","版式","校验"]}',
 ].join('\n')
 
 function collect(chunks) {
@@ -38,13 +42,31 @@ function parseJson(text) {
   try { return JSON.parse(source.slice(start, end + 1)) } catch { return null }
 }
 
+/**
+ * 只保留词表内、且在白名单里的标签；别名先归一。
+ * `allowed` 为 null 表示「词表内即可」（会话分类给的是 tagNames，本身就是白名单）。
+ */
 function cleanTags(value, allowed = null) {
   const list = Array.isArray(value) ? value : []
-  const allow = allowed === null ? null : new Set(allowed)
-  return [...new Set(list.map((item) => String(item || '').trim()).filter((item) => item !== '' && isValidTag(item) && (allow === null || allow.has(item))))].slice(0, EXPERIENCE_TAG_LIMIT)
+  const allow = allowed === null ? null : new Set(allowed.map((item) => String(item || '').trim()))
+  const out = []
+  for (const item of list) {
+    const raw = String(item || '').trim()
+    if (raw === '') continue
+    const name = canonicalRegisteredName(raw) || raw
+    if (!isValidTag(name)) continue
+    if (allow !== null && !allow.has(name)) continue
+    if (out.some((existing) => existing.toLowerCase() === name.toLowerCase())) continue
+    out.push(name)
+  }
+  return out.slice(0, EXPERIENCE_TAG_LIMIT)
 }
 
-export function localClassifyExperience({ text = '', typeNames = [], tagNames = [] } = {}) {
+/**
+ * 本地兜底分类：只用**词表内**标签（core 或已被复用的），不自己造词。
+ * 0.20.0 之前这里会把正则命中的任意技术词大写后当标签（`WORD`/`PYTHON`），违反「自动分类不得造实例/新标签」。
+ */
+export function localClassifyExperience({ text = '', typeNames = [], tagNames = [], allowedTags = null } = {}) {
   const rules = [
     ['办公', /ppt|pptx|docx|word|xlsx|excel|课件|教案|表格|wps|版式/i],
     ['运维', /部署|环境|网络|心跳|ssh|git|服务|端口|代理/i],
@@ -55,14 +77,28 @@ export function localClassifyExperience({ text = '', typeNames = [], tagNames = 
   const found = rules.find(([, pattern]) => pattern.test(String(text || '')))
   const category = found && typeNames.includes(found[0]) ? found[0] : (typeNames.includes('开发') ? '开发' : (typeNames[0] || ''))
   const lower = String(text || '').toLowerCase()
-  const known = tagNames.filter((tag) => isValidTag(tag) && tag.length >= 2 && lower.includes(String(tag).toLowerCase())).slice(0, EXPERIENCE_TAG_LIMIT)
-  const tech = String(text || '').match(/\b(?:ppt|word|excel|docx|xlsx|python|typescript|javascript|git|ssh|dsh|univer)\b/gi) || []
-  const tags = [...new Set([...known, ...tech.map((item) => item.toUpperCase())])].slice(0, EXPERIENCE_TAG_LIMIT)
+  const allow = Array.isArray(allowedTags) && allowedTags.length > 0 ? allowedTags.map(String) : tagNames.map(String)
+  const allowSet = new Set(allow)
+  // 1) 文本里直接出现的白名单标签（长词优先，避免「PPT」吃掉「PPTX」这类包含关系）。
+  const known = [...allowSet]
+    .filter((tag) => isValidTag(tag) && tag.length >= 2 && lower.includes(String(tag).toLowerCase()))
+    .sort((left, right) => right.length - left.length)
+  // 2) 技术词走别名归一，并且必须已在白名单里（不新造）。
+  const tech = String(text || '').match(/\b(?:ppt|pptx|word|docx|excel|xlsx|wps|python|typescript|javascript|git|ssh|dsh)\b/gi) || []
+  const techTags = tech
+    .map((item) => canonicalRegisteredName(item))
+    .filter((name) => name !== null && allowSet.has(name))
+  const picked = []
+  for (const name of [...known, ...techTags]) {
+    if (picked.some((existing) => existing.toLowerCase() === name.toLowerCase())) continue
+    picked.push(name)
+    if (picked.length >= EXPERIENCE_TAG_LIMIT) break
+  }
   return {
     category,
-    tags,
+    tags: picked,
     classifier: 'local',
-    note: '没有可用模型会话，已用本地关键词兜底（不额外消耗 Token）',
+    note: '没有可用模型会话，已用本地关键词兜底（只从词表里选，不额外消耗 Token）',
   }
 }
 

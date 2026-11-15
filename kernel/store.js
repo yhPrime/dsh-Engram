@@ -18,11 +18,43 @@ import { createHash } from 'node:crypto'
 
 // 内核随包自带（与 dsh-exp-lib-source/kernel.js 同源），Provider 不依赖别的插件包。
 import { OUTCOME_SCORES, abstractState, estimateAdvantages, stateSimilarity, tokenize } from './kernel.js'
-import { RECALL_MIN_SIMILARITY, retrieveV2, similarityV2, stateOf } from './retrieval.js'
+import {
+  DEFAULT_VOLATILITY,
+  FRESHNESS_RANK_FLOOR,
+  FRESHNESS_RANK_SPAN,
+  HALF_LIFE_DAYS,
+  LIFECYCLE_NOTE,
+  RECALL_MIN_SIMILARITY,
+  lifecycleMetaOf,
+  lifecycleWeightOf,
+  normalizeAppliesTo,
+  normalizeIsoDate,
+  normalizeVolatility,
+  reviewDueOf,
+  retrieveV2,
+  similarityV2,
+  stateOf,
+  volatilityOf,
+} from './retrieval.js'
 import { listSkillsCached } from './skills.js'
 import { ensureClusters, refreshClusters, routeCluster, buildBrief } from './cluster.js'
 import { pendingBrief } from './brief.js'
 import { resolveEngramDataDir } from './settings.js'
+// 标签词表（0.20.0 P0）：面/别名/core/命名校验。store 只做归一与词表统计，规则在 registry 里。
+import {
+  TAG_FACETS,
+  TAG_FACET_HINTS,
+  TAG_FACET_LABELS,
+  TAG_MAX_CHARS,
+  TAG_MAX_COUNT,
+  TAG_REQUIRED_FACETS,
+  canonicalRegisteredName,
+  coreTagsOf,
+  describeTag,
+  ensureTagOverrides,
+  isStorableTag,
+  registrySnapshot,
+} from './tag-registry.js'
 import {
   AVG_RECORD_BYTES,
   CACHE_MAX_BYTES,
@@ -1135,14 +1167,6 @@ function round4(value) {
   return Math.round(Number(value) * 1e4) / 1e4
 }
 
-/** 新鲜度（0.5–1）：旧条不压新条，但也不直接淘汰；90 天衰减到 2/3。 */
-function freshnessOfRow(row) {
-  const time = Date.parse(String((row && (row.lastSeenAt || row.ts || row.registeredAt)) || ''))
-  if (!Number.isFinite(time)) return 1
-  const days = Math.max(0, (Date.now() - time) / 86400000)
-  return 1 / (1 + days / 90)
-}
-
 /** 召回展示用的 note 上限：只截展示、不删数据；保首尾，长路径/命令不至于被切在开头。 */
 export const RECALL_NOTE_LIMIT = 300
 
@@ -1360,6 +1384,21 @@ export function upsertExperience(store, input, options = {}) {
   const dimensions = normalizeDimensions(input.dimensions)
   const artifacts = normalizeArtifacts(input.artifacts)
   const evidence = normalizeEvidence(input.evidence)
+  // 时效字段（0.20 P0）：全部可选，只在调用方显式给了才落库；缺字段的旧记录保持原样（读时解释默认值）。
+  const volatilityInput = normalizeVolatility(input.volatility)
+  const appliesToInput = normalizeAppliesTo(input.appliesTo)
+  const reviewAfterInput = normalizeIsoDate(input.reviewAfter)
+  const reviewNoteInput = reviewNoteOf(input, { allowNote: false })
+  const applyLifecycleTo = (row) => {
+    if (volatilityInput !== '') {
+      row.volatility = volatilityInput
+      // 改了易腐层又没给复核时间：按新半衰期重排，否则旧复核周期与新易腐层对不上。
+      if (reviewAfterInput === null) row.reviewAfter = nextReviewAfter(now, volatilityInput)
+    }
+    if (appliesToInput !== null) row.appliesTo = appliesToInput
+    if (reviewAfterInput !== null) row.reviewAfter = reviewAfterInput
+    if (reviewNoteInput !== '') row.review_note = reviewNoteInput
+  }
   // 多步的整条 G 取「最弱一步」：人也是一步做砸就整件事没成。
   // 但 outcome 自己就是失败时不能被分步回报「洗白」：所以取 min(reward, ...stepRewards)。
   const computedG = stepRewardsInput !== null && stepRewardsInput.length > 0
@@ -1457,6 +1496,7 @@ export function upsertExperience(store, input, options = {}) {
     if (dimensions !== null) duplicate.dimensions = dimensions
     if (artifacts !== null) duplicate.artifacts = artifacts
     if (evidence !== null) duplicate.evidence = evidence
+    applyLifecycleTo(duplicate)
     foldExpiredFeedback(duplicate, nowMs, decayDays)
     syncDerivedFeedback(duplicate)
     if (cleanNote.text !== '') duplicate.note = cleanNote.text
@@ -1491,6 +1531,7 @@ export function upsertExperience(store, input, options = {}) {
     revivable.GOutcome = computedG
     if (input.context !== undefined) revivable.context = context
     if (labels.length > 0) revivable.context = normalizeContext([...(Array.isArray(revivable.context) ? revivable.context : []), ...labels])
+    applyLifecycleTo(revivable)
     applyExpectation(revivable)
     foldExpiredFeedback(revivable, nowMs, decayDays)
     syncDerivedFeedback(revivable)
@@ -1571,6 +1612,10 @@ export function upsertExperience(store, input, options = {}) {
     ...(dimensions !== null ? { dimensions } : {}),
     ...(artifacts !== null ? { artifacts } : {}),
     ...(evidence !== null ? { evidence } : {}),
+    ...(volatilityInput !== '' ? { volatility: volatilityInput } : {}),
+    ...(appliesToInput !== null ? { appliesTo: appliesToInput } : {}),
+    ...(reviewAfterInput !== null ? { reviewAfter: reviewAfterInput } : {}),
+    ...(reviewNoteInput !== '' ? { review_note: reviewNoteInput } : {}),
     typeId: type === undefined ? SYSTEM_TYPE.id : type.id,
     typeName: type === undefined ? SYSTEM_TYPE.name : type.name,
     deleted_at: null,
@@ -1670,41 +1715,37 @@ export function pushHistory(experience, event) {
   experience.history = list.slice(-HISTORY_LIMIT)
 }
 
-/** 标签统一表：同义词/大小写先归一；新标签才允许手动创建。 */
+/**
+ * 标签规则（0.20.0 P0）：词表与命名校验搬进 `tag-registry.js`。
+ *
+ * 这里只保留「存储侧」的三件事：
+ *  1. `canonicalTag`：读/写共用归一（别名 → 规范名；未登记的合规短词原样保留，兼容旧数据）；
+ *  2. `normalizeContext`：去重 + ≤8；
+ *  3. `tagCatalog`：把词表与实际使用次数合起来给 UI。
+ *
+ * 注意：`DSH-Engram` 这类项目实例名在这里被归一成 `DSH插件`（计划书 §5.4）；
+ * 历史数据不批量改，读时归一即可。
+ */
 export const TAG_MIN_REUSE = 2
-const TAG_ALIASES = new Map([
-  ['ppt', 'PPT'], ['pptx', 'PPT'], ['幻灯片', 'PPT'],
-  ['word', 'Word'], ['docx', 'Word'], ['docx排版', '版式'],
-  ['excel', 'Excel'], ['xlsx', 'Excel'], ['wps', 'WPS'],
-  ['eigenflux', 'EigenFlux'],
-  ['dsh-engram', 'DSH-Engram'], ['dsh 插件', 'DSH-Engram'], ['经验库插件', 'DSH-Engram'],
-  ['awesome-dsh-plugin', 'DSH-Engram'], ['dsh-engram-dev', 'DSH-Engram'],
-  ['exp_consolidate', '技能沉淀'],
-  ['tls握手超时', 'TLS握手超时'], ['skills', '技能'],
-  ['dsh', 'DSH'], ['ds h', 'DSH'],
-  ['2^53', '数值边界'], ['client.js', '客户端'],
-  ['react 客户端 client.js', 'React 客户端'], ['silent failure', '静默失败'], ['workspace-write', '沙箱'],
-])
+
+/** 标签硬上限（UI 与 store 共用同一个数）。 */
+export { TAG_MAX_CHARS }
 
 export function canonicalTag(value) {
   const raw = String(value || '').replace(/\s+/g, ' ').trim()
   if (raw === '') return null
-  const alias = TAG_ALIASES.get(raw.toLowerCase())
-  if (alias !== undefined) return alias
+  // 1) 词表内（含别名、大小写归一）：直接给规范名。
+  const registered = canonicalRegisteredName(raw)
+  if (registered !== null) return registered
+  // 2) 词表外：旧数据里存在大量一次性短词（如「第三态」「a线红金」），按宽松规则原样保留，
+  //    不因为「没登记」就把历史标签读没了。
   if (!isValidTag(raw)) return null
   return raw
 }
 
-/** 次级分类/情境标签（编码特异性）：≤8 个标签、每个 ≤12 字符，统一别名、去重。 */
-/** 标签规则：短名词，1–12 字，不含句子标点/连接词碎片；自动分类只能从已有标签里选。 */
-export const TAG_MAX_CHARS = 12
-const TAG_BAD_WORDS = /(的|了|也|已经|这个|那个|就是|不是|可以|需要|参与|纳入|进行|我们|你们|他们)/
+/** 读侧宽松校验（旧数据兼容）；写入侧严格规则走 `validateNewTagName`。 */
 export function isValidTag(value) {
-  const tag = String(value || '').trim()
-  if (tag.length < 1 || tag.length > TAG_MAX_CHARS) return false
-  if (!/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(tag)) return false
-  if (TAG_BAD_WORDS.test(tag) && tag.length > 5) return false
-  return true
+  return isStorableTag(value)
 }
 
 export function normalizeContext(value) {
@@ -1717,7 +1758,7 @@ export function normalizeContext(value) {
     if (tag === null) continue
     if (!tags.some((existing) => existing.toLowerCase() === tag.toLowerCase())) tags.push(tag)
   }
-  return tags.slice(0, 8)
+  return tags.slice(0, TAG_MAX_COUNT)
 }
 
 /**
@@ -1887,6 +1928,114 @@ export function applyFeedback(store, id, input = {}, options = {}) {
   }
 }
 
+/** exp_review 的合法动作。 */
+export const REVIEW_ACTIONS = Object.freeze(['due', 'verify', 'stale', 'retire', 'revive'])
+/** 复核结论上限（计划书 §4.1：review_note ≤240 字）。 */
+export const REVIEW_NOTE_LIMIT = 240
+/** stale/retire 的原因枚举（计划书 §4.1）。 */
+export const REVIEW_REASONS = Object.freeze(['manual', 'review-due', 'negative-feedback', 'model-upgrade'])
+
+/** 按易腐层算下一次复核时间：now + 半衰期。 */
+export function nextReviewAfter(now, volatility) {
+  const half = HALF_LIFE_DAYS[normalizeVolatility(volatility) || DEFAULT_VOLATILITY] || HALF_LIFE_DAYS[DEFAULT_VOLATILITY]
+  const base = now instanceof Date ? now.getTime() : (Number.isFinite(Number(now)) ? Number(now) : Date.now())
+  return new Date(base + half * 86400000).toISOString()
+}
+
+function reviewNoteOf(input, options = {}) {
+  const allowNote = options.allowNote !== false
+  const raw = input && (input.reviewNote ?? input.review_note ?? (allowNote ? input.note : ''))
+  const text = String(raw || '').replace(/\s+/gu, ' ').trim()
+  return text.length <= REVIEW_NOTE_LIMIT ? text : `${Array.from(text).slice(0, REVIEW_NOTE_LIMIT - 1).join('')}…`
+}
+
+function reviewReasonOf(input, fallback) {
+  const raw = String((input && (input.reason || input.stale_reason || input.retired_reason)) || '').trim()
+  return REVIEW_REASONS.includes(raw) ? raw : fallback
+}
+
+/**
+ * exp_review 的经验侧状态转换（纯写操作，调用方负责 writeStore）。
+ * 语义边界：retired_at / superseded_by 仍是最高优先级；这里只增删自己的 stale/verify 字段，
+ * 不动 G / outcome / GOutcome / feedback（计划书 §2「不把时效混进 G/Â」）。
+ * @returns {{ok: boolean, action: string, id: string, row?: object, error?: string, meta?: object}}
+ */
+export function reviewExperience(store, id, input = {}, options = {}) {
+  const action = String((input && input.action) || '').trim().toLowerCase()
+  const target = String(id || '').trim()
+  if (!REVIEW_ACTIONS.includes(action) || action === 'due') {
+    return { ok: false, action, id: target, error: `action 只能是 ${REVIEW_ACTIONS.join(' / ')}，收到：${action || '(空)'}` }
+  }
+  if (target === '') return { ok: false, action, id: target, error: '缺少 id' }
+  const nowDate = options.now instanceof Date ? options.now : new Date(Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now())
+  const now = nowDate.toISOString()
+  const experience = (Array.isArray(store.experiences) ? store.experiences : []).find((item) => String(item.id) === target)
+  if (experience === undefined) return { ok: false, action, id: target, error: `没有这条经验：${target}` }
+  if (experience.deleted_at) return { ok: false, action, id: target, error: `这条经验已删除，不能再复核：${target}` }
+  if (experience.superseded_by) return { ok: false, action, id: target, error: `这条经验已被 ${experience.superseded_by} 取代，请复核新条` }
+  if (experience.retired_at && (action === 'verify' || action === 'stale')) {
+    return { ok: false, action, id: target, error: `这条经验已退休，先 revive 再复核：${target}` }
+  }
+  if (action === 'revive' && !experience.retired_at && !experience.stale_at && !reviewDueOf(experience, { now: nowDate })) {
+    return { ok: false, action, id: target, error: `这条经验当前不是 retired/stale/到期，不需要 revive：${target}` }
+  }
+  const note = reviewNoteOf(input)
+  const volatility = normalizeVolatility(input && input.volatility)
+  const appliesTo = normalizeAppliesTo(input && input.appliesTo)
+  const reviewAfterInput = normalizeIsoDate(input && input.reviewAfter)
+  if (volatility !== '') experience.volatility = volatility
+  if (appliesTo !== null) experience.appliesTo = appliesTo
+  if (note !== '') experience.review_note = note
+  if (action === 'verify') {
+    experience.lastVerifiedAt = now
+    experience.verifiedBy = 'manual'
+    experience.reviewAfter = reviewAfterInput || nextReviewAfter(nowDate, volatilityOf(experience))
+    // 明确复核通过 = 解除待复核；retired/superseded 不在这里解锁（上面已拒）。
+    experience.stale_at = null
+    experience.stale_reason = null
+    experience.reviewDueAt = null
+    pushHistory(experience, { type: 'verified', at: now, volatility: volatilityOf(experience), ...(note !== '' ? { note } : {}) })
+  } else if (action === 'stale') {
+    experience.stale_at = now
+    experience.stale_reason = reviewReasonOf(input, 'manual')
+    pushHistory(experience, { type: 'stale', at: now, reason: experience.stale_reason, ...(note !== '' ? { note } : {}) })
+  } else if (action === 'retire') {
+    experience.retired_at = now
+    experience.retired_reason = reviewReasonOf(input, 'manual-review')
+    // 退休优先于 stale：清掉待复核标记，避免两个状态同时亮着。
+    experience.stale_at = null
+    experience.stale_reason = null
+    pushHistory(experience, { type: 'retired', at: now, reason: experience.retired_reason, ...(note !== '' ? { note } : {}) })
+  } else if (action === 'revive') {
+    // 恢复要理由：没有理由的复活等于把「为什么曾停用」丢了。
+    if (note === '') return { ok: false, action, id: target, error: 'revive 需要 note 说明理由（写清这次为什么恢复使用）' }
+    experience.retired_at = null
+    experience.retired_reason = null
+    experience.stale_at = null
+    experience.stale_reason = null
+    experience.revived_at = now
+    // 恢复 = 人工确认当前仍可用：更新验证时间与下次复核时间。
+    experience.lastVerifiedAt = now
+    experience.verifiedBy = 'manual'
+    experience.reviewAfter = reviewAfterInput || nextReviewAfter(nowDate, volatilityOf(experience))
+    pushHistory(experience, { type: 'revived', at: now, reason: 'review', note })
+  }
+  refreshClusters(store)
+  return { ok: true, action, id: target, row: experience, meta: lifecycleMetaOf(experience, { now: nowDate, current: options.current }) }
+}
+
+/** 到期/待复核清单（只读，不写库）：active/stale 里按建议复核时间升序。 */
+export function dueReviewRows(store, options = {}) {
+  const limit = Math.max(1, Math.min(50, Math.trunc(Number(options.limit) || 20)))
+  const now = options.now instanceof Date ? options.now : new Date(Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now())
+  return (Array.isArray(store.experiences) ? store.experiences : [])
+    .filter((item) => item && !item.deleted_at && !item.superseded_by && !item.retired_at)
+    .map((row) => ({ row, meta: lifecycleMetaOf(row, { now, current: options.current }) }))
+    .filter((entry) => entry.meta.reviewDue || entry.meta.lifecycle === 'stale')
+    .sort((left, right) => String(left.meta.reviewAfter || '').localeCompare(String(right.meta.reviewAfter || '')) || String(right.meta.freshness).localeCompare(String(left.meta.freshness)))
+    .slice(0, limit)
+}
+
 /** 软删一条（墓碑）。 */
 export function forgetExperience(store, id) {
   const experience = store.experiences.find((item) => item.id === id)
@@ -1932,10 +2081,15 @@ export function purgeTombstones(store, tombstoneDays = DEFAULT_TOMBSTONE_DAYS, n
 }
 
 /** 可见经验（未删、未被取代）。 */
-/** 可复用标签词表：只收合规、且至少被两处使用的标签；一次性标签留在行上但不进下拉。 */
+/**
+ * 可复用标签词表：core 种子词永远在；用户标签至少要 `minCount` 次使用才进下拉。
+ * 每个条目带 `facet`（面）、`core`、`description`，UI 直接按面分组，不用自己猜。
+ */
 export function tagCatalog(store, options = {}) {
   const minCount = Math.max(1, Math.trunc(Number(options.minCount) || TAG_MIN_REUSE))
   const limit = Math.max(1, Math.min(200, Math.trunc(Number(options.limit) || 60)))
+  // 用户覆盖（.exp/tag-registry.json）：调用方给了数据目录就顺手加载，面才不会丢。
+  if (typeof options.dataDir === 'string' && options.dataDir !== '') ensureTagOverrides(options.dataDir)
   const counts = new Map()
   for (const row of visibleExperiences(store)) {
     for (const tag of Array.isArray(row.context) ? row.context : []) {
@@ -1944,11 +2098,64 @@ export function tagCatalog(store, options = {}) {
       counts.set(name, (counts.get(name) || 0) + 1)
     }
   }
+  // core 种子词零使用也进表（计划书 §5.2），count=0 排在有使用的后面。
+  const keep = new Set()
+  for (const facet of TAG_FACETS) {
+    for (const name of coreTagsOf(facet)) {
+      keep.add(name)
+      if (!counts.has(name)) counts.set(name, 0)
+    }
+  }
+  // 手动登记的用户标签（.exp/tag-registry.json）即使 0 次使用也要能选——登记就是为了用。
+  if (typeof options.dataDir === 'string' && options.dataDir !== '') {
+    for (const facet of TAG_FACETS) {
+      for (const item of registrySnapshot().groups[facet]) {
+        if (item.source !== 'user') continue
+        keep.add(item.name)
+        if (!counts.has(item.name)) counts.set(item.name, 0)
+      }
+    }
+  }
   return [...counts.entries()]
-    .map(([name, count]) => ({ name, count }))
-    .filter((item) => item.count >= minCount)
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh'))
+    .map(([name, count]) => {
+      const info = describeTag(name)
+      return {
+        name,
+        count,
+        facet: info === null ? null : info.facet,
+        core: info !== null && info.core === true,
+        status: info === null ? 'unregistered' : info.status,
+        description: info === null ? '' : info.description,
+        source: info === null ? 'used' : info.source,
+      }
+    })
+    .filter((item) => item.count >= minCount || keep.has(item.name))
+    .sort((left, right) => (right.count - left.count) || left.name.localeCompare(right.name, 'zh'))
     .slice(0, limit)
+}
+
+/**
+ * 给 UI 的完整词表视图：core + 已用（≥minCount）+ 用户覆盖，按面分组。
+ * `other` 是「登记过但面不明」与「未登记的一次性标签」的落点，UI 折叠展示。
+ */
+export function tagRegistryView(store, options = {}) {
+  const catalog = tagCatalog(store, { ...options, limit: Math.max(1, Math.min(200, Math.trunc(Number(options.limit) || 200))) })
+  const groups = { object: [], action: [], topic: [], quality: [], other: [] }
+  for (const item of catalog) {
+    const bucket = item.facet !== null && TAG_FACETS.includes(item.facet) ? item.facet : 'other'
+    groups[bucket].push(item)
+  }
+  const snapshot = registrySnapshot()
+  return {
+    facets: snapshot.facets,
+    labels: TAG_FACET_LABELS,
+    hints: TAG_FACET_HINTS,
+    required: TAG_REQUIRED_FACETS,
+    emptyFacets: TAG_REQUIRED_FACETS.filter((facet) => groups[facet].length === 0),
+    groups,
+    total: catalog.length,
+    maxCount: TAG_MAX_COUNT,
+  }
 }
 
 export function visibleExperiences(store, options = {}) {
@@ -2132,8 +2339,10 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   const neighbors = retrieveV2(pool, intent, { k: computeK, minSimilarity: options.minSimilarity })
   const result = estimateAdvantages(pool, intent, { k: computeK, neighbors })
   const byId = new Map(pool.map((item) => [item.id, item]))
-  const candidates = result.candidates.map((candidate) => {
+  let candidates = result.candidates.map((candidate) => {
     const row = byId.get((candidate.evidence[0] || {}).id) || null
+    // 候选的时效：主证据行决定（同一做法通常同代），其余证据各自带 freshness/复核时间。
+    const meta = row === null ? null : lifecycleMetaOf(row, { now: options.now, current: options.current })
     return {
       action: candidate.action,
       advantage: candidate.advantage,
@@ -2142,7 +2351,16 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       rank_score: candidate.rank_score,
       support: candidate.support,
       mean_similarity: candidate.mean_similarity,
-      freshness: row === null ? 1 : freshnessOfRow(row),
+      freshness: meta === null ? 1 : meta.freshness,
+      ...(meta === null ? {} : {
+        lifecycle: meta.lifecycle,
+        volatility: meta.volatility,
+        lastVerifiedAt: meta.lastVerifiedAt,
+        reviewAfter: meta.reviewAfter,
+        reviewDue: meta.reviewDue,
+        applicability: meta.applicability,
+        ...(meta.lifecycle === 'stale' ? { lifecycle_note: LIFECYCLE_NOTE } : {}),
+      }),
       typeName: row ? row.typeName : '未分类',
       evidence: candidate.evidence.map((evidence) => {
         const experience = byId.get(evidence.id)
@@ -2202,10 +2420,26 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
             window: Array.isArray(experience.feedback_log) ? experience.feedback_log.length : 0,
           }
         }
+        // 时效元数据（0.20 P0）：每条证据各自带 freshness/复核时间；stale 用布尔标记，
+        // 不复用 evidence.lifecycle（那个字段是历史事件对象，不能让两种含义打架）。
+        if (experience) {
+          const meta = lifecycleMetaOf(experience, { now: options.now, current: options.current })
+          entry.freshness = meta.freshness
+          entry.lastVerifiedAt = meta.lastVerifiedAt
+          entry.reviewAfter = meta.reviewAfter
+          entry.volatility = meta.volatility
+          entry.applicability = meta.applicability
+          if (meta.reviewDue) entry.reviewDue = true
+          if (meta.lifecycle === 'stale') entry.stale = true
+        }
         return entry
       }),
     }
   })
+
+  // 适用性不匹配：默认不返回（计划书 §5.3）；调用方显式 includeMismatched=true 才带出来。
+  const applicabilityFiltered = candidates.filter((item) => item.applicability === 'mismatch').length
+  if (options.includeMismatched !== true) candidates = candidates.filter((item) => item.applicability !== 'mismatch')
 
   const verified = candidates.filter((item) => item.support > 0)
   const advantages = verified.map((item) => Number(item.advantage) || 0)
@@ -2221,7 +2455,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   }
   if (degenerate) {
     candidates.sort((left, right) => (
-      right.evidence_strength - left.evidence_strength
+      right.evidence_strength * lifecycleWeightOf(right) - left.evidence_strength * lifecycleWeightOf(left)
       || right.support - left.support
       || right.mean_similarity - left.mean_similarity
       || (left.action < right.action ? -1 : left.action > right.action ? 1 : 0)
@@ -2230,7 +2464,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   }
   // 编码特异性：查询给了情境线索时，情境命中的候选优先（不改 Â，只做线索优先）。
   if (queryContext.length > 0) {
-    const weighted = (item) => (degenerate ? item.evidence_strength : item.rank_score) * (1 + 0.5 * (Number(item.contextMatch) || 0))
+    const weighted = (item) => (degenerate ? item.evidence_strength : item.rank_score) * lifecycleWeightOf(item) * (1 + 0.5 * (Number(item.contextMatch) || 0))
     candidates.sort((left, right) => (
       (Number(right.contextMatch) || 0) - (Number(left.contextMatch) || 0)
       || weighted(right) - weighted(left)
@@ -2243,8 +2477,10 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 改为 `0.6×相似度 + 0.4×rank_score`，让「像不像当前任务」成为主序，Â 做次序。必须排在截断之前。
   // 给了情境线索时不混排：情境优先是另一条独立的排序（见上），混排会把它的优先权盖掉。
   if (options.rankBlend !== false && !degenerate && queryContext.length === 0) {
+    // 时效权重：rank = base × (0.70 + 0.30 × freshness) × lifecycleWeight（stale ×0.55 / partial ×0.85）。
     const blend = (item) => (0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0))
-      * (0.5 + 0.5 * (Number.isFinite(Number(item.freshness)) ? Number(item.freshness) : 1))
+      * (FRESHNESS_RANK_FLOOR + FRESHNESS_RANK_SPAN * (Number.isFinite(Number(item.freshness)) ? Number(item.freshness) : 1))
+      * lifecycleWeightOf(item)
     candidates.sort((left, right) => (
       blend(right) - blend(left)
       || right.support - left.support
@@ -2252,11 +2488,12 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       || (left.action < right.action ? -1 : left.action > right.action ? 1 : 0)
     ))
   }
+  // stale 强制排在 active 之后（计划书 §5.4/§5.6）：旧经验默认不占前排；只降权，不隐藏。
+  candidates = [...candidates.filter((item) => item.lifecycle !== 'stale'), ...candidates.filter((item) => item.lifecycle === 'stale')]
 
   // mode / spread 必须按全部候选算完再截输出，否则 limit=1 时 verified<2 会被误判成 evidence。
   const truncated = candidates.slice(0, effectiveK)
-  // 失败步骤必须留一席：若输出里全是正回报，模型就永远看不到「上次错在哪」（2026-11-07 多步验收实测）。
-  // 补位取「最相似的负样本」；limit=1 时不动：调用方明确只要一条，不能为了留负样本把 top1 换掉。
+  // 失败步骤必须留一席：若输出里全是正回报，模型就永远看不到「上次错在哪」（2026-11-07 多步验收实测）。  // 补位取「最相似的负样本」；limit=1 时不动：调用方明确只要一条，不能为了留负样本把 top1 换掉。
   if (truncated.length >= 2 && !truncated.some((item) => item.evidence.some((evidence) => (Number(evidence.G) || 0) < 0))) {
     const negativeCandidate = [...candidates]
       .filter((item) => item.evidence.some((evidence) => (Number(evidence.G) || 0) < 0))
@@ -2267,6 +2504,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 相关性下限（0.13.0）：用**实际展示的条**算（复核发现：用全量会把没展示的高分条算进来，weak 漏报）。
   // 0.40：同域词面重叠（「常规课 PPT」vs「研学课 PPT」0.39）也算「不够相关」；同题（0.43+）仍算相关。
   // 一条候选都没有时同样算「没有足够相关」（终验发现：空候选时 weak 是 undefined，调用方没法判）。
+  const staleCount = truncated.filter((item) => item.lifecycle === 'stale').length
   const shownSimilarity = truncated.reduce((max, item) => Math.max(max, Number(item.mean_similarity) || 0), 0)
   const topSimilarity = shownSimilarity
   weak = truncated.length === 0 || shownSimilarity < 0.4
@@ -2333,6 +2571,10 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     note,
     warning,
     candidates: truncated,
+    ...(staleCount > 0 ? { lifecycleNote: `有 ${staleCount} 条候选是待复核的历史经验（stale）：只作参考，条件不匹配时直接忽略，不要为了遵守它牺牲更好的方案。` } : {}),
+    ...(applicabilityFiltered > 0 && options.includeMismatched !== true
+      ? { applicabilityFiltered }
+      : {}),
     ...(recent !== null ? { recent } : {}),
     ...(weak ? { weak: true, topSimilarity: round4(topSimilarity) } : {}),
   })

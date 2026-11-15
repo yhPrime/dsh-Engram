@@ -11,6 +11,8 @@
  */
 
 import { applyFeedbackTo, codedError, recallOf, scoreOf, skillRowOf } from './data-source.js'
+import { HALF_LIFE_DAYS, lifecycleMetaOf, normalizeIsoDate, normalizeVolatility, volatilityOf } from '../kernel/retrieval.js'
+import { validateTagSet } from '../kernel/tag-registry.js'
 
 /** 相对现在的时间，读起来像"最近用过"。 */
 function daysAgo(days, hour = 10, minute = 0) {
@@ -69,6 +71,10 @@ export function createMockExperiences() {
       expectedG: 0.9,
       context: ['Windows / Office 2019', '课件交付'],
       dimensions: ['排版', '字体'],
+      // 时效示例：半年前验证过、semi 半衰期 180 天 → 已到期（会被算成 stale）。
+      volatility: 'semi',
+      lastVerifiedAt: daysAgo(200, 9, 0),
+      appliesTo: { models: [], tools: ['dsh-engram@0.19.46'], environment: 'Windows' },
       note: '先导出再逐页看字体；中文标题用了思源黑体，导出后没掉字。分页问题集中在图片跨页，把图片和说明压到同一页就正常了。',
       origin: 'manual',
       kind: 'task',
@@ -92,6 +98,9 @@ export function createMockExperiences() {
       G: 0.8,
       GOutcome: 0.8,
       GSource: 'outcome',
+      // 时效示例：perishable 但 10 天前刚验证过 → active。
+      volatility: 'perishable',
+      lastVerifiedAt: daysAgo(10, 9, 30),
       note: '先把母版、标题层级、页脚页码定死，后面填内容不容易返工。',
       origin: 'manual',
       kind: 'task',
@@ -129,6 +138,11 @@ export function createMockExperiences() {
       G: -1,
       GOutcome: -1,
       GSource: 'feedback',
+      // 时效示例：显式待复核（工具/环境升级时被标记）。
+      volatility: 'perishable',
+      stale_at: daysAgo(3, 11, 0),
+      stale_reason: 'model-upgrade',
+      review_note: '旧 provider 同步实现，升级后待复核。',
       note: '第一次只改了调用处，没改实现；报错换了个位置继续炸。根因是数据面方法返回同步值，宿主按 Promise 用。',
       origin: 'manual',
       kind: 'task',
@@ -206,6 +220,9 @@ export function createMockExperiences() {
       G: 1,
       GOutcome: 1,
       GSource: 'outcome',
+      // 时效示例：stable 层，400 天前验证仍在半衰期内 → active。
+      volatility: 'stable',
+      lastVerifiedAt: daysAgo(400, 10, 0),
       note: LONG_NOTE,
       origin: 'manual',
       kind: 'task',
@@ -227,6 +244,8 @@ export function createMockExperiences() {
       expectedG: 0.7,
       context: ['DSH 插件开发', '控制台面板'],
       dimensions: ['接口设计', '前端接入'],
+      volatility: 'semi',
+      lastVerifiedAt: daysAgo(30, 14, 0),
       note: '第 1 步：先定接口；第 2 步：前端接上；第 3 步：补空态与错误态。',
       origin: 'manual',
       kind: 'step',
@@ -439,6 +458,8 @@ export function createMockSkills() {
       lastUsedAt: minutesAgo(120),
       updatedAt: daysAgo(2, 10, 5),
       path: '（示例）skills/plugin-async-contract',
+      volatility: 'stable',
+      lastVerifiedAt: daysAgo(200, 10, 0),
     },
     {
       id: 'rename-dry-run',
@@ -517,9 +538,135 @@ export function createMockSkills() {
       lastUsedAt: minutesAgo(12),
       updatedAt: daysAgo(0, 16, 48),
       path: '（示例）skills/sidebar-icon-contract',
+      volatility: 'perishable',
+      stale_at: daysAgo(2, 9, 0),
+      stale_reason: 'model-upgrade',
+      review_note: '宿主图标族升级过，待核对栅格。',
     },
   ]
   return rows.map(skillRowOf)
+}
+
+/** 示例技能行的时效字段（与 data-source.skillRowOf 同一套状态机，读时重算不冻结）。 */
+function skillLifecycleOf(row) {
+  const meta = lifecycleMetaOf({
+    volatility: row.volatility,
+    lastVerifiedAt: row.lastVerifiedAt,
+    reviewAfter: row.reviewAfter,
+    appliesTo: row.appliesTo,
+    stale_at: row.staleAt,
+    stale_reason: row.staleReason,
+    retired_at: row.retiredAt,
+    retired_reason: row.retiredReason,
+    lastSeenAt: row.lastUsedAt,
+    ts: row.updatedAt,
+  })
+  return {
+    lifecycle: meta.lifecycle,
+    lifecycleState: meta.lifecycle,
+    freshness: meta.freshness,
+    volatility: meta.volatility,
+    lastVerifiedAt: meta.lastVerifiedAt,
+    reviewAfter: meta.reviewAfter,
+    reviewDue: meta.reviewDue,
+    appliesTo: meta.appliesTo,
+    staleAt: meta.staleAt,
+    staleReason: meta.staleReason,
+    reviewNote: meta.reviewNote,
+    retiredAt: meta.retiredAt,
+    retiredReason: meta.retiredReason,
+  }
+}
+
+/** 示例数据的时效复核：只改内存里的假数据，语义与 live 的 exp_review 一致。 */
+function reviewMock(store, skills, args = {}) {
+  const action = String(args.action || '').trim().toLowerCase()
+  if (!['due', 'verify', 'stale', 'retire', 'revive'].includes(action)) {
+    throw codedError('bad-action', `action 只能是 due / verify / stale / retire / revive，收到：${action || '(空)'}`)
+  }
+  const note = String(args.note || '').replace(/\s+/gu, ' ').trim().slice(0, 240)
+  if (action === 'due') {
+    const rows = []
+    for (const row of store.experiences) {
+      if (!row || row.deleted_at || row.superseded_by || row.retired_at) continue
+      const meta = lifecycleMetaOf(row)
+      if (!meta.reviewDue && meta.lifecycle !== 'stale') continue
+      rows.push({ id: row.id, intent: row.intent, action: row.action, typeName: row.typeName, lifecycle: meta.lifecycle, volatility: meta.volatility, freshness: meta.freshness, lastVerifiedAt: meta.lastVerifiedAt, reviewAfter: meta.reviewAfter, reviewDue: meta.reviewDue })
+    }
+    const dueSkills = skills.filter((row) => {
+      const meta = skillLifecycleOf(row)
+      return meta.reviewDue || meta.lifecycle === 'stale'
+    }).map((row) => ({ id: `skill:${row.id}`, slug: row.id, name: row.name, ...skillLifecycleOf(row) }))
+    return { action, total: rows.length + dueSkills.length, rows, skills: dueSkills }
+  }
+  const id = String(args.id || '').trim()
+  if (id === '') throw codedError('id-required', '缺少 id（经验 id 或 skill:<slug>）')
+  const now = new Date()
+  const nowIso = now.toISOString()
+  if (id.startsWith('skill:')) {
+    const slug = id.slice('skill:'.length)
+    const row = skills.find((item) => String(item.id) === slug)
+    if (row === undefined) throw codedError('not-found', `没有这个技能：${slug}`)
+    if (action === 'revive' && note === '') throw codedError('reason-required', 'revive 需要 note 说明理由')
+    const volatility = normalizeVolatility(args.volatility) || row.volatility || 'perishable'
+    if (args.volatility !== undefined) row.volatility = volatility
+    if (args.appliesTo !== undefined) row.appliesTo = args.appliesTo
+    if (note !== '') row.reviewNote = note
+    if (action === 'verify') {
+      row.lastVerifiedAt = nowIso
+      row.reviewAfter = args.reviewAfter || new Date(now.getTime() + HALF_LIFE_DAYS[volatility] * 86400000).toISOString()
+      row.staleAt = null
+      row.staleReason = null
+    } else if (action === 'stale') {
+      row.staleAt = nowIso
+      row.staleReason = String(args.reason || 'manual')
+    } else if (action === 'retire') {
+      row.retiredAt = nowIso
+      row.retiredReason = String(args.reason || 'manual-review')
+      row.staleAt = null
+      row.staleReason = null
+    } else if (action === 'revive') {
+      row.retiredAt = null
+      row.retiredReason = null
+      row.staleAt = null
+      row.staleReason = null
+      row.lastVerifiedAt = nowIso
+      row.reviewAfter = args.reviewAfter || new Date(now.getTime() + HALF_LIFE_DAYS[volatility] * 86400000).toISOString()
+    }
+    return { action, id, slug, ...skillLifecycleOf(row) }
+  }
+  const row = store.experiences.find((item) => String(item.id) === id)
+  if (row === undefined) throw codedError('not-found', `没有这条经验：${id}`)
+  if (row.deleted_at) throw codedError('not-found', `这条经验已删除：${id}`)
+  if (row.superseded_by) throw codedError('not-feedbackable', `这条经验已被 ${row.superseded_by} 取代，请复核新条`)
+  const volatility = normalizeVolatility(args.volatility) || volatilityOf(row)
+  if (args.volatility !== undefined) row.volatility = volatility
+  if (args.appliesTo !== undefined) row.appliesTo = args.appliesTo
+  if (note !== '') row.review_note = note
+  if (action === 'verify') {
+    row.lastVerifiedAt = nowIso
+    row.reviewAfter = normalizeIsoDate(args.reviewAfter) || new Date(now.getTime() + HALF_LIFE_DAYS[volatility] * 86400000).toISOString()
+    row.stale_at = null
+    row.stale_reason = null
+  } else if (action === 'stale') {
+    row.stale_at = nowIso
+    row.stale_reason = String(args.reason || 'manual')
+  } else if (action === 'retire') {
+    row.retired_at = nowIso
+    row.retired_reason = String(args.reason || 'manual-review')
+    row.stale_at = null
+    row.stale_reason = null
+  } else if (action === 'revive') {
+    if (note === '') throw codedError('reason-required', 'revive 需要 note 说明理由')
+    row.retired_at = null
+    row.retired_reason = null
+    row.stale_at = null
+    row.stale_reason = null
+    row.lastVerifiedAt = nowIso
+    row.reviewAfter = normalizeIsoDate(args.reviewAfter) || new Date(now.getTime() + HALF_LIFE_DAYS[volatility] * 86400000).toISOString()
+  }
+  const meta = lifecycleMetaOf(row)
+  return { action, id, lifecycle: meta.lifecycle, volatility: meta.volatility, freshness: meta.freshness, lastVerifiedAt: meta.lastVerifiedAt, reviewAfter: meta.reviewAfter, reviewDue: meta.reviewDue }
 }
 
 /**
@@ -620,7 +767,7 @@ export function createMockSource() {
       return usage.slice(-size).map((row) => ({ ...row, chars: Number(row.chars) || (row.tool === 'exp_recall' ? 1800 : 260) }))
     },
     skills() {
-      return skills
+      return skills.map((row) => ({ ...row, ...skillLifecycleOf(row) }))
     },
     pending(limit = 5) {
       return [
@@ -672,6 +819,12 @@ export function createMockSource() {
       if (!['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'].includes(outcome)) {
         throw new Error(`outcome 只能是 accepted / success / partial / unknown / failed / corrected / aborted，收到：${input.outcome}`)
       }
+      // 标签规则与真实写入一致（0.20.0 P0）：别名归一、违规丢弃、缺面回 tagWarning。
+      const rawTags = [
+        ...(Array.isArray(input.context) ? input.context : (input.context ? [input.context] : [])),
+        ...(Array.isArray(input.labels) ? input.labels : (input.labels ? [input.labels] : [])),
+      ]
+      const tagCheck = validateTagSet(rawTags)
       const at = new Date().toISOString()
       const id = `ex_mock_${Date.now().toString(36)}`
       const G = scoreOf(outcome)
@@ -688,8 +841,25 @@ export function createMockSource() {
         ts: at,
         lastSeenAt: at,
         note: String(input.note || ''),
+        ...(normalizeVolatility(input.volatility) !== '' ? { volatility: normalizeVolatility(input.volatility) } : {}),
+        ...(input.appliesTo !== undefined ? { appliesTo: input.appliesTo } : {}),
+        ...(normalizeIsoDate(input.reviewAfter) !== null ? { reviewAfter: normalizeIsoDate(input.reviewAfter) } : {}),
+        ...(String(input.reviewNote || '') !== '' ? { review_note: String(input.reviewNote).slice(0, 240) } : {}),
+        context: tagCheck.tags,
       })
-      return { action: 'added', id, G, mode: 'mock' }
+      return {
+        action: 'added',
+        id,
+        G,
+        mode: 'mock',
+        tags: tagCheck.tags.length > 0 ? tagCheck.tags : undefined,
+        tagsRejected: tagCheck.rejected.length > 0 ? tagCheck.rejected.map((item) => item.value) : undefined,
+        tagWarning: tagCheck.warning === '' ? undefined : tagCheck.warning,
+      }
+    },
+    /** 时效复核（0.20 P0）：与 live 的 exp_review 同一套动作，只改内存假数据。 */
+    review(args = {}) {
+      return reviewMock(store, skills, args)
     },
     recall(args = {}) {
       return recallOf(store, String(args.intent || ''), Math.max(1, Math.min(50, Math.trunc(Number(args.limit) || 8))))

@@ -18,6 +18,190 @@
 
 import { abstractState, jaccard } from './kernel.js'
 
+/* -------------------------------------------------------------------------- */
+/* 时效治理（0.20 P0）：易腐层 / 新鲜度 / 生命周期 / 适用性                       */
+/* -------------------------------------------------------------------------- */
+
+/** 易腐层（计划书 §3.1）：只影响召回门控与展示，不改 G/Â。 */
+export const VOLATILITY_LEVELS = Object.freeze(['stable', 'semi', 'perishable'])
+/** 旧经验缺字段时按 semi 解释（计划书 §4.3）。 */
+export const DEFAULT_VOLATILITY = 'semi'
+/** 技能比经验更易腐（计划书 §7.1）：旧技能缺字段时按 perishable 解释。 */
+export const DEFAULT_SKILL_VOLATILITY = 'perishable'
+/** 半衰期（天）：freshness = 0.5 ^ (ageDays / halfLife)。 */
+export const HALF_LIFE_DAYS = Object.freeze({ stable: 1095, semi: 180, perishable: 45 })
+/** stale 候选的排序降权系数（计划书 §5.4）。 */
+export const STALE_RANK_FACTOR = 0.55
+/** applicability=partial（只有部分条件匹配）的降权系数。 */
+export const PARTIAL_RANK_FACTOR = 0.85
+/** 新鲜度在排序里的权重：rank = base × (0.70 + 0.30 × freshness)。 */
+export const FRESHNESS_RANK_FLOOR = 0.70
+export const FRESHNESS_RANK_SPAN = 0.30
+/** 给模型的一句话：旧经验是参考，不是命令（计划书 §5.5）。 */
+export const LIFECYCLE_NOTE = '历史经验，可能已过时；条件不匹配时直接忽略，不要为了遵守它牺牲更好的方案。'
+
+const DAY_MS = 86400000
+
+/** 归一化易腐层：非法值返回 ''（调用方决定默认值）。 */
+export function normalizeVolatility(value) {
+  const text = String(value === undefined || value === null ? '' : value).trim().toLowerCase()
+  return VOLATILITY_LEVELS.includes(text) ? text : ''
+}
+
+/** 归一化 ISO 时间：非法/空返回 null（不把猜测写成时间）。 */
+export function normalizeIsoDate(value) {
+  if (value === undefined || value === null) return null
+  const text = String(value).trim()
+  if (text === '') return null
+  const time = Date.parse(text)
+  return Number.isFinite(time) ? new Date(time).toISOString() : null
+}
+
+/** 归一化适用范围 `{ models, tools, environment }`；全空返回 null（=未声明）。 */
+export function normalizeAppliesTo(value) {
+  if (value === null || value === undefined) return null
+  const raw = typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const listOf = (input) => {
+    const raw = Array.isArray(input) ? input : (typeof input === 'string' && input.trim() !== '' ? [input] : [])
+    return raw.map((item) => String(item).trim()).filter((item) => item !== '').slice(0, 12)
+  }
+  const models = listOf(raw.models)
+  const tools = listOf(raw.tools)
+  const environment = String(raw.environment === undefined || raw.environment === null ? '' : raw.environment).trim().slice(0, 120)
+  if (models.length === 0 && tools.length === 0 && environment === '') return null
+  return { models, tools, environment }
+}
+
+export function volatilityOf(row) {
+  return normalizeVolatility(row && row.volatility) || DEFAULT_VOLATILITY
+}
+
+export function lastVerifiedOf(row) {
+  return normalizeIsoDate(row && row.lastVerifiedAt)
+}
+
+/**
+ * 新鲜度锚点：lastVerifiedAt → lastSeenAt → ts/registeredAt/lastUsedAt。
+ * 没有 lastVerifiedAt 不等于「已验证」：只有锚点，用来算「多久没确认过」。
+ */
+export function freshnessAnchorOf(row) {
+  const raw = row && (row.lastVerifiedAt || row.lastSeenAt || row.ts || row.registeredAt || row.lastUsedAt)
+  const time = Date.parse(String(raw || ''))
+  return Number.isFinite(time) ? time : NaN
+}
+
+/** 建议复核时间：显式 reviewAfter 优先；否则 锚点 + 半衰期（读时推算，不写回）。 */
+export function reviewAfterOf(row) {
+  const explicit = normalizeIsoDate(row && row.reviewAfter)
+  if (explicit !== null) return explicit
+  const anchor = freshnessAnchorOf(row)
+  if (!Number.isFinite(anchor)) return null
+  return new Date(anchor + HALF_LIFE_DAYS[volatilityOf(row)] * DAY_MS).toISOString()
+}
+
+/** 新鲜度 0–1：半衰期指数衰减（计划书 §5.4）。 */
+export function freshnessOf(row, options = {}) {
+  const anchor = freshnessAnchorOf(row)
+  if (!Number.isFinite(anchor)) return 1
+  const now = options.now instanceof Date ? options.now.getTime() : (Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now())
+  const ageDays = Math.max(0, (now - anchor) / DAY_MS)
+  const halfLife = HALF_LIFE_DAYS[volatilityOf(row)] || HALF_LIFE_DAYS[DEFAULT_VOLATILITY]
+  return Math.round((0.5 ** (ageDays / halfLife)) * 1e4) / 1e4
+}
+
+/** 是否到期待复核：显式 stale_at 也算；否则按 reviewAfter 是否已过。 */
+export function reviewDueOf(row, options = {}) {
+  if (row && row.stale_at) return true
+  const reviewAfter = reviewAfterOf(row)
+  if (reviewAfter === null) return false
+  const now = options.now instanceof Date ? options.now.getTime() : (Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now())
+  return Date.parse(reviewAfter) <= now
+}
+
+/**
+ * 生命周期状态：deleted > superseded > retired > stale > active。
+ * retired_at / superseded_by 语义不变，新字段不覆盖它们（计划书 §4.3）。
+ */
+export function lifecycleOf(row, options = {}) {
+  if (!row || typeof row !== 'object') return 'deleted'
+  if (row.deleted_at) return 'deleted'
+  if (row.superseded_by) return 'superseded'
+  if (row.retired_at) return 'retired'
+  if (reviewDueOf(row, options)) return 'stale'
+  return 'active'
+}
+
+function normalizeCurrentPart(list) {
+  return (Array.isArray(list) ? list : []).map((item) => String(item).trim().toLowerCase()).filter((item) => item !== '')
+}
+
+/**
+ * 适用性：unscoped（未声明/当前环境不可比）| match | partial | mismatch。
+ * 当前环境信息拿不到时一律 unscoped——不硬拦，也不假装匹配过。
+ */
+export function applicabilityOf(row, current = {}) {
+  const appliesTo = normalizeAppliesTo(row && row.appliesTo)
+  if (appliesTo === null) return 'unscoped'
+  const currents = {
+    models: normalizeCurrentPart(current && current.models),
+    tools: normalizeCurrentPart(current && current.tools),
+    environment: String((current && current.environment) || '').trim().toLowerCase(),
+  }
+  let compared = 0
+  let matched = 0
+  let mismatched = 0
+  if (appliesTo.models.length > 0 && currents.models.length > 0) {
+    compared += 1
+    if (appliesTo.models.some((item) => currents.models.includes(item.toLowerCase()))) matched += 1
+    else mismatched += 1
+  }
+  if (appliesTo.tools.length > 0 && currents.tools.length > 0) {
+    compared += 1
+    if (appliesTo.tools.some((item) => currents.tools.includes(item.toLowerCase()))) matched += 1
+    else mismatched += 1
+  }
+  if (appliesTo.environment !== '' && currents.environment !== '') {
+    compared += 1
+    if (appliesTo.environment.toLowerCase() === currents.environment) matched += 1
+    else mismatched += 1
+  }
+  if (compared === 0) return 'unscoped'
+  if (mismatched === 0) return 'match'
+  return matched > 0 ? 'partial' : 'mismatch'
+}
+
+/**
+ * 一条记录的时效视图（读时计算，绝不写回；旧记录缺字段就是默认值）。
+ * @param {object} row - 经验行或技能 meta。
+ * @param {{now?: Date|number, current?: object}} [options]
+ */
+export function lifecycleMetaOf(row, options = {}) {
+  const now = options.now
+  return {
+    lifecycle: lifecycleOf(row, { now }),
+    volatility: volatilityOf(row),
+    freshness: freshnessOf(row, { now }),
+    lastVerifiedAt: lastVerifiedOf(row),
+    reviewAfter: reviewAfterOf(row),
+    reviewDue: reviewDueOf(row, { now }),
+    applicability: applicabilityOf(row, options.current),
+    appliesTo: normalizeAppliesTo(row && row.appliesTo),
+    staleAt: normalizeIsoDate(row && row.stale_at),
+    staleReason: String((row && row.stale_reason) || ''),
+    reviewNote: String((row && row.review_note) || ''),
+    retiredAt: normalizeIsoDate(row && row.retired_at),
+    retiredReason: String((row && row.retired_reason) || ''),
+  }
+}
+
+/** 召回门控权重：stale ×0.55，partial ×0.85；active/match 不降权。 */
+export function lifecycleWeightOf(meta) {
+  if (meta === null || meta === undefined) return 1
+  const stale = meta.lifecycle === 'stale' ? STALE_RANK_FACTOR : 1
+  const partial = meta.applicability === 'partial' ? PARTIAL_RANK_FACTOR : 1
+  return stale * partial
+}
+
 /**
  * artifact 语义组：组内任一别名命中即算该组。
  * 顺序无关；一个文本可命中多组（如「PPT 课件」命中 ppt）。
