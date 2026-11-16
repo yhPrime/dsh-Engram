@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { createTools } from './engine.js'
+import { createAutoRecorder } from './auto-record.js'
 import { ensureDefaultTypes, renderHint } from './store.js'
 import { readEngineConfig, resolveEngramDataDir } from './settings.js'
 
@@ -52,8 +53,12 @@ export async function apply(ctx, rawConfig = {}) {
     // 宿主未暴露该入口时保持纯对象定义。
   }
 
+  const tools = createTools(config, defineTool)
+  // 自动记录钩子（0.24.1）：回合收尾时把交付过程落成 pending 经验；`autoRecord: false` 关闭。
+  const recordTool = tools.find((tool) => tool.name === 'exp_record') || null
+  const recorder = recordTool === null ? null : createAutoRecorder({ config, record: recordTool, audit })
+
   const register = (target) => {
-    const tools = createTools(config, defineTool)
     // 一次性把「宿主转换后的 JSON Schema」记进审计日志：provider 严格校验报错时（如
     // exp_consolidate 的 anyOf 报错）只能从真实 schema 定位，不能靠猜。
     try {
@@ -63,6 +68,23 @@ export async function apply(ctx, rawConfig = {}) {
       // 探测失败不影响注册。
     }
     for (const tool of tools) target.tools.register(tool)
+    // 测试桩 / 极简宿主可能没有事件上下文：没有 on 就只注册工具面，不装钩子。
+    if (recorder === null || typeof target.on !== 'function') {
+      if (recorder !== null) audit(config, 'apply: no event context, auto-record skipped')
+      return
+    }
+    const installHooks = () => {
+      const offResult = target.on('tools/result', (exec, result) => recorder.onToolResult(exec, result))
+      const offTurn = target.on('agent/turn-stopping', (payload) => recorder.onTurnStopping(payload))
+      return () => {
+        if (typeof offResult === 'function') offResult()
+        if (typeof offTurn === 'function') offTurn()
+      }
+    }
+    // 事件注册归插件上下文所有：卸载/禁用时一起摘掉，不留悬挂监听。
+    if (typeof target.effect === 'function') target.effect(installHooks)
+    else installHooks()
+    audit(config, 'apply: auto-record hooks registered')
   }
 
   // 每轮提示层：把类型目录与用法写进系统提示段；禁用插件即消失，不动记忆组合。

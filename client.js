@@ -5238,9 +5238,11 @@ window.__ModuleLoader__.load({
           const update = draftSetter(setDraft)
           let control
           if (field.type === 'boolean') {
+            // 未保存过的项按字段声明的默认值显示（如「自动记录回合」默认开），而不是一律显示关。
+            const checked = value === undefined ? field.default === true : value === true
             control = h('label', { className: 'eng-actions', style: { fontWeight: 400 } },
-              h('input', { type: 'checkbox', checked: value === true, onChange: (event) => update(field.key, event.target.checked) }),
-              h('span', { className: 'eng-muted' }, value === true ? '开' : '关'))
+              h('input', { type: 'checkbox', checked, onChange: (event) => update(field.key, event.target.checked) }),
+              h('span', { className: 'eng-muted' }, checked ? (value === undefined ? '开（默认）' : '开') : '关'))
           } else if (field.type === 'enum') {
             control = h('select', { className: 'eng-select', value: value === undefined ? '' : String(value), onChange: (event) => update(field.key, event.target.value) },
               h('option', { value: '' }, '默认'),

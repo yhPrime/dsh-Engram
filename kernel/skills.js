@@ -401,6 +401,114 @@ export function readSkillBySlug(dataDir, slug) {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* 技能运行时（0.24.1）：召回后直接用技能里准备好的文件，而不是让模型重写       */
+/* -------------------------------------------------------------------------- */
+
+const SCRIPT_RUNNERS = new Map([
+  ['.py', 'python'],
+  ['.js', 'node'],
+  ['.mjs', 'node'],
+  ['.cjs', 'node'],
+  ['.ps1', 'powershell -NoProfile -File'],
+  ['.sh', 'bash'],
+  ['.bat', 'cmd /c'],
+  ['.cmd', 'cmd /c'],
+])
+
+/** .py → `python "<abs>"`；认不出的扩展名返回 null。 */
+export function runnerForScript(file) {
+  const runner = SCRIPT_RUNNERS.get(path.extname(String(file || '')).toLowerCase())
+  return runner === undefined ? null : `${runner} "${file}"`
+}
+
+/** 技能包内这些目录不扫（构建产物/缓存），避免拖慢召回。 */
+const PACKAGE_SKIP_DIRS = new Set(['node_modules', '.venv', 'venv', '__pycache__', 'dist', 'build', '.git', '.idea', '.vscode'])
+
+function collectPackageFiles(dir, sub, out, depth, cap) {
+  if (depth > 2 || out.length >= cap) return
+  let entries = []
+  try {
+    entries = fs.readdirSync(path.join(dir, sub), { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (out.length >= cap) return
+    if (entry.name.startsWith('.')) continue
+    const rel = sub === '' ? entry.name : `${sub}/${entry.name}`
+    const abs = path.join(dir, rel)
+    if (entry.isDirectory()) {
+      if (PACKAGE_SKIP_DIRS.has(entry.name)) continue
+      collectPackageFiles(dir, rel, out, depth + 1, cap)
+      continue
+    }
+    if (!entry.isFile()) continue
+    let bytes = 0
+    try {
+      bytes = fs.statSync(abs).size
+    } catch {
+      bytes = 0
+    }
+    out.push({ path: rel, abs, bytes })
+  }
+}
+
+/**
+ * 技能运行时清单：把「召回后怎么直接用它」一次性给全。
+ *
+ * 为什么需要：模型拿到技能正文后，以前只有 `files: ['scripts/x.py']` 这种相对路径，
+ * 不知道技能根在哪、该用什么解释器跑，于是常常自己重写一个等价脚本——技能就白沉淀了。
+ * 这里给出绝对路径 + 可直接执行的命令，模型照 run 跑即可，省 token 也省一次试错。
+ */
+export function skillRuntimeOf(skill, options = {}) {
+  const dir = String((skill && skill.dir) || '')
+  if (dir === '') return null
+  const cap = Number(options.cap) > 0 ? Number(options.cap) : 24
+  const scripts = []
+  collectPackageFiles(dir, SCRIPTS_DIRNAME, scripts, 0, cap)
+  const references = []
+  for (const sub of ['references', 'templates', 'assets', 'data', 'examples']) {
+    collectPackageFiles(dir, sub, references, 0, cap)
+  }
+  const scriptRows = scripts.map((item) => ({
+    path: item.path,
+    abs: item.abs,
+    bytes: item.bytes,
+    run: runnerForScript(item.abs),
+  }))
+  const runnable = scriptRows.filter((item) => item.run !== null)
+  return {
+    dir,
+    skillFile: path.join(dir, SKILL_FILENAME),
+    scripts: scriptRows,
+    references: references.slice(0, cap).map((item) => ({ path: item.path, abs: item.abs, bytes: item.bytes })),
+    usage: runnable.length > 0
+      ? '自带脚本优先：先按 scripts[].run 直接执行，不要重写等价脚本；只有脚本识别不了（锚点漂移、复制页同号等边界）才自己写。'
+      : (scriptRows.length > 0
+        ? '有脚本但认不出解释器：先看脚本头部（shebang/注释）再决定怎么执行，别重写等价脚本。'
+        : '没有自带脚本：按正文步骤做。'),
+  }
+}
+
+/**
+ * 召回时的正文裁剪（0.24.1）：长正文以前直接切前 6000 字，末尾的「## Resources / ## 脚本」
+ * 正好被切掉——而那里才是脚本用法。现在保留开头 + 最后一节，中间省略。
+ */
+export function clipSkillBody(body, limit = 6000) {
+  const raw = String(body || '')
+  const cap = Number(limit) > 0 ? Number(limit) : 6000
+  if (raw.length <= cap) return { text: raw, truncated: false }
+  const headings = [...raw.matchAll(/^##\s+[^\n]*$/gmu)]
+  const tailStart = headings.length > 0 ? headings[headings.length - 1].index : -1
+  const tail = tailStart >= 0 ? raw.slice(tailStart) : ''
+  if (tail !== '' && tail.length <= Math.floor(cap * 0.6)) {
+    const head = raw.slice(0, Math.max(0, cap - tail.length - 30))
+    return { text: `${head}\n…（中间省略）…\n${tail}`, truncated: true }
+  }
+  return { text: raw.slice(0, cap), truncated: true }
+}
+
 // 技能包里的这些目录不会放技能；跳过可避免为了找子技能去遍历上万个附件文件。
 export const SKILL_SCAN_SKIP_DIRS = new Set([
   'node_modules', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'dist', 'build',
@@ -1585,6 +1693,11 @@ function applySkillOutcomeUnlocked(dataDir, slug, result, options = {}) {
   }
   confidence.lastUsedAt = now
   if (result === 'helped') {
+    // 成功使用 = 一次真实验证（比人工 verify 更强的证据）：写 lastVerifiedAt 并按易腐层重排复核时间。
+    // 以前只更 lastUsedAt，界面一直显示「从未验证」，复核时间也只能靠最后使用时间推算。
+    skill.meta.lastVerifiedAt = now
+    const halfLife = HALF_LIFE_DAYS[skill.meta.volatility] || HALF_LIFE_DAYS[DEFAULT_SKILL_VOLATILITY] || HALF_LIFE_DAYS.semi
+    skill.meta.reviewAfter = new Date(Date.parse(now) + halfLife * 86400000).toISOString()
     for (const entry of Object.values(skill.meta.obstacles)) {
       entry.events = [...(entry.events || []), 'clean'].slice(-EVENTS_LIMIT)
       entry.streak = 0

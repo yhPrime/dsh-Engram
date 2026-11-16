@@ -5,7 +5,7 @@
 <h3 align="center">Engram（记忆痕迹）· 经验与技能引擎 + 经验库控制台，一个标准 DSH 插件</h3>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.20.8-6f5bd6">
+  <img alt="version" src="https://img.shields.io/badge/version-0.20.9-6f5bd6">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-3fa46a">
   <img alt="node" src="https://img.shields.io/badge/node-%3E%3D22-339933">
   <img alt="platform" src="https://img.shields.io/badge/DSH-plugin-4f7fc4">
@@ -175,7 +175,7 @@
 
 ```bash
 npm pack
-dsh plugin --profile <profile> add ./dsh-engram-0.20.8.tgz
+dsh plugin --profile <profile> add ./dsh-engram-0.20.9.tgz
 ```
 
 重启 DSH 后只会出现**一个**插件行「dsh-engram」：左侧栏多出「经验库」，工具面 `exp_*` 与控制台 API `/exp-ui/api` 同包同入口。
@@ -217,6 +217,7 @@ dsh plugin --profile <profile> add ./dsh-engram-0.20.8.tgz
 
 ## 最近几个版本
 
+- **0.20.9** 自动记录钩子（设置里可关，默认开）、`stepRewards` 限幅与拒绝、技能召回即用（命中给全文 + `runtime` 绝对路径与可执行命令）
 - **0.20.8** 关系图：技能四面体缩小时保留形状，不再退回菱形
 - **0.20.7** 黑盒迭代修复：错误码、标签归一、坏库检测
 - **0.20.6** 关系图可隐藏同标签经验连线

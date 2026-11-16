@@ -1311,6 +1311,30 @@ export function buildInduction(candidates, options = {}) {
 
 
 /**
+ * 分步回报校验（0.24.1）：
+ * - 未给 / 空数组 → null（等同没给）
+ * - 非数组 → 拒绝
+ * - 每项必须是数字或非空数字字符串；null / boolean / 对象 / NaN / Infinity 一律拒绝
+ * - 数值夹到 [-1,1]：以前 -5 会被原样落库，整条 G 被拖穿下限
+ */
+export function normalizeStepRewards(value) {
+  if (value === undefined || value === null) return null
+  if (!Array.isArray(value)) throw new Error(`stepRewards 必须是数组，收到：${typeof value}`)
+  if (value.length === 0) return null
+  return value.map((item, index) => {
+    if (item === null || item === undefined || typeof item === 'boolean' || typeof item === 'object') {
+      throw new Error(`stepRewards[${index}] 必须是数字，收到：${JSON.stringify(item)}`)
+    }
+    const text = typeof item === 'number' ? '' : String(item).trim()
+    const numeric = typeof item === 'number' ? item : (text === '' ? NaN : Number(text))
+    if (!Number.isFinite(numeric)) {
+      throw new Error(`stepRewards[${index}] 必须是数字，收到：${JSON.stringify(item)}`)
+    }
+    return round4(Math.max(-1, Math.min(1, numeric)))
+  })
+}
+
+/**
  * 写入一条经验（upsert）。
  * 写入前先清洗工具调用残渣：`</note>`、`<parameter name="type">…` 这类串味会把类型和正文一起弄脏。
  * @returns {{experience: object, action: 'updated'|'superseded'|'added', supersededId?: string, sanitized: {intent: boolean, action: boolean, note: boolean}, typeRecoveredFromNote: boolean}}
@@ -1385,7 +1409,9 @@ export function upsertExperience(store, input, options = {}) {
   const stepTotal = Number.isInteger(stepTotalInput) && stepTotalInput > 0 ? stepTotalInput : null
   const failedStepInput = Number(input.failedStep)
   const failedStep = Number.isInteger(failedStepInput) && failedStepInput > 0 ? failedStepInput : null
-  const stepRewardsInput = Array.isArray(input.stepRewards) ? input.stepRewards.map(Number).filter(Number.isFinite) : null
+  // 分步回报（0.24.1）：以前 `filter(Number.isFinite)` 会把 'abc'/null/NaN 静默丢掉、
+  // 把 -5 原样落库（整条 G 被拖穿 -1）。现在非法值直接拒绝，数值夹到 [-1,1]。
+  const stepRewardsInput = normalizeStepRewards(input.stepRewards)
   const context = normalizeContext(input.context)
   const labels = normalizeContext(input.labels)
   const dimensions = normalizeDimensions(input.dimensions)

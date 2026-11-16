@@ -53,7 +53,7 @@ import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
 import { ensureClusters, routeCluster } from './cluster.js'
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
-import { applySkillObstacle, applySkillOutcome, attachSkillFiles, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, updateSkillMeta } from './skills.js'
+import { applySkillObstacle, applySkillOutcome, attachSkillFiles, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
 import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, facetOf, groupByFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
 
@@ -706,6 +706,16 @@ export function buildTools(defineTool, config = {}) {
         const weakCandidates = candidates.length === 0 || maxSimilarity < 0.4
         const relevanceGeneral = !weakCandidates && candidates.length > 0 && maxSimilarity < 0.5
         const similarityText = String(Math.round(maxSimilarity * 10000) / 10000)
+        // 技能运行时：绝对路径 + 可直接执行的脚本命令；召回即可用，不要求先注册到全局。
+        const runtime = skillRuntimeOf(hit.skill)
+        // 正文给多少：默认全文（像正常技能一样让模型通读），只有显式 `skillBodyMode:'clip'`
+        // 或超过安全上限（默认 30000 字符）才裁剪；裁剪也保留末尾 Resources/脚本节。
+        const rawBody = String(hit.skill.body || '')
+        const bodyMode = String(config.skillBodyMode || '').toLowerCase() === 'clip' ? 'clip' : 'full'
+        const bodyCap = bodyMode === 'clip'
+          ? 6000
+          : Math.max(6000, Number(config.skillBodyMaxChars) || 30000)
+        const clipped = clipSkillBody(rawBody, bodyCap)
         const skillPayload = {
           mode,
           intent: String(args.intent || ''),
@@ -713,12 +723,11 @@ export function buildTools(defineTool, config = {}) {
             id: hit.skill.slug,
             name: hit.skill.name,
             description: hit.skill.description,
-            body: (() => {
-              // 正文可能几万字（实测某技能 28k）：回执里截到 12k 并标注，完整正文用 readSkill 读。
-              const raw = String(hit.skill.body || '')
-              return raw.length > 6000 ? `${raw.slice(0, 6000)}\n…（正文过长已截断，共 ${raw.length} 字符；完整内容用 readSkill 读）` : raw
-            })(),
-            ...(String(hit.skill.body || '').length > 6000 ? { bodyTruncated: true, bodyChars: String(hit.skill.body).length } : {}),
+            body: clipped.truncated
+              ? `${clipped.text}\n…（正文过长已截断，共 ${rawBody.length} 字符；完整内容用 read 读 ${runtime !== null ? runtime.skillFile : '技能目录下的 SKILL.md'}）`
+              : clipped.text,
+            ...(clipped.truncated ? { bodyTruncated: true, bodyChars: rawBody.length } : {}),
+            runtime,
             context: hit.skill.meta.context,
             files: (hit.skill.meta.files || []).map((item) => item.path),
             confidence: { ...hit.skill.meta.confidence, reason: confidenceReason(hit.skill.meta) },
@@ -746,7 +755,8 @@ export function buildTools(defineTool, config = {}) {
               ? ' 经验候选为空，别当参考。'
               : (weakCandidates
                 ? ' 经验候选都不够相关（最高相似度低），别当参考。'
-                : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : '')))),
+                : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : ''))))
+            + (runtime !== null && runtime.scripts.length > 0 ? ` ${runtime.usage}` : ''),
         }
         if (tagShadowEnabled) skillPayload.tagShadow = buildTagShadow(candidates)
         logUsage(dataDir, {

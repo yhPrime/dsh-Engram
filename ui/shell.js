@@ -63,6 +63,7 @@ export const SETTINGS_SPEC = {
     { key: 'recallLimitDefault', label: '召回默认条数', type: 'number', hint: '默认 3', tip: 'exp_recall 不传 limit 时返回几条候选。显式传 limit 时按传的来（上限 8）。' },
     { key: 'pendingTtl', label: '待判定提醒次数', type: 'number', hint: '默认 3', tip: '一条待判定记录随回执出现几次仍未被回填，就自动转 skipped（止损，不再打扰模型）。' },
     { key: 'pendingReceipt', label: '回执带待判定', type: 'boolean', tip: '关闭后 exp_record / exp_recall 的返回里不再附带 pending，判定只能靠控制台查看。' },
+    { key: 'autoRecord', label: '自动记录回合', type: 'boolean', default: true, hint: '默认开', tip: '每个回合收尾时，把这一轮的交付动作自动记成一条待判定经验（note 里带工具序列与产物，成败留待回填）。纯问答、寒暄、以及本回合已经手动 exp_record 的不会重复记；关掉后完全依赖模型手动记录。' },
     { key: 'usageLog', label: '用法日志', type: 'boolean', hint: '记录 exp_* 调用，用于使用记录页', tip: '把每次 exp_record / exp_recall / exp_feedback 的调用写进 <数据目录>/usage.jsonl，零 token 开销；关掉后「使用记录」页就没有新数据。' },
     { key: 'usageLogMaxBytes', label: '日志上限（字节）', type: 'number', tip: 'usage.jsonl 超过这个大小就轮转成 usage.jsonl.1（只保留一份旧文件）。内部有 1024 字节下限：填 1 也按 1024 生效。' },
     { key: 'feedbackEta', label: '反馈学习率 η', type: 'number', hint: '0~1，默认 0.35', tip: '每次「有帮助/没帮上」把 G 往 +1 / -1 拉的幅度。η 越大改得越快；默认 0.35。' },
@@ -526,7 +527,18 @@ export function buildRecord(source, body = {}) {
   if (outcome !== '' && !['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'].includes(outcome)) {
     throw codedError('bad-outcome', `outcome 不合法：${outcome}`)
   }
-  return source.record(body)
+  // 分步回报：非法值拒绝、越界夹到 [-1,1]（与 kernel 的 normalizeStepRewards 同口径）。
+  const next = { ...body }
+  if (body.stepRewards !== undefined && body.stepRewards !== null) {
+    if (!Array.isArray(body.stepRewards)) throw codedError('bad-request', 'stepRewards 必须是数组')
+    next.stepRewards = body.stepRewards.map((item, index) => {
+      if (typeof item !== 'number' || !Number.isFinite(item)) {
+        throw codedError('bad-request', `stepRewards[${index}] 必须是数字，收到：${JSON.stringify(item)}`)
+      }
+      return Math.max(-1, Math.min(1, item))
+    })
+  }
+  return source.record(next)
 }
 
 /** `/review` 的 data：时效复核（due / verify / stale / retire / revive），经验与技能同一入口。 */
