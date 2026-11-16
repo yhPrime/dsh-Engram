@@ -3306,11 +3306,11 @@ window.__ModuleLoader__.load({
         }
         ctx.closePath()
       } else if (kind === 'skill') {
-        // 技能是菱形，套件仍用圆 + 外虚线环，经验是圆点。
+        // 技能是四面体：缩小到线框画不动时，用三角形轮廓收尾；
+        // 不要退回旧的菱形，否则同一种节点在缩放时会“变形”。
         ctx.moveTo(0, -radius * 1.18)
-        ctx.lineTo(radius * 0.82, 0)
-        ctx.lineTo(0, radius * 1.18)
-        ctx.lineTo(-radius * 0.82, 0)
+        ctx.lineTo(radius * 1.02, radius * 0.72)
+        ctx.lineTo(-radius * 1.02, radius * 0.72)
         ctx.closePath()
       } else {
         ctx.arc(0, 0, radius, 0, Math.PI * 2)
@@ -4525,7 +4525,8 @@ window.__ModuleLoader__.load({
               }
               // 正多面体：发光线框 + 半透明面；技能/经验缩小后仍退回 2D 轮廓。
               const solid = graphSolidForNode(node)
-              const poly = solid && screenRadius > 2.8 && (node.kind === 'type' || node.kind === 'suite' || node.kind === 'root' || isSelected || (node.kind === 'skill' && screenRadius > 4.2)) && (isSelected || polyBudget > 0)
+              const polyMinRadius = node.kind === 'skill' ? 1.8 : 2.8
+              const poly = solid && screenRadius > polyMinRadius && (node.kind === 'type' || node.kind === 'suite' || node.kind === 'root' || isSelected || node.kind === 'skill') && (isSelected || polyBudget > 0)
               if (poly) {
                 polyBudget -= 1
                 drawPolyhedron(ctx, screenRadius * 1.55, color, solid, entry.spinAngle, {
