@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-label="忆痕 Engram：DSH 经验与技能引擎">
+  <defs>
+    <linearGradient id="hbg" x1="0" y1="0" x2="1200" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="0.55" stop-color="#121933"/>
+      <stop offset="1" stop-color="#1b1440"/>
+    </linearGradient>
+    <linearGradient id="hicon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#818cf8"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="420" rx="26" fill="url(#hbg)"/>
+
+  <g transform="translate(84,132) scale(1.7)">
+    <rect x="0" y="0" width="64" height="64" rx="18" fill="url(#hicon)"/>
+    <path d="M32 11.5c11.6 0 20.5 8.6 20.5 20S44 51 33.6 51 20 44.2 20 35.8 25.4 23 33 23s11 4.6 11 10.4-3.6 8.4-8 8.4-6-2.6-6-6 1.8-4.2 4-4.2"
+          fill="none" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="32" cy="31.6" r="3.6" fill="#ffffff"/>
+  </g>
+
+  <text x="230" y="206" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="58" font-weight="700" fill="#f4f7ff">忆痕 Engram</text>
+  <text x="234" y="252" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="22" fill="#a9b6d8">DSH 经验与技能引擎 · 经验库控制台</text>
+  <text x="234" y="296" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="18" fill="#7c8aab">记住「怎么做成的」，下次同类任务直接端出来</text>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="16">
+    <rect x="234" y="326" width="104" height="38" rx="19" fill="#17223f" stroke="#33507f"/>
+    <text x="260" y="351" fill="#9fd8ff">经验库</text>
+    <rect x="350" y="326" width="120" height="38" rx="19" fill="#1d1b3f" stroke="#4c3f8f"/>
+    <text x="374" y="351" fill="#c9bcff">技能包</text>
+    <rect x="482" y="326" width="150" height="38" rx="19" fill="#152b2a" stroke="#2f6b5f"/>
+    <text x="504" y="351" fill="#8de9cf">三维关系图</text>
+    <rect x="644" y="326" width="138" height="38" rx="19" fill="#2a2233" stroke="#6d4a63"/>
+    <text x="668" y="351" fill="#f5b8e0">Git 备份</text>
+  </g>
+
+  <g stroke="#3b4a78" stroke-width="1.4">
+    <path d="M856 214 L966 128"/>
+    <path d="M856 214 L1004 236"/>
+    <path d="M966 128 L1076 214"/>
+    <path d="M1004 236 L1076 214"/>
+    <path d="M966 128 L1030 64"/>
+    <path d="M1004 236 L1030 320"/>
+    <path d="M1076 214 L1146 286"/>
+  </g>
+  <g stroke="#5b6f9e" stroke-width="1" stroke-dasharray="4 5" opacity="0.7">
+    <path d="M966 128 L1004 236"/>
+    <path d="M1030 64 L966 128"/>
+  </g>
+  <circle cx="966" cy="128" r="30" fill="#6366f1" opacity="0.22"/>
+  <circle cx="966" cy="128" r="13" fill="#a5b4fc"/>
+  <circle cx="1004" cy="236" r="30" fill="#38bdf8" opacity="0.18"/>
+  <circle cx="1004" cy="236" r="11" fill="#7dd3fc"/>
+  <circle cx="1076" cy="214" r="24" fill="#34d399" opacity="0.16"/>
+  <circle cx="1076" cy="214" r="9" fill="#6ee7b7"/>
+  <circle cx="856" cy="214" r="22" fill="#f472b6" opacity="0.16"/>
+  <circle cx="856" cy="214" r="8" fill="#f9a8d4"/>
+  <circle cx="1030" cy="64" r="15" fill="#fbbf24" opacity="0.5"/>
+  <circle cx="1030" cy="320" r="12" fill="#818cf8" opacity="0.55"/>
+  <circle cx="1146" cy="286" r="9" fill="#38bdf8" opacity="0.7"/>
+</svg>

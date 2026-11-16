@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-label="三维关系图：分类主星与经验节点">
+  <defs>
+    <linearGradient id="gbg" x1="0" y1="0" x2="1200" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#141a33"/>
+    </linearGradient>
+    <linearGradient id="gspace" x1="0" y1="0" x2="1060" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#080d1c"/>
+      <stop offset="0.6" stop-color="#0c1327"/>
+      <stop offset="1" stop-color="#141033"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="700" rx="26" fill="url(#gbg)"/>
+
+  <text x="70" y="86" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="30" font-weight="700" fill="#f4f7ff">关系图：把经验库看成一片星海</text>
+  <text x="70" y="118" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="16" fill="#8b9ac0">分类是主星，经验绕着自己那一簇转；同标签的经验用虚线牵着</text>
+
+  <rect x="70" y="150" width="1060" height="470" rx="18" fill="url(#gspace)" stroke="#232c47"/>
+
+  <g stroke="#2b3757" stroke-width="1.1">
+    <path d="M280 330 L190 250"/>
+    <path d="M280 330 L210 420"/>
+    <path d="M280 330 L350 230"/>
+    <path d="M280 330 L380 400"/>
+    <path d="M280 330 L300 470"/>
+    <path d="M640 270 L540 200"/>
+    <path d="M640 270 L560 360"/>
+    <path d="M640 270 L740 210"/>
+    <path d="M640 270 L760 350"/>
+    <path d="M640 270 L650 150"/>
+    <path d="M640 270 L620 420"/>
+    <path d="M930 450 L840 520"/>
+    <path d="M930 450 L1020 500"/>
+    <path d="M930 450 L1010 380"/>
+    <path d="M930 450 L860 370"/>
+  </g>
+
+  <g stroke="#5b6f9e" stroke-width="1" stroke-dasharray="4 6" opacity="0.85">
+    <path d="M380 400 L560 360"/>
+    <path d="M350 230 L540 200"/>
+    <path d="M620 420 L840 520"/>
+    <path d="M760 350 L860 370"/>
+  </g>
+
+  <g fill="#6366f1">
+    <circle cx="280" cy="330" r="56" fill-opacity="0.14"/>
+    <circle cx="280" cy="330" r="30" fill="#8b95ff"/>
+    <circle cx="280" cy="330" r="18" fill="#e6e9ff" fill-opacity="0.85"/>
+  </g>
+  <g fill="#38bdf8">
+    <circle cx="640" cy="270" r="66" fill-opacity="0.13"/>
+    <circle cx="640" cy="270" r="34" fill="#5fc7f7"/>
+    <circle cx="640" cy="270" r="19" fill="#f2fbff" fill-opacity="0.9"/>
+  </g>
+  <g fill="#34d399">
+    <circle cx="930" cy="450" r="52" fill-opacity="0.12"/>
+    <circle cx="930" cy="450" r="28" fill="#57d9a6"/>
+    <circle cx="930" cy="450" r="16" fill="#eefff8" fill-opacity="0.85"/>
+  </g>
+
+  <g fill="#9fb0d0">
+    <circle cx="190" cy="250" r="9"/>
+    <circle cx="210" cy="420" r="8"/>
+    <circle cx="350" cy="230" r="10"/>
+    <circle cx="380" cy="400" r="8"/>
+    <circle cx="300" cy="470" r="7"/>
+    <circle cx="540" cy="200" r="9"/>
+    <circle cx="560" cy="360" r="10"/>
+    <circle cx="650" cy="150" r="7"/>
+    <circle cx="620" cy="420" r="9"/>
+    <circle cx="840" cy="520" r="8"/>
+    <circle cx="1020" cy="500" r="9"/>
+    <circle cx="1010" cy="380" r="8"/>
+    <circle cx="860" cy="370" r="7"/>
+  </g>
+
+  <g>
+    <circle cx="740" cy="210" r="10" fill="#a9b6d8"/>
+    <circle cx="760" cy="350" r="22" fill="#fbbf24" fill-opacity="0.16"/>
+    <circle cx="760" cy="350" r="10" fill="#fcd34d"/>
+    <path d="M760 330 L762 348 L780 350 L762 352 L760 370 L758 352 L740 350 L758 348 Z" fill="#fff7d6" fill-opacity="0.95"/>
+  </g>
+
+  <g font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#8b9ac0">
+    <text x="640" y="238" text-anchor="middle" fill="#dbe4f7">课件</text>
+    <text x="280" y="296" text-anchor="middle" fill="#dbe4f7">代码</text>
+    <text x="930" y="414" text-anchor="middle" fill="#dbe4f7">环境</text>
+  </g>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="13" fill="#7c8aab">
+    <circle cx="100" cy="585" r="7" fill="#8b95ff"/>
+    <text x="116" y="590">分类主星</text>
+    <circle cx="238" cy="585" r="5" fill="#9fb0d0"/>
+    <text x="252" y="590">经验节点</text>
+    <line x1="372" y1="585" x2="412" y2="585" stroke="#5b6f9e" stroke-width="1" stroke-dasharray="4 6"/>
+    <text x="424" y="590">同标签连线</text>
+    <circle cx="562" cy="585" r="6" fill="#fcd34d"/>
+    <text x="578" y="590">悬停：只亮邻居，其余压暗</text>
+  </g>
+
+  <text x="70" y="662" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="13" fill="#5f6d8e">示意 · 真实关系图是真三维透视：拖拽轨道旋转、滚轮推拉、按深度遮挡；配色默认跟随当前主题，也可选 10 套预设</text>
+</svg>

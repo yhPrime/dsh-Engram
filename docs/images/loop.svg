@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-label="经验闭环：记录、召回、反馈、沉淀">
+  <defs>
+    <linearGradient id="lbg" x1="0" y1="0" x2="1200" y2="675" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#141a33"/>
+    </linearGradient>
+    <marker id="larrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4f7fc4"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="675" rx="26" fill="url(#lbg)"/>
+
+  <text x="80" y="86" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="30" font-weight="700" fill="#f4f7ff">经验闭环</text>
+  <text x="80" y="120" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="16" fill="#8b9ac0">一条经验从写下来到变成技能，只靠四个动作</text>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif">
+    <rect x="170" y="170" width="300" height="140" rx="18" fill="#141c33" stroke="#2c4a73"/>
+    <text x="198" y="212" font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#7dd3fc">exp_record</text>
+    <text x="198" y="248" font-size="16" fill="#dbe4f7">做完一件事就写下来</text>
+    <text x="198" y="278" font-size="14" fill="#8b9ac0">做法 · 结果 · 标签 · 适用范围</text>
+
+    <rect x="730" y="170" width="300" height="140" rx="18" fill="#141c33" stroke="#4a3a7a"/>
+    <text x="758" y="212" font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#c4b5fd">exp_recall</text>
+    <text x="758" y="248" font-size="16" fill="#dbe4f7">同类任务先翻旧账</text>
+    <text x="758" y="278" font-size="14" fill="#8b9ac0">簇路由 → 打分 → 排序</text>
+
+    <rect x="730" y="430" width="300" height="140" rx="18" fill="#141c33" stroke="#2f5f52"/>
+    <text x="758" y="472" font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#6ee7b7">exp_feedback</text>
+    <text x="758" y="508" font-size="16" fill="#dbe4f7">用过就回一句实话</text>
+    <text x="758" y="538" font-size="14" fill="#8b9ac0">helped / hurt / neutral</text>
+
+    <rect x="170" y="430" width="300" height="140" rx="18" fill="#141c33" stroke="#6d4a63"/>
+    <text x="198" y="472" font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="19" fill="#f9a8d4">exp_consolidate</text>
+    <text x="198" y="508" font-size="16" fill="#dbe4f7">同族够多就长成技能</text>
+    <text x="198" y="538" font-size="14" fill="#8b9ac0">SKILL.md + 脚本 + 账本</text>
+  </g>
+
+  <g fill="none" stroke="#4f7fc4" stroke-width="2.5" marker-end="url(#larrow)">
+    <path d="M478 240 L714 240"/>
+    <path d="M880 318 L880 422"/>
+    <path d="M722 500 L486 500"/>
+    <path d="M320 422 L320 318"/>
+  </g>
+
+  <g>
+    <circle cx="600" cy="390" r="118" fill="#6366f1" fill-opacity="0.05"/>
+    <circle cx="600" cy="390" r="92" fill="#1a2340" stroke="#4a5b8f" stroke-width="1.5"/>
+    <text x="600" y="382" text-anchor="middle" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="22" font-weight="700" fill="#e6ecff">经验库</text>
+    <text x="600" y="412" text-anchor="middle" font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="14" fill="#8b9ac0">.exp</text>
+  </g>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="13" fill="#6f7d99">
+    <text x="596" y="196" text-anchor="middle">下次同类任务</text>
+    <text x="906" y="374" text-anchor="start">用后</text>
+    <text x="604" y="540" text-anchor="middle">攒够同族</text>
+    <text x="296" y="374" text-anchor="end">长成技能</text>
+  </g>
+</svg>

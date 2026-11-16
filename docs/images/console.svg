@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-label="经验库控制台界面结构示意">
+  <defs>
+    <linearGradient id="cbg" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#141a33"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="720" rx="26" fill="url(#cbg)"/>
+
+  <text x="70" y="86" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="30" font-weight="700" fill="#f4f7ff">经验库控制台</text>
+  <text x="70" y="118" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="16" fill="#8b9ac0">左侧栏「经验库」打开 · 十页 · 同一个插件里既看数据也发动作</text>
+
+  <rect x="70" y="150" width="1060" height="500" rx="18" fill="#0f1526" stroke="#2a3350"/>
+  <line x1="262" y1="150" x2="262" y2="650" stroke="#232c47"/>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif">
+    <g font-size="12" fill="#5f6d8e">
+      <text x="94" y="190">总览</text>
+      <text x="94" y="282">数据</text>
+      <text x="94" y="404">动作</text>
+      <text x="94" y="526">系统</text>
+    </g>
+    <g font-size="15" fill="#b9c6e2">
+      <text x="94" y="216">概览</text>
+      <text x="94" y="246">关系图</text>
+      <text x="94" y="308">经验</text>
+      <text x="94" y="338">类型</text>
+      <text x="94" y="368">冷档</text>
+      <text x="94" y="430">检索</text>
+      <text x="94" y="460">记录</text>
+      <text x="94" y="490">技能</text>
+      <text x="94" y="552">使用记录</text>
+      <text x="94" y="582">设置</text>
+    </g>
+    <rect x="84" y="198" width="164" height="28" rx="8" fill="#1b2748"/>
+    <rect x="84" y="198" width="3" height="28" rx="1.5" fill="#60a5fa"/>
+    <text x="94" y="216" font-size="15" fill="#9fd8ff">概览</text>
+
+    <text x="290" y="196" font-size="22" font-weight="700" fill="#f4f7ff">概览</text>
+    <text x="1112" y="196" text-anchor="end" font-size="13" fill="#6f7d99">已刷新 10:24:31</text>
+  </g>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif">
+    <rect x="290" y="216" width="196" height="84" rx="12" fill="#141c33" stroke="#28324f"/>
+    <text x="310" y="242" font-size="12" fill="#7c8aab">经验</text>
+    <text x="310" y="278" font-size="26" font-weight="700" fill="#e6ecff">128</text>
+
+    <rect x="500" y="216" width="196" height="84" rx="12" fill="#141c33" stroke="#28324f"/>
+    <text x="520" y="242" font-size="12" fill="#7c8aab">类型</text>
+    <text x="520" y="278" font-size="26" font-weight="700" fill="#e6ecff">14</text>
+
+    <rect x="710" y="216" width="196" height="84" rx="12" fill="#141c33" stroke="#28324f"/>
+    <text x="730" y="242" font-size="12" fill="#7c8aab">技能</text>
+    <text x="730" y="278" font-size="26" font-weight="700" fill="#e6ecff">10</text>
+
+    <rect x="920" y="216" width="190" height="84" rx="12" fill="#141c33" stroke="#28324f"/>
+    <text x="940" y="242" font-size="12" fill="#7c8aab">待复核</text>
+    <text x="940" y="278" font-size="26" font-weight="700" fill="#fbbf24">3</text>
+
+    <text x="290" y="342" font-size="16" font-weight="700" fill="#dbe4f7">最近经验</text>
+    <text x="1112" y="342" text-anchor="end" font-size="12" fill="#6f7d99">按回报排序</text>
+
+    <rect x="290" y="356" width="820" height="58" rx="10" fill="#131a2e" stroke="#252f4a"/>
+    <text x="310" y="380" font-size="15" fill="#eef2ff">给研学课 PPT 插一页（深蓝色调）</text>
+    <text x="310" y="401" font-size="12" fill="#7c8aab">课件 · PPT · 布局 · 提交</text>
+    <rect x="1010" y="368" width="82" height="26" rx="13" fill="#12302a" stroke="#2f6b5f"/>
+    <text x="1051" y="386" text-anchor="middle" font-size="13" fill="#6ee7b7">G +0.62</text>
+
+    <rect x="290" y="424" width="820" height="58" rx="10" fill="#131a2e" stroke="#252f4a"/>
+    <text x="310" y="448" font-size="15" fill="#eef2ff">修 Windows 沙箱读写被拒</text>
+    <text x="310" y="469" font-size="12" fill="#7c8aab">代码 · 沙箱 · 校验</text>
+    <rect x="1010" y="436" width="82" height="26" rx="13" fill="#12302a" stroke="#2f6b5f"/>
+    <text x="1051" y="454" text-anchor="middle" font-size="13" fill="#6ee7b7">G +0.41</text>
+
+    <rect x="290" y="492" width="820" height="58" rx="10" fill="#131a2e" stroke="#252f4a"/>
+    <text x="310" y="516" font-size="15" fill="#eef2ff">把图鉴页改成瀑布流</text>
+    <text x="310" y="537" font-size="12" fill="#7c8aab">网页 · 布局 · 验收</text>
+    <rect x="1010" y="504" width="82" height="26" rx="13" fill="#31222a" stroke="#6d4a63"/>
+    <text x="1051" y="522" text-anchor="middle" font-size="13" fill="#f9a8d4">G -0.15</text>
+
+    <rect x="290" y="560" width="820" height="58" rx="10" fill="#131a2e" stroke="#252f4a"/>
+    <text x="310" y="584" font-size="15" fill="#eef2ff">把经验库备份推到 GitHub</text>
+    <text x="310" y="605" font-size="12" fill="#7c8aab">环境 · Git · 推送</text>
+    <rect x="1010" y="572" width="82" height="26" rx="13" fill="#12302a" stroke="#2f6b5f"/>
+    <text x="1051" y="590" text-anchor="middle" font-size="13" fill="#6ee7b7">G +0.33</text>
+  </g>
+
+  <text x="70" y="690" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="12" fill="#5f6d8e">结构示意 · 真实界面跟随主题与数据变化，条数为示例数据</text>
+</svg>

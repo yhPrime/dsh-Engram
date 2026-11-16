@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-label="召回流程：簇路由、打分、排序、输出">
+  <defs>
+    <linearGradient id="rbg" x1="0" y1="0" x2="1200" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#141a33"/>
+    </linearGradient>
+    <marker id="rarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4f7fc4"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="700" rx="26" fill="url(#rbg)"/>
+
+  <text x="70" y="86" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="30" font-weight="700" fill="#f4f7ff">召回是怎么排的</text>
+  <text x="70" y="118" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="16" fill="#8b9ac0">先用确定性的簇路由收窄，再按回报打分排序，最后只回一小段记忆简报</text>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="13" fill="#6f7d99">
+    <text x="70" y="168">① 收窄</text>
+    <text x="346" y="168">② 打分</text>
+    <text x="622" y="168">③ 排序</text>
+    <text x="898" y="168">④ 输出</text>
+  </g>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif">
+    <rect x="70" y="184" width="232" height="128" rx="16" fill="#141c33" stroke="#2c4a73"/>
+    <text x="92" y="222" font-size="18" font-weight="700" fill="#e6ecff">簇路由</text>
+    <text x="92" y="252" font-size="14" fill="#a9b6d8">按类型与产物找同族</text>
+    <text x="92" y="278" font-size="13" fill="#7c8aab">on / shadow / off 三档</text>
+    <text x="92" y="300" font-size="13" fill="#7c8aab">无同族回退全库</text>
+
+    <rect x="346" y="184" width="232" height="128" rx="16" fill="#141c33" stroke="#2c4a73"/>
+    <text x="368" y="222" font-size="18" font-weight="700" fill="#e6ecff">打分</text>
+    <text x="368" y="252" font-size="14" fill="#a9b6d8">相似度 · 时效 · 适用性</text>
+    <text x="368" y="278" font-size="13" fill="#7c8aab">中文二元组 + 标签 + 产物</text>
+    <text x="368" y="300" font-size="13" fill="#7c8aab">appliesTo 不匹配就挡掉</text>
+
+    <rect x="622" y="184" width="232" height="128" rx="16" fill="#141c33" stroke="#4a3a7a"/>
+    <text x="644" y="222" font-size="18" font-weight="700" fill="#e6ecff">排序</text>
+    <text x="644" y="252" font-size="14" fill="#a9b6d8">按 Â 优势排，不按热度</text>
+    <text x="644" y="278" font-size="13" fill="#7c8aab">没有成败对照时按证据</text>
+    <text x="644" y="300" font-size="13" fill="#7c8aab">默认 3 条，上限 8 条</text>
+
+    <rect x="898" y="184" width="232" height="128" rx="16" fill="#141c33" stroke="#2f5f52"/>
+    <text x="920" y="222" font-size="18" font-weight="700" fill="#e6ecff">截断与瘦身</text>
+    <text x="920" y="252" font-size="14" fill="#a9b6d8">简报 + 路线 + 候选</text>
+    <text x="920" y="278" font-size="13" fill="#7c8aab">默认瘦身档省 token</text>
+    <text x="920" y="300" font-size="13" fill="#7c8aab">附命中词供自查</text>
+  </g>
+
+  <g fill="none" stroke="#4f7fc4" stroke-width="2" marker-end="url(#rarrow)">
+    <path d="M306 248 L340 248"/>
+    <path d="M582 248 L616 248"/>
+    <path d="M858 248 L892 248"/>
+  </g>
+
+  <rect x="70" y="344" width="1060" height="300" rx="18" fill="#0f1526" stroke="#2a3350"/>
+  <text x="94" y="384" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="17" font-weight="700" fill="#dbe4f7">返回给模型的东西</text>
+  <text x="1106" y="384" text-anchor="end" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="12" fill="#6f7d99">一次 exp_recall 的响应结构</text>
+
+  <g font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="15">
+    <text x="94" y="424" fill="#7dd3fc">brief</text>
+    <text x="230" y="424" fill="#c7d2e8">一段记忆简报：这个库里哪几条跟你这活相关</text>
+
+    <text x="94" y="462" fill="#c4b5fd">route</text>
+    <text x="230" y="462" fill="#c7d2e8">路由结果：命中的簇、分数、收窄后剩多少条</text>
+
+    <text x="94" y="500" fill="#6ee7b7">candidates</text>
+    <text x="230" y="500" fill="#c7d2e8">候选做法：每条带回报 G、生命周期状态、适用范围</text>
+
+    <text x="94" y="538" fill="#f9a8d4">selfCheck</text>
+    <text x="230" y="538" fill="#c7d2e8">命中词清单：词面碰上的假匹配，可以自己看出来</text>
+  </g>
+
+  <line x1="94" y1="566" x2="1106" y2="566" stroke="#232c47"/>
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="13" fill="#7c8aab">
+    <text x="94" y="598">技能也走同一条通道：同族够了就以技能形态返回，旁边附最多 3 条同类经验，不互相遮住。</text>
+    <text x="94" y="624">没有命中就返回空候选：库里没货时不硬凑一条给你。</text>
+  </g>
+</svg>

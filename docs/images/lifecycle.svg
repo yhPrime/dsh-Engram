@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-label="经验生命周期：active、stale、retired、superseded">
+  <defs>
+    <linearGradient id="sbg" x1="0" y1="0" x2="1200" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#141a33"/>
+    </linearGradient>
+    <marker id="sarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4f7fc4"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="700" rx="26" fill="url(#sbg)"/>
+
+  <text x="70" y="86" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="30" font-weight="700" fill="#f4f7ff">经验会过时，但不会被悄悄删掉</text>
+  <text x="70" y="118" font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="16" fill="#8b9ac0">四个生命周期状态 · 只降权、只标状态，历史一律留在库里</text>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif">
+    <rect x="70" y="180" width="300" height="130" rx="16" fill="#12251f" stroke="#2f6b5f"/>
+    <text x="96" y="220" font-size="20" font-weight="700" fill="#6ee7b7">active</text>
+    <text x="96" y="252" font-size="14" fill="#c7d2e8">默认状态，正常参与召回</text>
+    <text x="96" y="278" font-size="13" fill="#7c8aab">权重 1.0</text>
+
+    <rect x="470" y="180" width="300" height="130" rx="16" fill="#2a2412" stroke="#7a6420"/>
+    <text x="496" y="220" font-size="20" font-weight="700" fill="#fbbf24">stale</text>
+    <text x="496" y="252" font-size="14" fill="#c7d2e8">到期待复核，仍在库里</text>
+    <text x="496" y="278" font-size="13" fill="#7c8aab">召回降权 ×0.55</text>
+
+    <rect x="870" y="180" width="300" height="130" rx="16" fill="#1a1e2c" stroke="#3b4459"/>
+    <text x="896" y="220" font-size="20" font-weight="700" fill="#a9b6d8">retired</text>
+    <text x="896" y="252" font-size="14" fill="#c7d2e8">主动退休，不再参与召回</text>
+    <text x="896" y="278" font-size="13" fill="#7c8aab">可 revive 恢复</text>
+
+    <rect x="470" y="440" width="300" height="130" rx="16" fill="#211a33" stroke="#4a3a7a"/>
+    <text x="496" y="480" font-size="20" font-weight="700" fill="#c4b5fd">superseded</text>
+    <text x="496" y="512" font-size="14" fill="#c7d2e8">被更准的新做法取代</text>
+    <text x="496" y="538" font-size="13" fill="#7c8aab">只留历史，不再参与召回</text>
+  </g>
+
+  <g fill="none" stroke="#4f7fc4" stroke-width="2.2" marker-end="url(#sarrow)">
+    <path d="M374 245 L464 245"/>
+    <path d="M774 245 L864 245"/>
+  </g>
+
+  <g fill="none" stroke="#4f7fc4" stroke-width="1.6" stroke-dasharray="5 6">
+    <path d="M220 314 L220 380"/>
+    <path d="M620 314 L620 380"/>
+    <path d="M1020 314 L1020 380"/>
+    <path d="M220 380 L1020 380"/>
+    <path d="M620 380 L620 434" marker-end="url(#sarrow)"/>
+  </g>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="13" fill="#6f7d99">
+    <text x="419" y="230" text-anchor="middle">到期未复核</text>
+    <text x="819" y="230" text-anchor="middle">主动退休</text>
+    <text x="656" y="366">任意状态：新做法覆盖</text>
+  </g>
+
+  <line x1="70" y1="600" x2="1170" y2="600" stroke="#232c47"/>
+
+  <g font-family="'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif" font-size="14" fill="#8b9ac0">
+    <text x="70" y="632">时效只在召回时现算：读到缺字段的旧记录就是默认值，不会因此写坏库。</text>
+    <text x="70" y="660">复核靠 exp_review：due 列到期清单、verify 确认仍有效、stale 标待复核、retire 退休、revive 恢复。</text>
+    <text x="70" y="688" font-family="Consolas,'DejaVu Sans Mono',monospace" font-size="13" fill="#7c8aab">freshness = 0.5 ^ (年龄 / 半衰期)　半衰期：stable 1095 天 · semi 180 天 · perishable 45 天　rank = base × (0.70 + 0.30 × freshness)</text>
+  </g>
+</svg>
