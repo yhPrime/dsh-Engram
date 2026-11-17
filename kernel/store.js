@@ -349,11 +349,37 @@ function normalizeStore(raw) {
     : []
   const types = (rawTypes.length > 0 ? rawTypes : [{ ...SYSTEM_TYPE }]).map((type) => (type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
   if (!types.some((type) => type.id === SYSTEM_TYPE.id)) types.push({ ...SYSTEM_TYPE })
+  // 同 id 多份类型（0.23.1 迁移）：改名保留旧 id，之后重新创建旧名会算出同一个 id。
+  // 后出现的那份换新 id，并按「旧 id + 名字」把经验改挂过去（同 id 的行可能属于任一类型，名字是唯一可靠判据）。
+  const typeIdRemap = []
+  const seenTypeIds = new Set()
+  for (const type of types) {
+    if (!seenTypeIds.has(type.id)) {
+      seenTypeIds.add(type.id)
+      continue
+    }
+    const oldId = type.id
+    const oldName = String(type.name || '')
+    type.id = uniqueTypeId(types, type.name, type)
+    seenTypeIds.add(type.id)
+    typeIdRemap.push({ oldId, oldName, newId: type.id })
+  }
   // 同 id 多份只算一条（R6-D2）：分片被外部复制 / Git 合并取错一边时，同一条不能按两条计
   // （dedupeRecordsById 按 hits/时间取较强的一份，字段不丢）。
   const experiences = dedupeRecordsById(Array.isArray(raw.experiences)
     ? raw.experiences.filter((item) => item && typeof item === 'object' && !Array.isArray(item))
     : [])
+  // 把撞 id 的类型名下的经验改挂到新 id（必须在悬空判定之前）。
+  if (typeIdRemap.length > 0) {
+    for (const item of experiences) {
+      for (const entry of typeIdRemap) {
+        if (item.typeId === entry.oldId && String(item.typeName || '') === entry.oldName) {
+          item.typeId = entry.newId
+          break
+        }
+      }
+    }
+  }
   // typeId 悬空（types 丢失/被删）：读时归「未分类」，别让计数/召回读到幽灵类型。
   const typeIds = new Set(types.map((type) => type.id))
   for (const item of experiences) {
@@ -1125,7 +1151,7 @@ export function resolveTypeForRecord(store, rawName, options = {}) {
   }
 
   const type = {
-    id: `ty_${createHash('sha1').update(name.toLowerCase()).digest('hex').slice(0, 8)}`,
+    id: uniqueTypeId(store.types, name),
     name,
     description: String(options.typeDescription || '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 120),
     createdAt: new Date().toISOString(),
@@ -1175,6 +1201,42 @@ export function sanitizeField(raw) {
     sanitized = true
   }
   return { text: text.trim(), sanitized }
+}
+
+/**
+ * 可见文本判定（0.23.1）：剥掉 C0/C1 控制字符与空白后是否还有内容。
+ *
+ * 只有控制字符的 intent / action 会被写侧拒收（见 upsertExperience）：
+ * 那种行召回不到、统计却算一条，是静默脏数据（R3~R8 一直记为已知局限，用户要求修掉）。
+ */
+export function hasVisibleText(raw) {
+  const text = String(raw === undefined || raw === null ? '' : raw)
+  return text.replace(/[\u0000-\u001F\u007F-\u009F]/gu, '').replace(/\s+/gu, '') !== ''
+}
+
+/** 类型 id 的规范算法：名字小写 sha1 前 8 位。 */
+function typeIdOfName(name) {
+  return `ty_${createHash('sha1').update(String(name).toLowerCase()).digest('hex').slice(0, 8)}`
+}
+
+/**
+ * 类型 id 去重（0.23.1）：改名保留旧 id，所以「旧名被重新创建」会算出同一个 id，
+ * 两个类型共享 id → `exp_type list` 把同一批行算两遍、`readStore().types` 出现同 id 两项。
+ * 撞了就加盐重算，绝不让两个类型共用 id（数据侧由 normalizeStore 的迁移兜底）。
+ */
+function uniqueTypeId(types, name, exceptType = null) {
+  const taken = new Set()
+  for (const type of Array.isArray(types) ? types : []) {
+    if (!type || type === exceptType) continue
+    if (typeof type.id === 'string' && type.id !== '') taken.add(type.id)
+  }
+  const base = typeIdOfName(name)
+  if (!taken.has(base)) return base
+  for (let salt = 2; salt <= 999; salt += 1) {
+    const candidate = `ty_${createHash('sha1').update(`${String(name).toLowerCase()}#${salt}`).digest('hex').slice(0, 8)}`
+    if (!taken.has(candidate)) return candidate
+  }
+  return `ty_${createHash('sha1').update(`${String(name).toLowerCase()}#${Date.now()}`).digest('hex').slice(0, 8)}`
 }
 
 /**
@@ -1384,6 +1446,11 @@ export function upsertExperience(store, input, options = {}) {
   const cleanNote = sanitizeField(rawNote)
   const intent = cutField(cleanIntent.text, 500)
   const action = cutField(cleanAction.text, 2000)
+  // 写侧可见性校验（0.23.1）：只有空白或 C0/C1 控制字符的 intent / action 直接拒收。
+  // 以前这种行会落库（落 1 行不可见数据、召回不到、统计却算一条），R3~R8 一直记为已知局限。
+  // 抛错语义与「缺 intent」一致（tools.js 的必填校验也是抛错），不静默改写用户内容。
+  if (!hasVisibleText(intent)) throw new Error('intent 不能只有空白或控制字符')
+  if (!hasVisibleText(action)) throw new Error('action 不能只有空白或控制字符')
   cleanNote.text = cutField(cleanNote.text, 2000)
   if (intent === '' || action === '') throw new Error('intent 与 action 必填')
   const mergeThreshold = Number.isFinite(Number(options.mergeThreshold)) ? Number(options.mergeThreshold) : DEFAULT_MERGE_THRESHOLD
@@ -2792,7 +2859,7 @@ export function createType(store, rawName, description = '') {
   if (name === '') throw new Error('类型名无效（2–16 个字符）')
   if (findType(store.types, name) !== null) throw new Error(`类型已存在：${name}`)
   const type = {
-    id: `ty_${createHash('sha1').update(name.toLowerCase()).digest('hex').slice(0, 8)}`,
+    id: uniqueTypeId(store.types, name),
     name,
     description: String(description || '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 120),
     createdAt: new Date().toISOString(),
