@@ -35,6 +35,12 @@
 
 ## 当前发布
 
+- **v0.22.0（控制台 P2：复核到期清单 / 自动记录关闭提示 / 技能正文模式）**
+  - 经验页与技能页新增「到期复核 N」入口与共用 `ReviewDuePanel`：勾选批量或单条「确认仍有效 / 标待复核」，逐条调 `/review`，失败逐条回显，不整批回滚
+  - 经验页到期清单走 `/experiences?due=1`（`reviewAfter` 已过期或生命周期已是 `stale`）；技能页按 `reviewDue` / `stale` 推导（技能默认易腐）
+  - 概览在 `config.autoRecord=false` 时显示「自动记录已关闭」提示，避免误以为钩子失效
+  - 设置页新增「技能正文模式」（`skillBodyMode`：`full` 全文，默认 / `clip` 6000 字裁剪），`ui/API.md` 补齐 0.20.2–0.21.0 接口增量与本版增量
+  - 测试：`ui/tests/p2-ui.test.mjs`（6 项）；`npm run test:ui` 20 文件全绿；发版前 `npm test` 复跑
 - **v0.21.2（UI 对齐后端：自动记录可见 / 分步回报 / 召回可见性 / 技能运行时）**
   - P0（0.21.1）：经验列表与详情区分「自动 / 手动 / 外部」来源；详情显示 G 来源、产物路径（可复制）、会话与轮次、分步回报（最低步标红）；记录页可填 `stepRewards` 并显示「分步最低」；概览 / 检索回执 / 使用记录三处待判定支持勾选批量回填（二次确认、逐条错误回显）；经验页按来源与判定筛选
   - P0 后端：`auto-record` 写 `origin: 'auto'`，`exp_record` 透传给 store；`/experiences` 支持 `source` / `verdict`；行补 `origin` / `stepRewards` / `artifacts` / `sessionId` / `turn` / `cwd`

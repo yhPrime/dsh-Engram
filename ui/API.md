@@ -781,3 +781,32 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 
 - 检索页：`lifecycleNote` / `applicabilityNote` 顶部 Banner；「标签影子对照」折叠块（`overlap@5`、查询标签按面分组、标签 top5）；技能卡显示运行时目录与命中词/自查；候选卡加「环境不匹配 / 部分匹配」角标。
 - 技能详情：运行时卡（技能目录、`scripts[].run` 可复制、附件清单）、召回状态（正文 hash、会话目录资格与上限）、固化进度（uses/helped/hurt、「还差 N 次 helped」/「已固化」/「有 N 个未解障碍」）。
+
+## 0.20.2–0.21.0 补记（接口层）
+
+- **0.20.7**：`/review`、`/record` 的校验与业务错误按文档返回 400/404/409，坏 JSON → 400；`/recall` 顶层透传 `lifecycleNote`（slim/detail 都有）；列表/详情/关系图标签统一归一，未登记自由标签保留；坏 manifest 且无分片/无 legacy → `store-unreadable`；空库 `/types` 行带数字 `count`。
+- **0.20.9**：`exp_recall` 技能回执新增 `runtime`（`{ dir, skillFile, scripts: [{ path, abs, bytes, run }], references, usage }`）；技能正文默认全文（安全上限 30000 字符，超了保留开头 + 末尾 Resources/脚本节）；`skillBodyMode: 'clip'` 回到 6000 字裁剪档；`helped` 会写 `lastVerifiedAt` 并按易腐层重排 `reviewAfter`（`hurt` 不冒充验证）。
+- **0.20.9**：`exp_record` 接受 `origin`（`auto` / `manual` / `external`，缺省 `manual`；自动记录钩子写 `auto`）与 `stepRewards`（数字数组，越界夹到 [-1,1]，非法值 400）；设置 `autoRecord` 控制回合收尾自动记录。
+- **0.21.0**：技能命中三态 `first/reuse/regive` 只在内核 usage 行与回执 `give` 里体现；`/usage` 只外露 `skill/reused/bodyHash`，**不**外露 `session` / `reuseReason` / `catalog` / `catalogSize`；会话技能目录是 `agent/pre-step` 的宿主消息（`source.kind='engram-skill-catalog'`、条目名 `engram:<slug>`），**不进 HTTP API**；设置 `skillCatalog` / `catalogMaxSkills` / `catalogDescriptionChars` / `reuseReceipt`（后两个支持但不暴露在设置页）。
+
+## 0.22.0 增量（P2：到期复核 / 自动记录提示 / skillBodyMode）
+
+### GET /experiences
+
+- `due=1`：只返回到期待复核的行（`reviewAfter` 已过期，或生命周期已是 `stale`）。控制台「经验」页顶部「到期复核 N」入口用这个参数。
+- 技能页的到期项不新增接口：由 `/skills` 行的 `reviewDue` / `stale` 推导。
+
+### POST /review
+
+- 没有批量参数：控制台对勾选项**逐条**调用（`verify` / `stale`），失败逐条回显，不整批回滚；技能的 id 用 `skill:<slug>`。
+
+### 设置（`settings.config`）
+
+| 键 | 类型 | 默认 | 设置页 | 作用 |
+|---|---|---|---|---|
+| `skillBodyMode` | enum | `full` | **暴露** | 技能正文给多少：`full`（默认，30000 字安全上限）/ `clip`（6000 字裁剪，排障用） |
+
+### 控制台
+
+- 到期复核面板（经验/技能页共用 `ReviewDuePanel`）：勾选批量或单条「确认仍有效 / 标待复核」；不新增导航项。
+- 概览在 `autoRecord=false` 时显示「自动记录已关闭」提示，避免误以为钩子失效。

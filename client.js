@@ -953,6 +953,77 @@ window.__ModuleLoader__.load({
           : (notice !== '' ? h('div', { className: 'eng-muted' }, notice) : null))
     }
     /**
+     * 到期复核清单（0.22.0 P2）：经验页与技能页共用。
+     * 逐条调 /review（经验 id 直接用；技能 id 要加 `skill:` 前缀），单条与勾选批量走同一路径。
+     */
+    function ReviewDuePanel(props) {
+      const rows = Array.isArray(props.rows) ? props.rows : []
+      const idOf = typeof props.idOf === 'function' ? props.idOf : (row) => row.id
+      const [picked, setPicked] = useState([])
+      const [confirming, setConfirming] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [notice, setNotice] = useState('')
+      useEffect(() => {
+        const ids = new Set(rows.map((row) => idOf(row)))
+        setPicked((prev) => prev.filter((id) => ids.has(id)))
+      }, [rows.map((row) => idOf(row)).join('|')])
+      const toggle = (id) => setPicked((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id])
+      const submit = async (ids, action) => {
+        if (busy || ids.length === 0) return
+        setBusy(true)
+        setNotice('')
+        const failed = []
+        for (const id of ids) {
+          try {
+            await request('/review', { method: 'POST', body: { id, action, ...(action === 'stale' ? { reason: 'manual' } : { note: '控制台确认仍有效' }) } })
+          } catch (error) {
+            failed.push(`${id}（${error && error.message ? error.message : '失败'}）`)
+          }
+        }
+        setNotice(failed.length === 0 ? `已处理 ${ids.length} 条` : `已处理 ${ids.length - failed.length}/${ids.length} 条；失败：${failed.join('；')}`)
+        setPicked([])
+        setConfirming('')
+        setBusy(false)
+        if (typeof props.onChanged === 'function') props.onChanged()
+      }
+      const batchButton = (action) => {
+        const label = action === 'stale' ? '标待复核' : '确认仍有效'
+        const confirm = confirming === action
+        return h(Button, {
+          key: action,
+          small: true,
+          disabled: busy || picked.length === 0,
+          onClick: () => {
+            if (!confirm) { setConfirming(action); return }
+            submit(picked, action)
+          },
+        }, confirm ? `确认${label} ${picked.length} 条` : label)
+      }
+      return h('div', null,
+        rows.length === 0
+          ? h('div', { className: 'eng-muted' }, `没有到期待复核的${props.kind || '记录'}`)
+          : h('div', { className: 'eng-stack' }, rows.map((row) => {
+            const id = idOf(row)
+            const sub = [props.kind, row.typeName, row.reviewAfter ? `建议复核 ${fmtTime(row.reviewAfter)}` : '', lifecycleStateOf(row) === 'stale' ? '待复核' : '']
+              .filter((part) => part !== '' && part !== undefined).join(' · ')
+            return h('div', { key: id, className: 'eng-pending-row' },
+              h('input', { type: 'checkbox', className: 'eng-pending-pick', checked: picked.includes(id), onChange: () => toggle(id), 'aria-label': `选择 ${id}` }),
+              h('div', { className: 'eng-row-main' },
+                h('div', { className: 'eng-row-intent' }, row.intent || row.name || row.id || '—'),
+                sub !== '' ? h('div', { className: 'eng-row-sub' }, sub) : null),
+              h('div', { className: 'eng-actions' },
+                h(Button, { small: true, disabled: busy, onClick: () => submit([id], 'verify') }, '确认仍有效'),
+                h(Button, { small: true, disabled: busy, onClick: () => submit([id], 'stale') }, '标待复核')))
+          })),
+        rows.length > 0
+          ? h('div', { className: 'eng-pending-batch' },
+            h('span', { className: 'eng-muted' }, `已选 ${picked.length} 条`),
+            batchButton('verify'),
+            batchButton('stale'),
+            notice !== '' ? h('span', { className: 'eng-muted' }, notice) : null)
+          : (notice !== '' ? h('div', { className: 'eng-muted' }, notice) : null))
+    }
+    /**
      * 悬浮说明层：挂在 <body> 下、`position: fixed` 定位。
      * 以前气泡是 `.eng-tip` 里的绝对定位子元素，面板一窄 / 一滚动就被 overflow 容器裁掉半截
      * （提示只露中间几行）。现在宽度按视口收（max-width 见 .eng-tip-layer），
@@ -1290,7 +1361,12 @@ window.__ModuleLoader__.load({
     function Overview(props) {
       const recent = useLoad(useCallback(() => request('/experiences?limit=6'), []))
       const pending = useLoad(useCallback(() => request('/pending'), []))
-      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload() }, [recent.reload, pending.reload]))
+      // 0.22.0 P2：自动记录被关掉时要在概览看得见，否则会以为钩子坏了。
+      const settings = useLoad(useCallback(() => request('/settings'), []))
+      const autoRecordState = (props.seedSettings && props.seedSettings.config && typeof props.seedSettings.config === 'object')
+        ? props.seedSettings.config.autoRecord
+        : (settings.data && settings.data.config ? settings.data.config.autoRecord : undefined)
+      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload(); settings.reload() }, [recent.reload, pending.reload, settings.reload]))
       const [coldOpen, setColdOpen] = useState(Boolean(props.state && props.state.cold && Number(props.state.cold.total) > 0))
       const [notice, setNotice] = useState('')
       const state = props.state || {}
@@ -1348,7 +1424,9 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round(((Number(value) || 0) / typeMax) * 100)}%` } })),
                   h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(value))))))),
           notice ? h(Banner, { bad: true }, notice) : null,
-          h('div', { className: 'eng-card eng-section eng-section-card' },
+          autoRecordState === false
+            ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '自动记录已关闭：回合收尾不再自动落待判定经验（去「设置 → 内核参数」打开）。')
+            : null,          h('div', { className: 'eng-card eng-section eng-section-card' },
             h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '存储结构')),
             storage === null
               ? h('div', { className: 'eng-muted' }, '暂无存储信息')
@@ -1528,6 +1606,16 @@ window.__ModuleLoader__.load({
         }
       }
       const labelCatalog = useLoad(useCallback(() => request('/type', { method: 'POST', body: { action: 'labels' } }), []))
+      // 0.22.0 P2：到期复核清单（`/?due=1` 由 listOf 按 reviewDue / stale 过滤）。
+      const due = useLoad(useCallback(() => request('/experiences?due=1&limit=200'), []))
+      const [dueOpen, setDueOpen] = useState(false)
+      const dueRows = due.data && Array.isArray(due.data.rows) ? due.data.rows : []
+      const dueChanged = () => {
+        due.reload()
+        list.reload()
+        if (selected !== null) detail.reload()
+        if (typeof props.onChanged === 'function') props.onChanged()
+      }
       const addLabels = async (id, tags, facet) => {
         const out = await request('/type', { method: 'POST', body: { action: 'label', id, labels: tags, ...(facet === undefined ? {} : { facet }) } })
         await Promise.all([list.reload(), detail.reload(), labelCatalog.reload()])
@@ -1572,7 +1660,14 @@ window.__ModuleLoader__.load({
             h('option', { value: 'type' }, '类型')),
           h('span', { className: 'eng-muted' }, `${total} 条`),
           h(Button, { small: true, disabled: searchDraft.trim() === '', onClick: () => props.onSearch(searchDraft.trim()) }, '检索'),
-          h(Button, { small: true, disabled: list.loading, onClick: list.reload }, list.loading ? '刷新中…' : '刷新')),
+          h(Button, { small: true, disabled: list.loading, onClick: list.reload }, list.loading ? '刷新中…' : '刷新'),
+          h(Button, { small: true, onClick: () => setDueOpen((open) => !open) }, `到期复核 ${dueRows.length}`)),
+        dueOpen ? h('div', { className: 'eng-card', style: { padding: 12, marginBottom: 10 } },
+          h('div', { className: 'eng-section-head' },
+            h('h3', { className: 'eng-section-title' }, `到期复核（${dueRows.length}）`),
+            h('span', { className: 'eng-muted' }, '确认仍有效会刷新复核时间；标待复核不删除、不退休。')),
+          due.error ? h(Banner, { bad: true }, due.error) : null,
+          h(ReviewDuePanel, { rows: dueRows, kind: '经验', loading: due.loading, onChanged: dueChanged })) : null,
         h('div', { className: 'eng-split', 'data-open': selected === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
             rows.length === 0
@@ -2163,6 +2258,10 @@ window.__ModuleLoader__.load({
       const catalogEnabled = engineConfig.skillCatalog !== false
       const catalogMax = Number(engineConfig.catalogMaxSkills) || 5
       const catalogChars = Number(engineConfig.catalogDescriptionChars) || 300
+      // 0.22.0 P2：技能侧到期复核（技能默认易腐，reviewAfter 一到期就 stale）。
+      const [skillDueOpen, setSkillDueOpen] = useState(false)
+      const dueSkillRows = rows.filter((row) => row && (row.reviewDue === true || lifecycleStateOf(row) === 'stale'))
+      const dueSkillsChanged = () => { skills.reload(); if (typeof props.onChanged === 'function') props.onChanged() }
       const current = selected === null ? null : rowAtPath(rows, selected)
       const node = selected === null ? null : treeNodeAt(tree, selected) || (current === null ? null : {
         path: relativePathOf(current),
@@ -2492,7 +2591,13 @@ window.__ModuleLoader__.load({
             h('option', { value: 'active' }, '有效'),
             h('option', { value: 'stale' }, '待复核'),
             h('option', { value: 'retired' }, '已退休')),
-          h('span', { className: 'eng-muted' }, filtering ? `${visible.length} 个匹配` : `共 ${rows.length} 个技能`)),
+          h('span', { className: 'eng-muted' }, filtering ? `${visible.length} 个匹配` : `共 ${rows.length} 个技能`),
+          h(Button, { small: true, onClick: () => setSkillDueOpen((open) => !open) }, `到期复核 ${dueSkillRows.length}`)),
+        skillDueOpen ? h('div', { className: 'eng-card', style: { padding: 12, marginBottom: 10 } },
+          h('div', { className: 'eng-section-head' },
+            h('h3', { className: 'eng-section-title' }, `到期复核（${dueSkillRows.length}）`),
+            h('span', { className: 'eng-muted' }, '技能默认易腐：确认或标待复核都不会删正文。')),
+          h(ReviewDuePanel, { rows: dueSkillRows, kind: '技能', idOf: (row) => `skill:${row.id || row.path}`, onChanged: dueSkillsChanged })) : null,
         h('div', { className: 'eng-split', 'data-open': node === null ? 'false' : 'true' },
           h('div', { className: 'eng-card' },
             visible.length === 0 ? (skills.loading ? h(Skeleton, { rows: 5 }) : skills.error ? h(ErrorState, { message: skills.error, onRetry: skills.reload }) : h(Empty, null, '还没有固化技能：至少 3 条同族经验（含正负对照）后沉淀')) : visible.map(({ node: item, depth }) => {
@@ -6098,6 +6203,9 @@ window.__ModuleLoader__.load({
     return {
       // 暴露给测试：详情面板/设置页/各页面都要能单独渲染，防「点击后空白」「设置页堆成一坨」「整页滚」回归。
       DetailPane,
+      // 待判定批量回填 / 到期复核清单：两处都是列表+批量动作，单独导出给渲染回归。
+      PendingBackfill,
+      ReviewDuePanel,
       // 标签选择器单独导出：按面分组与缺面提示都要能被渲染测试盯住（0.20.0 P0）。
       TagPicker,
       ImportSkillDialog,
