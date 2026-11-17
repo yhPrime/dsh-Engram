@@ -674,5 +674,40 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
   - 部分维度匹配 → `partial`，保留但排序降权（×0.85）；
   - 所有可比较维度都不匹配 → `mismatch`，默认不返回；传 `includeMismatched: true` 才返回并标注。
 
+## 0.21.0 增量（P2：技能命中三态的控制台口径）
+
+> 只增不删：老 `usage.jsonl` 行缺新字段时按空串返回，界面显示「—」。
+
+### GET /usage（行新增三字段）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `skill` | string | 本次命中的技能 slug / id（原样，不带 `engram:` 前缀——前缀只在会话技能目录的条目名上）；非技能命中为 `""` |
+| `reused` | string | 命中三态：`first` 首给全文 / `reuse` 复用短回执 / `regive` 压缩后重给全文；老记录为 `""` |
+| `bodyHash` | string | 本次命中技能正文的 sha256 前 16 位；正文改过 hash 就变，用来判断「上次给的是不是同一版」 |
+
+- 内核写的 `usage.jsonl` 行里还可能有 `session`（8 位短哈希，不落原始 sessionId）与 `reuseReason`；这两个**不**经 `/usage` 外露，控制台不显示。
+- 三态语义见计划书 §3.4：首给＝本会话没给过 / `bodyHash` 变了 / 上次给过但已被遮罩；复用＝给过且那条结果仍在可见面；重给＝给过但已被压缩遮罩。
+
+### 设置（`settings.config`）新增四个键
+
+| 键 | 类型 | 默认 | 设置页 | 作用 |
+|---|---|---|---|---|
+| `skillCatalog` | boolean | `true` | **暴露** | 会话技能目录总开关；`false` 完全退回 0.20.9 行为（只给全文、不发目录、不补发） |
+| `catalogMaxSkills` | number | `5` | 不暴露 | 单会话目录条数上限 |
+| `catalogDescriptionChars` | number | `300` | 不暴露 | 目录里每条描述的截断长度 |
+| `reuseReceipt` | boolean | `true` | **暴露** | 复用命中是否给短回执；`false` 则每次全文（排障用） |
+
+- 设置页（`spec.config`）只声明 `skillCatalog` 与 `reuseReceipt` 两个开关，另两个键**支持但不暴露**：手改 `~/.dsh/engram/settings.json` 的 `config` 或插件 config 生效。
+- 保存内核参数不会误删这两个隐藏键：`POST /settings` 只写 `spec.config` 里声明过的键，`writeEngineConfig` 按 patch 合并，未声明的键原样保留。
+
+### 控制台（client.js）
+
+- 使用记录页 KPI 新增「复用命中」「重给全文」两格；口径是**本页最近 200 条** usage 行里 `reused=reuse` / `reused=regive` 的条数（不是全日志口径，格子上有 `title` 说明）。
+- 列表新增「命中」列：`first`→首给、`reuse`→复用、`regive`→重给、缺字段→「—」；未知值原样显示（不静默吞掉，便于排障）。
+- 展开行补 `skill=… · bodyHash=…`。
+- 技能详情页补一句「注册到全局与经验库召回二选一」：注册到全局后经验库不再排序 / 召回 / 发复用回执。
+
+
 
 

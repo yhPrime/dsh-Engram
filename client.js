@@ -2207,6 +2207,11 @@ window.__ModuleLoader__.load({
                   : (current !== null && current.globalRegistered
                     ? `已注册到全局（${current.globalPath || 'DSH skills 目录'}）：DSH 会把它当真实技能加载，经验库不再排序/召回它；点「取消注册」回到经验库管理。`
                     : '还没注册到全局：它归经验库自己管，召回时按需以技能形态交给模型；要当普通技能用就点「注册技能到全局」。')),
+                // 0.21.0 P2：两条路互斥，别让人以为注册后还能享受经验库的复用回执/排序。
+                isGroup
+                  ? null
+                  : h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } },
+                    '注册到全局与经验库召回二选一：注册到全局＝交给 DSH 当普通技能加载，经验库就不再排序 / 召回 / 发复用回执；留在经验库＝由 exp_recall 按需把正文交给模型（首给全文、再命中给短回执、压缩后重取）。两边同时要，只会得到两份正文、两套口径。'),
                 current !== null && Array.isArray(current.files) && current.files.length > 0
                   ? h('div', { style: { marginBottom: 10 } }, h('div', { className: 'eng-label', style: { marginBottom: 4 } }, '脚本附件'), current.files.map((file) => h('div', { key: file, className: 'eng-mono eng-muted' }, file)))
                   : null,
@@ -2786,15 +2791,34 @@ window.__ModuleLoader__.load({
         return [...map.values()]
       })()
       const visibleRows = tool === '' ? rows : rows.filter((row) => row.tool === tool)
+      // 技能命中三态（0.21.0 P2）：内核在 usage 行写 reused=first/reuse/regive，
+      // 这里只负责翻译成人话；未知值原样露出，不静默吞掉（排障时比「—」有用）。
+      const reuseLabel = (value) => {
+        const key = String(value === undefined || value === null ? '' : value).trim()
+        if (key === 'first') return '首给'
+        if (key === 'reuse') return '复用'
+        if (key === 'regive') return '重给'
+        return key === '' ? '—' : key
+      }
+      const reuseCount = rows.filter((row) => String(row.reused || '') === 'reuse').length
+      const regiveCount = rows.filter((row) => String(row.reused || '') === 'regive').length
       const backfill = async (row, outcome) => {
         await request('/verdicts', { method: 'POST', body: { verdicts: [{ id: row.id, outcome }] } })
         await Promise.all([pending.reload(), summary.reload(), usage.reload()])
       }
       const error = usage.error || pending.error || summary.error
-      const kpis = [['调用次数', stat.calls, '次'], ['回执字符', stat.chars, ''], ['平均每次', stat.avgChars, '字'], ['有字符统计', `${stat.withChars || 0}/${stat.calls || 0}`, '']]
+      const kpis = [
+        ['调用次数', stat.calls, '次'],
+        ['回执字符', stat.chars, ''],
+        ['平均每次', stat.avgChars, '字'],
+        ['有字符统计', `${stat.withChars || 0}/${stat.calls || 0}`, ''],
+        // 这两格只能按本页拉到的那批行数数（usage 行自带 reused），所以标题里写明口径。
+        ['复用命中', reuseCount, '次', '本页最近 200 条记录里 reused=reuse 的次数：同一技能本会话给过全文且仍在可见上下文，只回短回执'],
+        ['重给全文', regiveCount, '次', '本页最近 200 条记录里 reused=regive 的次数：上次给的正文已被压缩遮掉，本次重发全文'],
+      ]
       return h('div', { className: 'eng-fill' },
         error ? h(Banner, { bad: true }, error) : null,
-        h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
+        h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit, tip]) => h('div', { key: label, className: 'eng-card eng-kpi', title: tip || undefined },
           h('span', { className: 'eng-kpi-label' }, label),
           h('span', { className: 'eng-kpi-value' }, h(Metric, { value }), h('span', { className: 'eng-kpi-unit' }, unit))))),
         h('div', { className: 'eng-cols eng-section' },
@@ -2827,19 +2851,22 @@ window.__ModuleLoader__.load({
           visibleRows.length === 0
             ? (usage.loading ? h(Skeleton, { rows: 6 }) : usage.error ? h(ErrorState, { message: usage.error, onRetry: usage.reload }) : h(Empty, null, '还没有调用记录'))
             : h('table', { className: 'eng-table' },
-              h('thead', null, h('tr', null, h('th', null, '时间'), h('th', null, '工具'), h('th', null, '意图'), h('th', null, '字符'), h('th', null, '结果'))),
+              h('thead', null, h('tr', null, h('th', null, '时间'), h('th', null, '工具'), h('th', null, '意图'), h('th', null, '命中'), h('th', null, '字符'), h('th', null, '结果'))),
               h('tbody', null, visibleRows.map((row, index) => [
                   h('tr', { key: `r${index}`, tabIndex: 0, style: { cursor: 'pointer' }, onClick: () => setOpenRow(openRow === index ? -1 : index), onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setOpenRow(openRow === index ? -1 : index) } } },
                   h('td', { className: 'eng-mono' }, fmtTime(row.at)),
                   h('td', null, row.tool || '—'),
                   h('td', null, row.intent || row.action || '—'),
+                  h('td', { className: 'eng-mono' }, reuseLabel(row.reused)),
                   h('td', { className: 'eng-mono' }, row.chars === undefined || row.chars === null ? '—' : String(row.chars)),
                   h('td', null, row.feedback || (row.ok === false ? '失败' : 'ok'))),
                 openRow === index ? h('tr', { key: `d${index}` },
-                  h('td', { colSpan: 5, className: 'eng-muted', style: { padding: '8px 12px', fontSize: 11 } },
+                  h('td', { colSpan: 6, className: 'eng-muted', style: { padding: '8px 12px', fontSize: 11 } },
                     `op=${row.op || '—'} · limit=${row.limit === null || row.limit === undefined ? '—' : row.limit}`
                     + ` · routeScore=${row.routeScore === null || row.routeScore === undefined ? '—' : fmtNumber(row.routeScore)}`
                     + ` · ids=${Array.isArray(row.ids) && row.ids.length > 0 ? row.ids.join(', ') : '—'}`
+                    + ` · skill=${row.skill || '—'}`
+                    + ` · bodyHash=${row.bodyHash || '—'}`
                     + (row.error ? ` · 错误：${row.error}` : ''))) : null])))))
     }
 

@@ -35,6 +35,15 @@
 
 ## 当前发布
 
+- **v0.21.0（单会话技能目录 V2：首给全文 / 复用短回执 / 压缩后目录补发与重取）**
+  - **P0 三态回执**：同一会话里再次命中同一技能，不再重给全文，改给 ≤400 字的复用短回执（含 3 条二级标题锚点 + 「对不上锚点就 `exp_recall({skill:'<slug>', load:true})` 重取」）；`bodyHash` 变了或被压缩遮蔽则自动重给全文（`first` / `reuse` / `regive`）
+  - 复用路径**绝不触碰** `uses` / `lastUsedAt`，硬不变量 `uses === helped + hurt` 不被破坏；命中后 usage 行新增 `session`（会话 id 的 8 位哈希，不存原值）/ `bodyHash` / `reused` / `reuseReason` / `catalog` / `catalogSize`
+  - **P1 会话技能目录**：`agent/pre-step` 钩子按会话发一条目录投影（`source.kind='engram-skill-catalog'`、条目名 `engram:<slug>`），条目按名称排序（避免 LRU 重排造成每轮抖动）；目录条目被压缩遮蔽时整份替换重发；模型照清单名回填 `exp_recall({skill:'engram:<slug>', load:true})` 即可取回正文
+  - **P2 控制台与文档**：`/usage` 白名单新增 `skill` / `reused` / `bodyHash`；使用记录页 KPI 加「复用命中 / 重给全文」两格；列表加「命中」列（首给 / 复用 / 重给 / —），展开行补 `skill=… · bodyHash=…`；设置页新增「会话技能目录」「复用短回执」两个开关（默认开），`catalogMaxSkills` / `catalogDescriptionChars` 可配置但不暴露在设置页；技能详情页补「注册到全局与经验库召回二选一」说明
+  - 配置键（`readEngineConfig`）：`skillCatalog`（默认 true）、`catalogMaxSkills`（5）、`catalogDescriptionChars`（300）、`reuseReceipt`（默认 true）；`skillCatalog: false` 时钩子完全不注册
+  - **测试**：`npm test` 98 步全链；另有 40 个迭代用例文件（白盒 / 黑盒 / 模拟真实使用 / 健壮性 × R2–R11），验收时连跑两遍 0 失败
+  - 迭代中修掉的真缺陷：复用回执在超长二级标题下突破 400 字上限、围栏代码块里的 `## ` 被当锚点、emoji 被切出孤立代理码元、LRU 重排导致目录抖动、目录条目名 `engram:<slug>` 不能作为入参、技能描述含 `</system-reminder>` 会提前闭合目录包裹
+  - 已知未验：真实宿主是否接受手搓 `UserMessage`、真实压缩一轮后目录是否按预期补发、模型是否真的照锚点去重取——都要装包真跑一轮才能看
 - **v0.20.9（自动记录钩子 + 分步回报校验 + 技能召回即用）**
   - 回合收尾（`agent/turn-stopping`）自动把交付过程落成一条 pending 经验：note 记工具序列与产物，outcome 留待回填
   - 只记有交付动作的回合；纯问答、寒暄、本回合已手动 `exp_record` 的都跳过；`autoRecord: false` 可关

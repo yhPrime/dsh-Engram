@@ -11,7 +11,8 @@ import path from 'node:path'
 import { createTools } from './engine.js'
 import { createAutoRecorder } from './auto-record.js'
 import { ensureDefaultTypes, renderHint } from './store.js'
-import { readEngineConfig, resolveEngramDataDir } from './settings.js'
+import { readSavedEngineConfig, resolveEngramDataDir } from './settings.js'
+import { createSkillCatalogHook } from './skills.js'
 
 export const name = 'dsh-engram'
 // Cordis 标准：等 tools / systemPrompt 服务就绪后再 apply。
@@ -30,9 +31,10 @@ function audit(config, line) {
 
 export async function apply(ctx, rawConfig = {}) {
   // 设置页保存的参数优先于插件行配置，且每次读取都取最新值。
+  // 只认「磁盘上真存了的键」：默认值不能压掉插件行配置（例如插件行显式写 skillCatalog:false）。
   const config = new Proxy({}, {
     get(_target, key) {
-      const overrides = readEngineConfig()
+      const overrides = readSavedEngineConfig()
       if (Object.prototype.hasOwnProperty.call(overrides, String(key))) return overrides[String(key)]
       return rawConfig[key]
     },
@@ -57,6 +59,23 @@ export async function apply(ctx, rawConfig = {}) {
   // 自动记录钩子（0.24.1）：回合收尾时把交付过程落成 pending 经验；`autoRecord: false` 关闭。
   const recordTool = tools.find((tool) => tool.name === 'exp_record') || null
   const recorder = recordTool === null ? null : createAutoRecorder({ config, record: recordTool, audit })
+  // 单会话技能目录（0.21.1 P1）：pre-step 按可见面判目录在不在，被压缩遮罩就整份补发。
+  // 启动自检只探「宿主会话面能力」；真正的运行时探测在钩子里，缺失就降级 + 写审计，绝不抛错。
+  const catalogHook = createSkillCatalogHook({
+    config,
+    dataDirOf: () => resolveEngramDataDir(config),
+    audit: (line) => audit(config, line),
+  })
+  audit(config, `apply: skill catalog ${catalogHook.disabled ? 'disabled (skillCatalog=false)' : 'enabled'}`)
+  // 宿主会话面探测：探不到只记日志（降级为每次命中给全文 + 尾部重取提示），不影响工具面。
+  let surfaceProbe = 'unknown'
+  try {
+    const sessionSdk = await import('@deepseek-ai/dsh-session')
+    surfaceProbe = sessionSdk && (typeof sessionSdk.SurfaceManager === 'function' || typeof sessionSdk.foldSurface === 'function') ? 'ok' : 'partial'
+  } catch {
+    surfaceProbe = 'unavailable'
+  }
+  audit(config, `apply: session surface probe ${surfaceProbe}`)
 
   const register = (target) => {
     // 一次性把「宿主转换后的 JSON Schema」记进审计日志：provider 严格校验报错时（如
@@ -69,22 +88,28 @@ export async function apply(ctx, rawConfig = {}) {
     }
     for (const tool of tools) target.tools.register(tool)
     // 测试桩 / 极简宿主可能没有事件上下文：没有 on 就只注册工具面，不装钩子。
-    if (recorder === null || typeof target.on !== 'function') {
-      if (recorder !== null) audit(config, 'apply: no event context, auto-record skipped')
+    if (typeof target.on !== 'function') {
+      audit(config, 'apply: no event context, auto-record/catalog hooks skipped')
       return
     }
     const installHooks = () => {
-      const offResult = target.on('tools/result', (exec, result) => recorder.onToolResult(exec, result))
-      const offTurn = target.on('agent/turn-stopping', (payload) => recorder.onTurnStopping(payload))
+      const offs = []
+      if (recorder !== null) {
+        offs.push(target.on('tools/result', (exec, result) => recorder.onToolResult(exec, result)))
+        offs.push(target.on('agent/turn-stopping', (payload) => recorder.onTurnStopping(payload)))
+      }
+      const offCatalog = catalogHook.register(target)
+      if (typeof offCatalog === 'function') offs.push(offCatalog)
       return () => {
-        if (typeof offResult === 'function') offResult()
-        if (typeof offTurn === 'function') offTurn()
+        for (const off of offs) {
+          if (typeof off === 'function') off()
+        }
       }
     }
     // 事件注册归插件上下文所有：卸载/禁用时一起摘掉，不留悬挂监听。
     if (typeof target.effect === 'function') target.effect(installHooks)
     else installHooks()
-    audit(config, 'apply: auto-record hooks registered')
+    audit(config, 'apply: auto-record/catalog hooks registered')
   }
 
   // 每轮提示层：把类型目录与用法写进系统提示段；禁用插件即消失，不动记忆组合。

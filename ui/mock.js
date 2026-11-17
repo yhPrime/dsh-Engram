@@ -376,6 +376,11 @@ export function createMockStore() {
 export function createMockUsage() {
   const rows = [
     { at: minutesAgo(2), tool: 'exp_recall', ok: true, intent: '把 PPT 导出成 PDF', limit: 4, route_score: 0.21, ids: ['ex_mock_01', 'ex_mock_02'] },
+    // 0.21.0 P2：技能命中三态（first 首给 / reuse 复用短回执 / regive 压缩后重给全文）。
+    // skill + bodyHash 进 /usage 白名单，界面「命中」列与展开行靠这三行才看得到。
+    { at: minutesAgo(4), tool: 'exp_recall', ok: true, intent: '把 PPT 导出成 PDF 前先查字体', skill: 'ppt-export-pdf', bodyHash: '9f2c41d7b8a05e63', reused: 'reuse', chars: 286 },
+    { at: minutesAgo(14), tool: 'exp_recall', ok: true, intent: '给研学课做一套 20 页的 PPT', skill: 'ppt-export-pdf', bodyHash: '9f2c41d7b8a05e63', reused: 'regive', chars: 5120 },
+    { at: minutesAgo(26), tool: 'exp_recall', ok: true, intent: '修插件启动报错', skill: 'plugin-async-contract', bodyHash: '3d7be1c9a24f8e50', reused: 'first', chars: 4380 },
     { at: minutesAgo(9), tool: 'exp_record', ok: true, intent: '给面板加检索框并接入召回', action: '前端提交 query，后端走召回接口', op: 'added' },
     { at: minutesAgo(21), tool: 'exp_feedback', ok: true, id: 'ex_mock_01', feedback: 'helped' },
     { at: minutesAgo(35), tool: 'exp_recall', ok: true, intent: '修插件启动报错', limit: 4, route_score: 0.18, ids: ['ex_mock_04'] },

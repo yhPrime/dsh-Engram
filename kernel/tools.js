@@ -53,7 +53,7 @@ import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
 import { ensureClusters, routeCluster } from './cluster.js'
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
-import { applySkillObstacle, applySkillOutcome, attachSkillFiles, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, skillRuntimeOf, updateSkillMeta } from './skills.js'
+import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
 import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, facetOf, groupByFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
 
@@ -83,13 +83,34 @@ function hostSessionOf(exec) {
     const agent = exec && exec.agent
     if (!agent) return { sessionId: '', cwd: '' }
     const session = agent.session || null
-    const sessionId = typeof agent.id === 'string' && agent.id !== ''
-      ? agent.id
-      : (session && typeof session.id === 'string' ? session.id : '')
+    // 会话键解析统一走 skills.js 的 sessionIdOfAgent（pre-step 目录钩子用同一个函数），
+    // 避免「工具记进 session.id 桶、钩子取空键」两处漂移。
+    const sessionId = sessionIdOfAgent(agent)
     const cwd = session && session.header && typeof session.header.cwd === 'string' ? session.header.cwd : ''
     return { sessionId, cwd }
   } catch {
     return { sessionId: '', cwd: '' }
+  }
+}
+
+/** 宿主会话对象（含 surface/events）：拿不到返回 null，三态判定会因此降级为每次全文。 */
+function hostSessionObjectOf(exec) {
+  try {
+    return (exec && exec.agent && exec.agent.session) || null
+  } catch {
+    return null
+  }
+}
+
+/** 会话可见面（`session.surface.nodes`）→ Set<seq>；宿主没暴露返回 null（方向安全：宁可重给全文）。 */
+function visibleSeqsOf(exec) {
+  try {
+    const session = hostSessionObjectOf(exec)
+    const nodes = session && session.surface && session.surface.nodes
+    if (!Array.isArray(nodes)) return null
+    return new Set(nodes)
+  } catch {
+    return null
   }
 }
 
@@ -503,7 +524,9 @@ export function buildTools(defineTool, config = {}) {
     name: 'exp_recall',
     description: '按任务意图召回历史经验。默认先做簇路由（确定性的簇内检索，无同族回退全库）；返回 brief（记忆简报）、route（路由结果）与 candidates。mode=advantage：按 JitRL 优势排序；mode=evidence：无成败对照，Â 不具区分度，改按相似度×证据强度排序。',
     parameters: {
-      intent: { type: 'string', required: true, description: '当前任务意图。写「对象+任务+关键约束」（如「给研学课 PPT 插一页（深蓝色调）」）；只写「再来一页」这种省略句会因相似度不足召回不到。' },
+      intent: { type: 'string', description: '当前任务意图。写「对象+任务+关键约束」（如「给研学课 PPT 插一页（深蓝色调）」）；只写「再来一页」这种省略句会因相似度不足召回不到。用 skill 直接取技能时可省略。' },
+      skill: { type: 'string', description: '可选：直接取这个技能（slug 或 id；可带 skill: 前缀，也可原样用目录条目名 engram:<slug>，两种前缀都剥）。给了就跳过检索，按本会话三态决定给全文还是复用回执；找不到返回 no-such-skill，不退回普通召回。' },
+      load: { type: 'boolean', description: '可选：true 时强制给全文（忽略复用态）。配合 skill 做「对不上锚点/压缩后重取」。' },
       limit: { type: 'number', description: '返回几条候选做法，默认 3；显式给就按给的值（≤8，簇内也不截到 4）。改稿/纠错要看「上次那条」时给 5~6。' },
       cluster: { type: 'string', description: '可选：直接指定簇（类型名或 id），跳过路由。' },
       context: { type: 'array', description: '可选：当前任务的情境线索；给了就优先召回情境匹配的经验。' },
@@ -521,6 +544,116 @@ export function buildTools(defineTool, config = {}) {
       const dataDir = dataDirOf()
       // cold:true 只查冷档（P2）：冷档默认不参与召回，这是显式入口；cold 模式只读、不写盘。
       const coldMode = args.cold === true
+      // 显式按技能取（0.21.0 P0）：`exp_recall({skill:'<slug>', load:true})`。
+      // 给了 skill 就跳过检索，直接按本会话三态决定给全文还是复用回执；找不到明确报错，不静默退回普通召回。
+      const explicitSkill = args.skill === undefined || args.skill === null ? '' : String(args.skill).trim()
+      if (explicitSkill !== '') {
+        return withStoreLock(dataDir, () => {
+          const host = hostSessionOf(exec)
+          // 技能名前缀：显式 id 用 skill:，会话技能目录里的条目名是 engram:<slug>（计划书 §3.2），
+          // 两种都剥；模型照目录清单原样回填也必须能命中，否则压缩恢复第一跳就断。
+          const raw = explicitSkill.replace(/^(?:skill|engram):/i, '').trim()
+          let skill = null
+          try {
+            skill = readSkillBySlug(dataDir, resolveSkillId(dataDir, raw))
+          } catch {
+            skill = null
+          }
+          // 全局注册过的技能不在 listSkills({onlyLocal:true}) 里，裸 slug 直接读一次兜底。
+          if (skill === null) {
+            try {
+              skill = readSkillBySlug(dataDir, raw)
+            } catch {
+              skill = null
+            }
+          }
+          if (skill === null) return { error: 'no-such-skill', tried: explicitSkill }
+          const intent = String(args.intent || '')
+          const cfg = catalogConfigOf(config)
+          const rawBody = String(skill.body || '')
+          // 总开关 false：完全退回 0.20.9 行为（不记账、不判定、每次全文）。
+          const decision = cfg.enabled
+            ? skillGiveDecision({
+              sessionId: host.sessionId,
+              session: hostSessionObjectOf(exec),
+              slug: skill.slug,
+              body: rawBody,
+              visible: visibleSeqsOf(exec),
+              load: args.load === true,
+              reuseReceipt: cfg.reuseReceipt,
+              maxGiven: cfg.maxSkills,
+            })
+            : null
+          const runtime = skillRuntimeOf(skill)
+          const catalogUsage = skillCatalogUsageOf(host.sessionId, config)
+          // 复用命中只记 usage 行：绝不改 uses/lastUsedAt（uses === helped + hurt 是硬不变量）。
+          if (decision !== null && decision.state === 'reuse') {
+            const receipt = buildReuseReceipt({ slug: skill.slug, entry: decision.entry, skillFile: runtime === null ? '' : runtime.skillFile })
+            logUsage(dataDir, {
+              tool: 'exp_recall',
+              intent,
+              mode: 'skill-reuse',
+              skill: skill.slug,
+              hit: true,
+              reused: 'reuse',
+              reuseReason: decision.reason,
+              ...(host.sessionId === '' ? {} : { session: sessionHashOf(host.sessionId) }),
+              bodyHash: decision.bodyHash,
+              ...catalogUsage,
+              chars: measure(receipt),
+            }, usageOptions)
+            return receipt
+          }
+          const bodyMode = String(config.skillBodyMode || '').toLowerCase() === 'clip' ? 'clip' : 'full'
+          const bodyCap = bodyMode === 'clip' ? 6000 : Math.max(6000, Number(config.skillBodyMaxChars) || 30000)
+          const clipped = clipSkillBody(rawBody, bodyCap)
+          const payload = {
+            mode: 'skill',
+            intent,
+            skill: {
+              id: skill.slug,
+              name: skill.name,
+              description: skill.description,
+              body: clipped.truncated
+                ? `${clipped.text}\n…（正文过长已截断，共 ${rawBody.length} 字符；完整内容用 read 读 ${runtime !== null ? runtime.skillFile : '技能目录下的 SKILL.md'}）`
+                : clipped.text,
+              ...(clipped.truncated ? { bodyTruncated: true, bodyChars: rawBody.length } : {}),
+              runtime,
+              context: skill.meta.context,
+              files: (skill.meta.files || []).map((item) => item.path),
+              confidence: { ...skill.meta.confidence, reason: confidenceReason(skill.meta) },
+            },
+            candidates: [],
+            recent: [],
+            pendingSkills: 0,
+            note: '按 skill 指定直接取正文：照做；成功用 exp_feedback 回填，遇阻记 skillId+blockedBy。'
+              + (runtime !== null && runtime.scripts.length > 0 ? ` ${runtime.usage}` : ''),
+            ...(decision === null ? {} : {
+              give: { state: decision.state, reason: decision.reason },
+              ...(decision.reason === 'shadowed' ? { regiveNote: '上文版本可能已被压缩，以此为准。' } : {}),
+            }),
+          }
+          logUsage(dataDir, {
+            tool: 'exp_recall',
+            intent,
+            mode: 'skill',
+            skill: skill.slug,
+            hit: true,
+            ...(decision === null ? {} : {
+              reused: decision.state,
+              reuseReason: decision.reason,
+              bodyHash: decision.bodyHash,
+              ...(host.sessionId === '' ? {} : { session: sessionHashOf(host.sessionId) }),
+              ...catalogUsage,
+            }),
+            chars: measure(payload),
+          }, usageOptions)
+          return payload
+        })
+      }
+      if (String(args.intent || '').trim() === '') {
+        throw new Error('exp_recall 需要 intent（或用 skill 直接取某个技能）')
+      }
       return withStoreLock(dataDir, () => {
       // P3-B（T1）：manifest 是只读路径入口；需要全量时再懒读，避免「命中簇也读全库」。
       const manifest = coldMode ? null : readManifest(dataDir)
@@ -694,6 +827,41 @@ export function buildTools(defineTool, config = {}) {
       if (picked !== null) {
         const hit = picked.hit
         const mode = picked.trial ? 'skill-trial' : 'skill'
+        const rawBody = String(hit.skill.body || '')
+        // 三态判定（0.21.0 P0）：首给/复用/重给；skillCatalog=false 时 decision=null，完全退回 0.20.9。
+        const skillCfg = catalogConfigOf(config)
+        const decision = skillCfg.enabled
+          ? skillGiveDecision({
+            sessionId: host.sessionId,
+            session: hostSessionObjectOf(exec),
+            slug: hit.skill.slug,
+            body: rawBody,
+            visible: visibleSeqsOf(exec),
+            load: args.load === true,
+            reuseReceipt: skillCfg.reuseReceipt,
+            maxGiven: skillCfg.maxSkills,
+          })
+          : null
+        const catalogUsage = skillCatalogUsageOf(host.sessionId, config)
+        // 复用命中只记 usage 行：绝不改 uses/lastUsedAt（uses === helped + hurt 是硬不变量）。
+        if (decision !== null && decision.state === 'reuse') {
+          const reuseRuntime = skillRuntimeOf(hit.skill)
+          const receipt = buildReuseReceipt({ slug: hit.skill.slug, entry: decision.entry, skillFile: reuseRuntime === null ? '' : reuseRuntime.skillFile })
+          logUsage(dataDir, {
+            tool: 'exp_recall',
+            intent: String(args.intent || ''),
+            mode: 'skill-reuse',
+            skill: hit.skill.slug,
+            hit: true,
+            reused: 'reuse',
+            reuseReason: decision.reason,
+            ...(host.sessionId === '' ? {} : { session: sessionHashOf(host.sessionId) }),
+            bodyHash: decision.bodyHash,
+            ...catalogUsage,
+            chars: measure(receipt),
+          }, usageOptions)
+          return receipt
+        }
         // detail：按调用方 limit 返回（默认瘦身档只给 2 条）；技能正文另算。
         const candidates = args.detail === true || config.slimRecall === false
           ? (result.candidates || []).slice(0, recallLimit)
@@ -710,7 +878,6 @@ export function buildTools(defineTool, config = {}) {
         const runtime = skillRuntimeOf(hit.skill)
         // 正文给多少：默认全文（像正常技能一样让模型通读），只有显式 `skillBodyMode:'clip'`
         // 或超过安全上限（默认 30000 字符）才裁剪；裁剪也保留末尾 Resources/脚本节。
-        const rawBody = String(hit.skill.body || '')
         const bodyMode = String(config.skillBodyMode || '').toLowerCase() === 'clip' ? 'clip' : 'full'
         const bodyCap = bodyMode === 'clip'
           ? 6000
@@ -757,6 +924,11 @@ export function buildTools(defineTool, config = {}) {
                 ? ' 经验候选都不够相关（最高相似度低），别当参考。'
                 : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : ''))))
             + (runtime !== null && runtime.scripts.length > 0 ? ` ${runtime.usage}` : ''),
+          ...(decision === null ? {} : {
+            give: { state: decision.state, reason: decision.reason },
+            ...(decision.reason === 'shadowed' ? { regiveNote: '上文版本可能已被压缩，以此为准。' } : {}),
+            ...(decision.reason === 'surface-unavailable' ? { regiveNote: '会话可见面读不到（宿主降级）：本次仍给全文，对不上锚点就 exp_recall({skill, load:true}) 重取。' } : {}),
+          }),
         }
         if (tagShadowEnabled) skillPayload.tagShadow = buildTagShadow(candidates)
         logUsage(dataDir, {
@@ -767,6 +939,13 @@ export function buildTools(defineTool, config = {}) {
           candidates: candidates.length,
           hit: true,
           marked: args.mark === true,
+          ...(decision === null ? {} : {
+            reused: decision.state,
+            reuseReason: decision.reason,
+            bodyHash: decision.bodyHash,
+            ...(host.sessionId === '' ? {} : { session: sessionHashOf(host.sessionId) }),
+            ...catalogUsage,
+          }),
           chars: measure(skillPayload),
         }, usageOptions)
         return skillPayload

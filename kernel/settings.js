@@ -108,14 +108,38 @@ export function setCurrentRoot(root, env = process.env) {
 }
 
 
-/** 内核可调参数（设置页只暴露这些；未知键不落盘）。 */
-export function readEngineConfig(env = process.env) {
+/**
+ * 内核参数缺省值（0.21.x 技能目录）：读取时用这个口径补默认，不写回磁盘。
+ * - skillCatalog：总开关，false 完全退回 0.20.9 行为（命中只给全文、不发目录）；
+ * - catalogMaxSkills：单会话目录条数上限（同时是注册表淘汰上限）；
+ * - catalogDescriptionChars：目录里每条描述的截断长度；
+ * - reuseReceipt：复用命中是否给短回执（false 每次全文，排障用）。
+ */
+export const ENGINE_CONFIG_DEFAULTS = Object.freeze({
+  skillCatalog: true,
+  catalogMaxSkills: 5,
+  catalogDescriptionChars: 300,
+  reuseReceipt: true,
+})
+
+/** 磁盘上真实保存的内核参数（不含默认值）。插件行配置的覆盖判断走这里，避免默认值压掉插件行。 */
+export function readSavedEngineConfig(env = process.env) {
   const config = readSettings(env).config
   return config !== null && typeof config === 'object' ? config : {}
 }
 
+/** 内核可调参数（设置页只暴露这些；未知键不落盘）：已保存值 + 缺省值。 */
+export function readEngineConfig(env = process.env) {
+  return { ...ENGINE_CONFIG_DEFAULTS, ...readSavedEngineConfig(env) }
+}
+
+/** 显式命名的同义入口（读代码时一眼看出「带缺省值」）。 */
+export function readEngineConfigWithDefaults(env = process.env) {
+  return readEngineConfig(env)
+}
+
 export function writeEngineConfig(patch, env = process.env) {
-  const current = readEngineConfig(env)
+  const current = readSavedEngineConfig(env)
   const next = { ...current }
   for (const [key, value] of Object.entries(patch && typeof patch === 'object' ? patch : {})) {
     if (value === null || value === undefined) delete next[key]
