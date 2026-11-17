@@ -711,3 +711,73 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 
 
 
+
+## 0.21.1 增量（P0：自动记录可见 + stepRewards + 来源/判定筛选）
+
+> 只增不删：老经验没有 `origin` / `step_rewards` / `artifacts` 时按空值解释，界面显示「手动 / 未绑定会话 / 无」。
+
+### GET /experiences（新查询参数 + 行字段）
+
+| 参数 | 取值 | 说明 |
+|---|---|---|
+| `source` | `auto` \| `manual` \| 空 | `auto` 只返回自动记录；`manual` 返回手记 + external（非 auto）；空 = 不过滤 |
+| `verdict` | `pending` \| `decided` \| `skipped` \| 空 | 精确匹配 `verdict` |
+
+行新增字段（`rowOf`）：
+
+| 字段 | 类型 | 来源 |
+|---|---|---|
+| `origin` | string | `auto` / `manual` / `external`（缺省 manual） |
+| `stepRewards` | number[] | 内核 `step_rewards`，非数字过滤 |
+| `artifacts` | string[] | 产物路径，最多 5 条 |
+| `sessionId` | string | 记录时绑定的会话 id |
+| `turn` | number \| null | 回合号 |
+| `cwd` | string | 记录时的工作目录 |
+
+### GET /pending（行新增字段）
+
+- `origin`：同 `/experiences`。
+- `kind`：`task` / `step`。
+- `stepRewards`：数字数组（缺省 `[]`）。
+
+### 记录来源（`origin`）
+
+- 内核 `record` 入参接受 `origin`：`auto`（回合收尾钩子）/ `manual`（模型或控制台）/ `external`；不传落 `manual`。
+- 自动记录钩子（`kernel/auto-record.js`）写 `origin: 'auto'`；`kernel/tools.js` 把 `args.origin` 透传给 store。
+- 控制台：经验列表行与详情显示「自动 / 手动 / 外部」；经验页可按来源与判定筛选；三处待判定列表（概览 / 检索回执 / 使用记录）可勾选批量回填，批量要二次确认，失败逐条回显。
+
+### POST /record（回执）
+
+- `signWarning`：outcome 与分步回报反号时返回（G 取最弱一步）；控制台记录页会显示，并在提交了分步回报时显示「分步最低 X」。
+
+## 0.21.2 增量（P1：召回可见性 + 技能运行时与固化进度）
+
+> 只增不删：没有 `runtime` / `tagShadow` 时界面显示「未登记 / 未开启」，不伪造。
+
+### GET /skills（行新增两字段）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `runtime` | object \| null | 召回时交给模型的运行时清单：`{ dir, skillFile, scripts: [{ path, abs, bytes, run }], references: [{ path, abs, bytes }], usage }`。控制台展示绝对路径与可执行命令；mock/示例数据没有真实目录时为 `null` |
+| `bodyHash` | string | 正文 sha256 前 16 位（`bodyHashOf`）；复用回执据此判断「上次给的是不是同一版」。空正文也给出稳定值 |
+
+### 设置（`settings.config`）新增键
+
+| 键 | 类型 | 默认 | 设置页 | 作用 |
+|---|---|---|---|---|
+| `tagShadow` | boolean | `false` | **暴露** | 召回时总开关：打开后每次召回都计算标签影子；控制台检索页「高级」里也可单次勾选 |
+
+- 影子只计算、不改候选顺序与数量；结果放在 `/recall` 的 `tagShadow`。
+
+### POST /recall（回执字段，后端早已返回，这次在控制台展示）
+
+- `lifecycleNote`：候选里有 stale 历史经验时的提醒（slim/detail 都透传）。
+- `applicabilityNote` / `applicabilityFiltered`：`appliesTo` 门控隐藏/降权说明。
+- 候选行 `applicability`：`partial` / `mismatch`（传 `includeMismatched` 时返回并标注）。
+- 技能回执：`skill.match = { matchedTerms, selfCheck }`、`skill.runtime`。
+- `tagShadow`：`{ queryTags, tagTop, typeRoutingTop, overlapAt5, note }`。
+
+### 控制台（client.js）
+
+- 检索页：`lifecycleNote` / `applicabilityNote` 顶部 Banner；「标签影子对照」折叠块（`overlap@5`、查询标签按面分组、标签 top5）；技能卡显示运行时目录与命中词/自查；候选卡加「环境不匹配 / 部分匹配」角标。
+- 技能详情：运行时卡（技能目录、`scripts[].run` 可复制、附件清单）、召回状态（正文 hash、会话目录资格与上限）、固化进度（uses/helped/hurt、「还差 N 次 helped」/「已固化」/「有 N 个未解障碍」）。

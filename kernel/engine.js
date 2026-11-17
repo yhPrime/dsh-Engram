@@ -233,6 +233,9 @@ export function createEngine(options = {}) {
       verdict: row.verdict,
       registeredAt: row.registeredAt,
       dimensions: row.dimensions,
+      origin: row.origin === 'auto' ? 'auto' : (row.origin === 'external' ? 'external' : 'manual'),
+      kind: row.kind === 'step' ? 'step' : 'task',
+      stepRewards: Array.isArray(row.step_rewards) ? row.step_rewards.map(Number).filter((n) => Number.isFinite(n)) : [],
       brief: pendingBrief(row),
     })),
     /** 回填判定（模型给 outcome，插件只写回）。 */

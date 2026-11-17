@@ -37,7 +37,7 @@ import { ensureDefaultTypes } from '../kernel/store.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
 import { importSkills } from '../kernel/import-skill.js'
-import { applySkillNodeAction, buildSkillTree, forgetSkill, registerSkillGlobally, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
+import { applySkillNodeAction, bodyHashOf, buildSkillTree, forgetSkill, registerSkillGlobally, skillRuntimeOf, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
 import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
@@ -64,6 +64,7 @@ export const SETTINGS_SPEC = {
     { key: 'pendingTtl', label: '待判定提醒次数', type: 'number', hint: '默认 3', tip: '一条待判定记录随回执出现几次仍未被回填，就自动转 skipped（止损，不再打扰模型）。' },
     { key: 'pendingReceipt', label: '回执带待判定', type: 'boolean', tip: '关闭后 exp_record / exp_recall 的返回里不再附带 pending，判定只能靠控制台查看。' },
     { key: 'autoRecord', label: '自动记录回合', type: 'boolean', default: true, hint: '默认开', tip: '每个回合收尾时，把这一轮的交付动作自动记成一条待判定经验（note 里带工具序列与产物，成败留待回填）。纯问答、寒暄、以及本回合已经手动 exp_record 的不会重复记；关掉后完全依赖模型手动记录。' },
+    { key: 'tagShadow', label: '标签影子对照', type: 'boolean', default: false, hint: '默认关', tip: '打开后每次召回都额外算一遍「只按标签排序」的结果（不改候选顺序与数量），用于观察标签排序与类型路由的差异；控制台检索页可临时勾选查看，不必长期打开。' },
     { key: 'skillCatalog', label: '会话技能目录', type: 'boolean', default: true, hint: '默认开', tip: '命中过的技能会发一份会话级技能目录；上下文被压缩遮掉后，下一步自动补发一份替换版，模型据此按 exp_recall({skill, load:true}) 重取正文。关掉就完全退回 0.20.9 行为：每次命中都给全文，不发目录也不补发。目录条数上限 / 描述截断长度只在 settings.json 里改（catalogMaxSkills / catalogDescriptionChars），不在本页。' },
     { key: 'reuseReceipt', label: '复用短回执', type: 'boolean', default: true, hint: '默认开', tip: '同一个技能本会话已给过全文、且那条结果仍在可见上下文里时，只给 ≤400 字短回执（3 条正文二级标题锚点 + 「对不上就重取」提示），不再重发 4–7k token 的全文。关掉后每次都发全文，只用于排障。' },
     { key: 'usageLog', label: '用法日志', type: 'boolean', hint: '记录 exp_* 调用，用于使用记录页', tip: '把每次 exp_record / exp_recall / exp_feedback 的调用写进 <数据目录>/usage.jsonl，零 token 开销；关掉后「使用记录」页就没有新数据。' },
@@ -495,7 +496,14 @@ export function buildSkills(source) {
     notice: String(read.notice || ''),
     total: rows.length,
     summary: skillSummaryOf(rows),
-    skills: decorateSkillRows(tree, rows),
+    skills: decorateSkillRows(tree, rows).map((row) => ({
+      ...row,
+      // 0.21.2 P1：召回时交给模型的运行时清单（绝对路径 + 可执行命令），控制台详情直接展示。
+      // cap 收小：控制台只用来核对，不需要把 24 个附件全列出来。
+      runtime: skillRuntimeOf(row, { cap: 12 }),
+      // 正文 hash：复用回执据此判断「上次给的是不是同一版」；空正文也给出稳定值。
+      bodyHash: bodyHashOf(row.body || ''),
+    })),
     tree: tree.map((node) => publicTreeNode(node)),
   }
 }

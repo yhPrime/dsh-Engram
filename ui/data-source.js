@@ -112,6 +112,14 @@ export function rowOf(experience) {
     taskId: String(experience.taskId || ''),
     stepIndex: Number.isFinite(Number(experience.stepIndex)) ? Number(experience.stepIndex) : null,
     stepTotal: Number.isFinite(Number(experience.stepTotal)) ? Number(experience.stepTotal) : null,
+    // 分步回报：与内核同口径清洗（非数字丢掉），旧数据缺字段给空数组。
+    stepRewards: Array.isArray(experience.step_rewards)
+      ? experience.step_rewards.map(Number).filter((value) => Number.isFinite(value))
+      : [],
+    artifacts: Array.isArray(experience.artifacts) ? experience.artifacts.map(String).slice(0, 5) : [],
+    sessionId: String(experience.sessionId || ''),
+    turn: Number.isInteger(Number(experience.turn)) ? Number(experience.turn) : null,
+    cwd: String(experience.cwd || ''),
     createdAt: String(experience.ts || ''),
     lastSeenAt: String(experience.lastSeenAt || experience.ts || ''),
     feedback: feedback === null
@@ -181,6 +189,10 @@ export function listOf(store, params) {
   const offset = numberParam(params.get('offset'), 0, Number.MAX_SAFE_INTEGER)
   const typeFilter = String(params.get('type') || '')
   const outcomeFilter = String(params.get('outcome') || '')
+  // 来源筛选：'auto' 只看自动记录，'manual' 看手记 + external；其它值不过滤。
+  const sourceFilter = String(params.get('source') || '')
+  // 判定筛选：非空时精确匹配 verdict（pending / decided / skipped …）。
+  const verdictFilter = String(params.get('verdict') || '')
   const lifecycleFilter = String(params.get('lifecycle') || '')
   const volatilityFilter = String(params.get('volatility') || '')
   const dueOnly = String(params.get('due') || '') === '1'
@@ -208,6 +220,12 @@ export function listOf(store, params) {
     .filter((row) => !dueOnly || row.reviewDue === true || row.lifecycle.state === 'stale')
     .filter((row) => typeFilter === '' || row.typeId === typeFilter)
     .filter((row) => outcomeFilter === '' || row.outcome === outcomeFilter)
+    .filter((row) => {
+      if (sourceFilter === 'auto') return row.origin === 'auto'
+      if (sourceFilter === 'manual') return row.origin !== 'auto'
+      return true
+    })
+    .filter((row) => verdictFilter === '' || row.verdict === verdictFilter)
   const sorted = sortRows(rows, sort)
   return {
     mode: 'list',

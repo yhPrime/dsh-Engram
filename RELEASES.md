@@ -35,6 +35,12 @@
 
 ## 当前发布
 
+- **v0.21.2（UI 对齐后端：自动记录可见 / 分步回报 / 召回可见性 / 技能运行时）**
+  - P0（0.21.1）：经验列表与详情区分「自动 / 手动 / 外部」来源；详情显示 G 来源、产物路径（可复制）、会话与轮次、分步回报（最低步标红）；记录页可填 `stepRewards` 并显示「分步最低」；概览 / 检索回执 / 使用记录三处待判定支持勾选批量回填（二次确认、逐条错误回显）；经验页按来源与判定筛选
+  - P0 后端：`auto-record` 写 `origin: 'auto'`，`exp_record` 透传给 store；`/experiences` 支持 `source` / `verdict`；行补 `origin` / `stepRewards` / `artifacts` / `sessionId` / `turn` / `cwd`
+  - P1（0.21.2）：检索页显示 `lifecycleNote` / `applicabilityNote` / 标签影子对照 / 技能命中词与自查 / 候选「环境不匹配」角标；设置页新增「标签影子对照」开关；技能详情显示运行时（目录、可执行命令、附件）、正文 `bodyHash`、会话目录资格、固化进度；`/skills` 行带 `runtime` 与 `bodyHash`
+  - 修复：经验详情把「分类 + 标签」摘要移到标题下方（原先埋在下拉信息里，长详情要往下翻）
+  - 测试：新增 `ui/tests/p0-ui.test.mjs`（7 项）与 `ui/tests/p1-ui.test.mjs`（4 项）；`npm run test:ui` 19 文件全绿；发版前 `npm test` 复跑
 - **v0.21.0（单会话技能目录 V2：首给全文 / 复用短回执 / 压缩后目录补发与重取）**
   - **P0 三态回执**：同一会话里再次命中同一技能，不再重给全文，改给 ≤400 字的复用短回执（含 3 条二级标题锚点 + 「对不上锚点就 `exp_recall({skill:'<slug>', load:true})` 重取」）；`bodyHash` 变了或被压缩遮蔽则自动重给全文（`first` / `reuse` / `regive`）
   - 复用路径**绝不触碰** `uses` / `lastUsedAt`，硬不变量 `uses === helped + hurt` 不被破坏；命中后 usage 行新增 `session`（会话 id 的 8 位哈希，不存原值）/ `bodyHash` / `reused` / `reuseReason` / `catalog` / `catalogSize`

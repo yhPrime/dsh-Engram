@@ -5,7 +5,7 @@
 <h3 align="center">Engram（记忆痕迹）· 经验与技能引擎 + 经验库控制台，一个标准 DSH 插件</h3>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.21.0-6f5bd6">
+  <img alt="version" src="https://img.shields.io/badge/version-0.21.2-6f5bd6">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-3fa46a">
   <img alt="node" src="https://img.shields.io/badge/node-%3E%3D22-339933">
   <img alt="platform" src="https://img.shields.io/badge/DSH-plugin-4f7fc4">
@@ -192,7 +192,7 @@
 
 ```bash
 npm pack
-dsh plugin --profile <profile> add ./dsh-engram-0.21.0.tgz
+dsh plugin --profile <profile> add ./dsh-engram-0.21.2.tgz
 ```
 
 重启 DSH 后只会出现**一个**插件行「dsh-engram」：左侧栏多出「经验库」，工具面 `exp_*` 与控制台 API `/exp-ui/api` 同包同入口。
@@ -234,6 +234,7 @@ dsh plugin --profile <profile> add ./dsh-engram-0.21.0.tgz
 
 ## 最近几个版本
 
+- **0.21.2** UI 对齐后端：经验详情显示来源 / 产物 / 会话 / 分步回报，待判定可批量回填；检索页显示标签影子、生命周期与适用性提示、技能命中自查；技能详情显示运行时路径与命令、正文 hash、固化进度；详情里的分类与标签移到标题下方
 - **0.21.0** 单会话技能目录 V2：技能命中首给全文、同一会话再命中改给 ≤400 字复用短回执（带 3 条二级标题锚点，对不上就 `exp_recall({skill, load:true})` 重取）；正文变了或被压缩遮蔽自动重给全文；每个会话发一条技能目录，目录条目被压缩遮蔽后整份补发；控制台使用记录页能看到「首给 / 复用 / 重给」
 - **0.20.9** 自动记录钩子（设置里可关，默认开）、`stepRewards` 限幅与拒绝、技能召回即用（命中给全文 + `runtime` 绝对路径与可执行命令）
 - **0.20.8** 关系图：技能四面体缩小时保留形状，不再退回菱形

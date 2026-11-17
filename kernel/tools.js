@@ -294,6 +294,8 @@ export function buildTools(defineTool, config = {}) {
         sessionId,
         turn: binding === null ? undefined : binding.turn,
         cwd: (typeof args.cwd === 'string' && args.cwd.trim() !== '') ? args.cwd.trim() : (binding === null ? (host.cwd !== '' ? host.cwd : undefined) : binding.cwd),
+        // 来源（0.21.1 P0）：auto-record 钩子给的 origin='auto'；模型/控制台手动记录不带，落 manual。
+        origin: args.origin,
         artifacts: args.artifacts,
         dimensions: args.dimensions,
         type: typeName,

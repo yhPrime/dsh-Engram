@@ -158,6 +158,8 @@ export function buildAutoRecord({ sessionId, turn, cwd, intent, tools }) {
     cwd,
     // 过程性记录易腐：默认按 perishable 复核，别让它长期霸占排序。
     volatility: 'perishable',
+    // 来源标记：自动记录与模型手记要能区分（store.record 已支持 input.origin）。
+    origin: 'auto',
     artifacts,
     // 不写 outcome：走 pending，等回执/用户纠正回填。
   }

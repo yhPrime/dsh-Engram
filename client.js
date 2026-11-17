@@ -411,6 +411,16 @@ window.__ModuleLoader__.load({
 .eng-strong { font-weight: var(--eng-fw-strong); }
 .eng-row-button { width: 100%; border: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); background: transparent; color: inherit; font: inherit; text-align: left; }
 .eng-pending-row { display: flex; align-items: center; gap: var(--eng-s-2); }
+/* 待判定回填（0.21.1 P0）：勾选批量 + 单条点按；批量二次确认在同一行内完成，不弹系统框。 */
+.eng-pending-batch { display: flex; align-items: center; gap: var(--eng-s-2); flex-wrap: wrap; margin-top: var(--eng-s-2); }
+.eng-pending-pick { accent-color: var(--dsw-alias-link, #4176e6); flex: 0 0 auto; }
+/* 分步回报：一格一步，最低步（决定整条 G）标出来。 */
+.eng-step-rewards { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.eng-step-cell { min-width: 42px; padding: 1px 8px; border-radius: 999px; background: var(--dsw-alias-bg-layer-2); font-variant-numeric: tabular-nums; font-size: var(--eng-fs-micro); text-align: center; }
+.eng-step-weak { color: var(--dsw-alias-state-error-primary, #e5484d); outline: 1px solid currentColor; outline-offset: -1px; }
+.eng-src-line { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.eng-path-list { display: flex; flex-direction: column; gap: 4px; }
+.eng-path-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .eng-tabs { display: flex; gap: var(--eng-s-1); margin: var(--eng-s-3) 0 var(--eng-s-2); border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-tab { padding: var(--eng-s-1) var(--eng-s-2); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; }
 .eng-tab[data-active="true"] { color: var(--eng-accent-text); border-bottom-color: var(--eng-accent-text); font-weight: var(--eng-fw-strong); }
@@ -812,6 +822,137 @@ window.__ModuleLoader__.load({
       return h(Badge, { tone: 'muted' }, '易腐')
     }
     /**
+     * 经验来源（0.21.1 P0）：优先 row.origin（store 落 auto/manual/external）；
+     * 老数据没有 origin 或当年自动记录没落字段时，退 note 的 `[auto]` 前缀。
+     * 手动记录不写来源字段，所以「manual」是缺省态。
+     */
+    function sourceOf(row) {
+      const origin = String((row && row.origin) || '').trim()
+      if (origin === 'auto') return { key: 'auto', label: '自动', tone: 'warn' }
+      if (origin === 'external') return { key: 'external', label: '外部', tone: 'muted' }
+      const note = String((row && row.note) || '')
+      if (note.startsWith('[auto]')) return { key: 'auto', label: '自动', tone: 'warn' }
+      return { key: 'manual', label: '手动', tone: 'muted' }
+    }
+    function SourceBadge(props) {
+      const src = sourceOf(props.row)
+      return h(Badge, { tone: src.tone }, src.label)
+    }
+    /** 经验上的分步回报（内核字段是 step_rewards，行里是 stepRewards）。 */
+    function stepRewardsOf(row) {
+      if (row === null || row === undefined) return []
+      const list = Array.isArray(row.stepRewards) ? row.stepRewards : (Array.isArray(row.step_rewards) ? row.step_rewards : [])
+      return list.map(Number).filter((value) => Number.isFinite(value))
+    }
+    /** 分步摘要：几步、最低多少（最低步决定整条 G）。 */
+    function stepSummaryOf(row) {
+      const rewards = stepRewardsOf(row)
+      if (rewards.length === 0) return ''
+      return `${rewards.length} 步 · 最低 ${fmtNumber(Math.min(...rewards))}`
+    }
+    /** 复制文本并给 Toast（组件树外也能调用）。 */
+    function copyToClipboard(text, label) {
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(String(text))
+        toast(`已复制${label || ''}`)
+      } catch { /* 剪贴板不可用就算了 */ }
+    }
+    /**
+     * 技能固化进度（0.21.2 P1）：阈值与 kernel 的 highConfidence 同口径
+     * （≥3 次结案、helped 比例 ≥0.8、无未解障碍）。
+     */
+    function skillProgressOf(row) {
+      const uses = Number(row && row.uses) || 0
+      const helped = Number(row && row.helped) || 0
+      const hurt = Number(row && row.hurt) || 0
+      const ratio = uses === 0 ? 0 : helped / uses
+      const open = Number(row && row.openObstacles) || 0
+      const need = Math.max(0, 3 - uses)
+      const solid = uses >= 3 && ratio >= 0.8 && open === 0
+      const hint = solid
+        ? '已固化（≥3 次结案且 helped 比例 ≥0.8）'
+        : open > 0
+          ? `有 ${open} 个未解障碍：先解决障碍，再攒结案次数`
+          : `距固化：还差 ${need} 次 helped（当前比例 ${Math.round(ratio * 100)}%，需 ≥80%）`
+      return { uses, helped, hurt, ratio, open, need, solid, hint }
+    }
+    /**
+     * 待判定回填（0.21.1 P0）：三处 pending 列表共用。
+     * - 单条点按照旧；勾选后可批量，批量要再点一次确认（不用 confirm 弹窗）。
+     * - 后端逐条返回 ok/失败，失败原因直接显示，不整批回滚。
+     */
+    function PendingBackfill(props) {
+      const rows = Array.isArray(props.rows) ? props.rows : []
+      const labelOf = (key) => outcomeOf(key)[0]
+      const [picked, setPicked] = useState([])
+      const [pendingConfirm, setPendingConfirm] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [notice, setNotice] = useState('')
+      // 列表变了（回填后重拉）就把不存在的勾选清掉，避免下一次批量带上幽灵 id。
+      useEffect(() => {
+        const ids = new Set(rows.map((row) => row.id))
+        setPicked((prev) => prev.filter((id) => ids.has(id)))
+      }, [rows.map((row) => row.id).join('|')])
+      const toggle = (id) => setPicked((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id])
+      const submit = async (ids, outcome) => {
+        if (busy || ids.length === 0) return
+        setBusy(true)
+        setNotice('')
+        try {
+          const data = await request('/verdicts', { method: 'POST', body: { verdicts: ids.map((id) => ({ id, outcome })) } })
+          const results = Array.isArray(data) ? data : (data && Array.isArray(data.results) ? data.results : [])
+          const failed = results.filter((item) => item && item.ok === false)
+          setNotice(failed.length === 0
+            ? `已回填 ${ids.length} 条`
+            : `回填 ${Math.max(0, results.length - failed.length)}/${results.length} 条；失败：${failed.map((item) => `${item.id}（${item.error || '未知原因'}）`).join('；')}`)
+          setPicked([])
+          setPendingConfirm('')
+          if (typeof props.onChanged === 'function') props.onChanged()
+        } catch (error) {
+          setNotice(error && error.message ? error.message : String(error))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const batchButton = (key) => {
+        const confirm = pendingConfirm === key
+        return h(Button, {
+          key,
+          small: true,
+          disabled: busy || picked.length === 0,
+          onClick: () => {
+            if (!confirm) { setPendingConfirm(key); return }
+            submit(picked, key)
+          },
+        }, confirm ? `确认${labelOf(key)} ${picked.length} 条` : labelOf(key))
+      }
+      return h('div', null,
+        rows.length === 0
+          ? h('div', { className: 'eng-muted' }, props.loading ? '读取中…' : '没有待判定的记录')
+          : h('div', { className: 'eng-stack' }, rows.map((row) => {
+            const step = stepSummaryOf(row)
+            const sub = [props.showId ? row.id : '', row.brief || '', step].filter((part) => part !== '').join(' · ')
+            return h('div', { key: row.id, className: 'eng-pending-row' },
+              h('input', { type: 'checkbox', className: 'eng-pending-pick', checked: picked.includes(row.id), onChange: () => toggle(row.id), 'aria-label': `选择待判定 ${row.id}` }),
+              h(SourceBadge, { row }),
+              h('div', { className: 'eng-row-main' },
+                h('div', { className: 'eng-row-intent' }, row.intent || row.action || '—'),
+                sub !== '' ? h('div', { className: 'eng-row-sub' }, sub) : null),
+              h('div', { className: 'eng-actions' },
+                h(Button, { small: true, disabled: busy, onClick: () => submit([row.id], 'success') }, '成功'),
+                h(Button, { small: true, disabled: busy, onClick: () => submit([row.id], 'corrected') }, '纠正'),
+                h(Button, { small: true, disabled: busy, onClick: () => submit([row.id], 'failed') }, '失败')))
+          })),
+        rows.length > 0
+          ? h('div', { className: 'eng-pending-batch' },
+            h('span', { className: 'eng-muted' }, `已选 ${picked.length} 条`),
+            batchButton('success'),
+            batchButton('corrected'),
+            batchButton('failed'),
+            notice !== '' ? h('span', { className: 'eng-muted' }, notice) : null)
+          : (notice !== '' ? h('div', { className: 'eng-muted' }, notice) : null))
+    }
+    /**
      * 悬浮说明层：挂在 <body> 下、`position: fixed` 定位。
      * 以前气泡是 `.eng-tip` 里的绝对定位子元素，面板一窄 / 一滚动就被 overflow 容器裁掉半截
      * （提示只露中间几行）。现在宽度按视口收（max-width 见 .eng-tip-layer），
@@ -1180,6 +1321,8 @@ window.__ModuleLoader__.load({
           setNotice(error && error.message ? error.message : String(error))
         }
       }
+      // 0.21.1 P0：批量回填交给共用组件；单条仍走 backfill（概览保持最短路径）。
+      const pendingChanged = () => { pending.reload(); if (typeof props.onChanged === 'function') props.onChanged() }
       const storageCell = (label, main, sub) => h('div', { key: label, style: { minWidth: 0 } },
         h('div', { className: 'eng-kpi-label' }, label),
         h('div', { className: 'eng-stat-main' }, main),
@@ -1245,7 +1388,7 @@ window.__ModuleLoader__.load({
                   const [label, tone] = outcomeOf(row.outcome)
                   return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', style: { gridTemplateColumns: '60px minmax(0,1fr) 70px' }, onClick: () => props.onOpen(row.id) },
                     h(Badge, { tone }, label),
-                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${sourceOf(row).label} · ${row.typeName || '未分类'} · ${row.action || '—'}`)),
                     h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, `G ${fmtNumber(row.G)}`))
                 }))
                 : (recent.loading ? h(Skeleton, { rows: 4 }) : h(Empty, null, '还没有经验：去「记录」写第一条。'))),
@@ -1257,12 +1400,7 @@ window.__ModuleLoader__.load({
                 pending.error ? h(Banner, { bad: true }, pending.error) : null,
                 pendingRows.length === 0
                   ? h('div', { className: 'eng-muted' }, pending.loading ? '读取中…' : '没有待判定的记录')
-                  : h('div', { className: 'eng-stack' }, pendingRows.slice(0, 3).map((row) => h('div', { key: row.id, className: 'eng-pending-row' },
-                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || row.action || '—'), row.brief ? h('div', { className: 'eng-row-sub' }, row.brief) : null),
-                    h('div', { className: 'eng-actions' },
-                      h(Button, { small: true, onClick: () => backfill(row, 'success') }, '成功'),
-                      h(Button, { small: true, onClick: () => backfill(row, 'corrected') }, '纠正'),
-                      h(Button, { small: true, onClick: () => backfill(row, 'failed') }, '失败')))))),
+                  : h(PendingBackfill, { rows: pendingRows.slice(0, 3), loading: pending.loading, onChanged: pendingChanged }))),
               h('div', { className: 'eng-card eng-section-card' },
                 h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '快捷操作')),
                 h('div', { className: 'eng-actions' },
@@ -1275,7 +1413,7 @@ window.__ModuleLoader__.load({
                   const [label, tone] = skillStateOf(key)
                   return h(Badge, { key, tone }, `${label} ${summary[key] || 0}`)
                 })),
-                h('div', { className: 'eng-muted eng-section-note' }, state.notice || `共 ${totals.types || 0} 个类型`))))))
+                h('div', { className: 'eng-muted eng-section-note' }, state.notice || `共 ${totals.types || 0} 个类型`)))))
     }
 
     function Experiences(props) {
@@ -1283,6 +1421,8 @@ window.__ModuleLoader__.load({
       const [type, setType] = useState('')
       const [outcome, setOutcome] = useState('')
       const [lifecycle, setLifecycle] = useState('')
+      const [source, setSource] = useState('')
+      const [verdict, setVerdict] = useState('')
       const [sort, setSort] = useState('recent')
       const [pageSize, setPageSize] = useState(50)
       const [page, setPage] = useState(0)
@@ -1296,10 +1436,12 @@ window.__ModuleLoader__.load({
         if (type !== '') params.set('type', type)
         if (outcome !== '') params.set('outcome', outcome)
         if (lifecycle !== '') params.set('lifecycle', lifecycle)
+        if (source !== '') params.set('source', source)
+        if (verdict !== '') params.set('verdict', verdict)
         return request(`/experiences?${params.toString()}`)
-      }, [type, outcome, lifecycle, sort, page, pageSize]))
+      }, [type, outcome, lifecycle, source, verdict, sort, page, pageSize]))
       // 换筛选/排序/页大小时回到第一页，避免停在越界页码。
-      useEffect(() => { setPage(0) }, [type, outcome, lifecycle, sort, pageSize])
+      useEffect(() => { setPage(0) }, [type, outcome, lifecycle, source, verdict, sort, pageSize])
       useRefreshEvent(list.reload)
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
       // 窄面板下列表与详情会被压成一列：选中后把详情卡片滚进视野，否则看起来「点了没反应」。
@@ -1415,6 +1557,14 @@ window.__ModuleLoader__.load({
             h('option', { value: 'retired' }, '已退休'),
             h('option', { value: 'superseded' }, '已被取代'),
             h('option', { value: 'all' }, '全部（含历史）')),
+          h('select', { className: 'eng-select', style: { width: 106 }, value: source, onChange: (event) => setSource(event.target.value), title: '按来源筛选：自动＝回合收尾钩子记的；手动＝exp_record / 控制台记的' },
+            h('option', { value: '' }, '全部来源'),
+            h('option', { value: 'auto' }, '自动记录'),
+            h('option', { value: 'manual' }, '手动记录')),
+          h('select', { className: 'eng-select', style: { width: 104 }, value: verdict, onChange: (event) => setVerdict(event.target.value), title: '按判定筛选：待判定是 outcome 留空、等回填的记录' },
+            h('option', { value: '' }, '全部判定'),
+            h('option', { value: 'pending' }, '待判定'),
+            h('option', { value: 'decided' }, '已判定')),
           h('select', { className: 'eng-select', style: { width: 120 }, value: sort, onChange: (event) => setSort(event.target.value) },
             h('option', { value: 'recent' }, '最近'),
             h('option', { value: 'g' }, 'G'),
@@ -1433,7 +1583,7 @@ window.__ModuleLoader__.load({
                 h(Badge, { tone }, label),
                 h(LifecycleBadge, { state: lifecycleStateOf(row) }),
                 h(VolatilityBadge, { volatility: row.volatility }),
-                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${sourceOf(row).label} · ${row.typeName || '未分类'} · ${row.action || '—'}`)),
                 h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
             })),
@@ -1497,6 +1647,15 @@ window.__ModuleLoader__.load({
           toast('已复制 JSON')
         } catch { /* 剪贴板不可用就算了 */ }
       }
+      const copyText = (text, label) => {
+        try {
+          if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(String(text))
+          toast(`已复制${label || ''}`)
+        } catch { /* 剪贴板不可用就算了 */ }
+      }
+      const stepRewards = stepRewardsOf(row)
+      const stepWeakest = stepRewards.length > 0 ? Math.min(...stepRewards) : null
+      const artifacts = Array.isArray(row.artifacts) ? row.artifacts : []
       const tabs = [['overview', '概览'], ['history', `历史 ${events.length}`], ['feedback', `反馈 ${feedbackLog.length}`], ['raw', '原始']]
       const body = pane === 'history'
         ? (events.length === 0 ? h(Empty, null, '没有历史事件') : h('div', { className: 'eng-timeline' }, events.slice(-20).reverse().map((event, index) => h('div', { key: index, className: 'eng-timeline-item' },
@@ -1557,12 +1716,22 @@ window.__ModuleLoader__.load({
                 labelMessage ? h('span', { className: 'eng-muted' }, labelMessage) : null) : null,
               h('dl', { className: 'eng-kv' },
                 h('dt', null, '做法'), h('dd', null, row.action || '—'),
-                h('dt', null, '分类'), h('dd', null, row.typeName || '未分类'),
+                h('dt', null, '来源'), h('dd', null, h('span', { className: 'eng-src-line' }, h(SourceBadge, { row }),
+                  row.sessionId ? h('span', { className: 'eng-mono' }, `${String(row.sessionId).slice(0, 8)}${row.turn === null || row.turn === undefined ? '' : ` · 第 ${row.turn} 轮`}`) : h('span', { className: 'eng-muted' }, '未绑定会话'),
+                  row.sessionId ? h(Button, { small: true, onClick: () => copyText(row.sessionId, '会话 id') }, '复制会话') : null)),
+                h('dt', null, 'G 来源'), h('dd', null, row.GSource === 'feedback' ? '含反馈修正（helped/hurt 改过 G）' : '由结果判定'),
+                artifacts.length > 0 ? h('dt', null, '产物') : null,
+                artifacts.length > 0 ? h('dd', { className: 'eng-path-list' }, artifacts.map((file) => h('div', { key: file, className: 'eng-path-row' },
+                  h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: String(file) }, String(file)),
+                  h(Button, { small: true, onClick: () => copyText(file, '路径') }, '复制')))) : null,
+                stepRewards.length > 0 ? h('dt', null, '分步回报') : null,
+                stepRewards.length > 0 ? h('dd', null,
+                  h('div', { className: 'eng-step-rewards' }, stepRewards.map((value, index) => h('span', {
+                    key: index,
+                    className: `eng-step-cell${value === stepWeakest ? ' eng-step-weak' : ''}`,
+                    title: value === stepWeakest ? '最弱一步：整条 G 取 min(reward, …stepRewards)' : `第 ${index + 1} 步`,
+                  }, fmtNumber(value))))) : null,
                 h('dt', null, '任务'), h('dd', null, row.kind === 'step' ? `步骤 ${row.stepIndex || '?'} / ${row.stepTotal || '?'}` : (row.kind || '整条')),
-                h('dt', null, '标签'), h('dd', null, rowTagGroups.length === 0 ? '无' : h('span', { className: 'eng-tag-groups-inline' }, rowTagGroups.map(([facet, names]) => h('span', { key: facet, className: 'eng-tag-inline-group' },
-                  h('span', { className: 'eng-muted' }, `${TAG_FACET_LABELS[facet]}：`), names.join('、'))))),
-                rowMissing.length > 0 ? h('dt', null, '') : null,
-                rowMissing.length > 0 ? h('dd', { className: 'eng-tag-hint' }, `缺${rowMissing.map((facet) => TAG_FACET_LABELS[facet]).join('、')}：${rowMissing.map((facet) => TAG_FACET_HINTS[facet]).join('；')}`) : null,
                 Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dt', null, '维度') : null,
                 Array.isArray(row.dimensions) && row.dimensions.length > 0 ? h('dd', null, row.dimensions.join('、')) : null,
                 row.expectedG === null || row.expectedG === undefined ? null : h('dt', null, '预期 G'),
@@ -1590,8 +1759,22 @@ window.__ModuleLoader__.load({
                 h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
               row.note ? h('div', { className: 'eng-note' }, h('div', { className: 'eng-label' }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null)
       return h('div', { className: 'eng-detail' },
-        h('div', { className: 'eng-actions' }, h(Badge, { tone }, label), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
+        h('div', { className: 'eng-actions' }, h(Badge, { tone }, label), h(SourceBadge, { row }), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
         h('h3', { className: 'eng-detail-title' }, row.intent || '（无意图）'),
+        // 分类与标签置顶（2026-11-17 反馈：详情里翻不到当前经验的标签和分类）。
+        h('div', { className: 'eng-card', style: { padding: 10, marginBottom: 10 } },
+          h('div', { className: 'eng-actions', style: { marginBottom: 6, flexWrap: 'wrap' } },
+            h('span', { className: 'eng-label' }, '分类'),
+            h(Badge, { tone: 'muted' }, row.typeName || '未分类')),
+          h('div', { className: 'eng-actions', style: { flexWrap: 'wrap' } },
+            h('span', { className: 'eng-label' }, '标签'),
+            rowTagGroups.length === 0
+              ? h('span', { className: 'eng-muted' }, '无')
+              : rowTagGroups.map(([facet, names]) => h('span', { key: facet, className: 'eng-tag-inline-group' },
+                h('span', { className: 'eng-muted' }, `${TAG_FACET_LABELS[facet]}：`), names.join('、')))),
+          rowMissing.length > 0
+            ? h('div', { className: 'eng-tag-hint' }, `缺${rowMissing.map((facet) => TAG_FACET_LABELS[facet]).join('、')}：${rowMissing.map((facet) => TAG_FACET_HINTS[facet]).join('；')}`)
+            : null),
         lifeBits.length > 0 ? h('div', { className: 'eng-muted eng-warn-text' }, lifeBits.join(' · ')) : null,
         h('div', { className: 'eng-tabs', role: 'tablist' }, tabs.map(([key, text]) => h('button', {
           key, type: 'button', role: 'tab', className: 'eng-tab', 'data-active': pane === key ? 'true' : 'false', 'aria-selected': pane === key ? 'true' : 'false',
@@ -1616,8 +1799,9 @@ window.__ModuleLoader__.load({
       const [intent, setIntent] = useState((props && props.seed) || '')
       const [context, setContext] = useState('')
       const [cluster, setCluster] = useState('')
-      const [flags, setFlags] = useState({ all: false, cold: false, detail: false, mark: false })
-      const [result, setResult] = useState(null)
+      const [flags, setFlags] = useState({ all: false, cold: false, detail: false, mark: false, shadow: false })
+      // seedResult 只给渲染测试用：召回结果由 useState 持有，不给入口就测不到影子/生命周期回执。
+      const [result, setResult] = useState(props && props.seedResult ? props.seedResult : null)
       const [error, setError] = useState('')
       const [busy, setBusy] = useState(false)
       const types = Array.isArray(props && props.types) ? props.types : []
@@ -1630,6 +1814,7 @@ window.__ModuleLoader__.load({
           if (flags.cold) body.cold = true
           if (flags.detail) body.detail = true
           if (flags.mark) body.mark = true
+          if (flags.shadow) body.tagShadow = true
           if (cluster !== '') body.cluster = cluster
           setResult(await request('/recall', { method: 'POST', body }))
         } catch (caught) {
@@ -1682,7 +1867,7 @@ window.__ModuleLoader__.load({
           h('details', { style: { marginTop: 8 } },
             h('summary', { className: 'eng-label', style: { cursor: 'pointer' } }, '高级（全库 / 冷档 / 簇 / 明细 / 标记）'),
             h('div', { className: 'eng-actions', style: { marginTop: 8 } },
-              [['all', '全库检索（忽略路由）'], ['cold', '只查冷档'], ['detail', '返回明细（不瘦身）'], ['mark', '记为主动提取']].map(([key, label]) =>
+              [['all', '全库检索（忽略路由）'], ['cold', '只查冷档'], ['detail', '返回明细（不瘦身）'], ['mark', '记为主动提取'], ['shadow', '标签影子对照（只算不改）']].map(([key, label]) =>
                 h('label', { key, className: 'eng-actions', style: { fontWeight: 400 } },
                   h('input', { type: 'checkbox', checked: flags[key] === true, onChange: () => toggle(key) }),
                   h('span', { className: 'eng-muted' }, label))),
@@ -1701,19 +1886,47 @@ window.__ModuleLoader__.load({
             result.pendingSkills ? h(Badge, { tone: 'warn' }, `待补提交 ${result.pendingSkills}`) : null,
             h(Button, { small: true, onClick: copyResult }, '复制结果')),
           result.brief ? h(Banner, null, result.brief) : null,
+          // 0.21.2 P1：生命周期回执与适用性说明（后端早已透传，界面以前全丢掉）。
+          typeof result.lifecycleNote === 'string' && result.lifecycleNote !== '' ? h(Banner, null, result.lifecycleNote) : null,
+          typeof result.applicabilityNote === 'string' && result.applicabilityNote !== '' ? h(Banner, null, result.applicabilityNote) : null,
+          // 标签影子对照：只读元数据，不改候选顺序；没请求就没有这块。
+          result.tagShadow ? h('details', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
+            h('summary', { className: 'eng-label', style: { cursor: 'pointer' } },
+              `标签影子对照 · overlap@5 ${Number(result.tagShadow.overlapAt5) || 0}/${Math.min(5, Array.isArray(result.tagShadow.typeRoutingTop) ? result.tagShadow.typeRoutingTop.length : 0)} · 标签 top ${Array.isArray(result.tagShadow.tagTop) ? result.tagShadow.tagTop.length : 0}`),
+            h('div', { style: { marginTop: 10 } },
+              h('div', { className: 'eng-muted', style: { marginBottom: 6, fontSize: 12 } },
+                '查询标签：',
+                TAG_FACET_ORDER
+                  .filter((facet) => Array.isArray(result.tagShadow.queryTags && result.tagShadow.queryTags[facet]) && result.tagShadow.queryTags[facet].length > 0)
+                  .map((facet) => `${TAG_FACET_LABELS[facet]} ${result.tagShadow.queryTags[facet].join('、')}`)
+                  .join('；') || '无'),
+              (Array.isArray(result.tagShadow.tagTop) ? result.tagShadow.tagTop : []).slice(0, 5).map((item, index) => h('div', { key: item.id || index, className: 'eng-row', style: { gridTemplateColumns: '28px minmax(0,1fr) 64px', cursor: 'default' } },
+                h('span', { className: 'eng-mono' }, `#${index + 1}`),
+                h('div', { className: 'eng-row-main' },
+                  h('div', { className: 'eng-row-intent' }, item.intent || item.action || '—'),
+                  h('div', { className: 'eng-row-sub' }, `${Array.isArray(item.matchedTags) && item.matchedTags.length > 0 ? `命中 ${item.matchedTags.join('、')}` : '—'}${item.stale ? ' · 待复核' : ''}`)),
+                h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, fmtNumber(item.score)))),
+              result.tagShadow.note ? h('div', { className: 'eng-muted', style: { marginTop: 8, fontSize: 12 } }, result.tagShadow.note) : null,
+              h('div', { className: 'eng-muted', style: { marginTop: 8, fontSize: 12 } }, '影子只计算、不改变上面的候选顺序；只用于看标签排序与类型路由的差异。'))) : null,
           pendingRows.length > 0 ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
             h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h('strong', null, `待判定（${pendingRows.length}）`), h('span', { className: 'eng-muted' }, '顺手回填，不用另开调用')),
-            h('div', { className: 'eng-stack' }, pendingRows.map((row) => h('div', { key: row.id, className: 'eng-row', style: { gridTemplateColumns: '120px minmax(0,1fr) auto' } },
-              h('span', { className: 'eng-mono' }, row.id),
-              h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-sub' }, row.brief || '—')),
-              h('div', { className: 'eng-actions' },
-                h(Button, { small: true, onClick: () => backfill(row.id, 'success') }, '成功'),
-                h(Button, { small: true, onClick: () => backfill(row.id, 'corrected') }, '纠正'),
-                h(Button, { small: true, onClick: () => backfill(row.id, 'failed') }, '失败')))))) : null,
+            h(PendingBackfill, { rows: pendingRows, showId: true, onChanged: run })) : null,
           result.skill ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
             h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Badge, { tone: 'brand' }, result.mode === 'skill-trial' ? '试用技能' : '高确定技能'), h('span', { className: 'eng-mono' }, result.skill.id)),
             h('h3', { className: 'eng-detail-title' }, result.skill.name),
             h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, result.skill.description),
+            result.skill.runtime && result.skill.runtime.dir
+              ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } }, `运行时：${result.skill.runtime.dir}${Array.isArray(result.skill.runtime.scripts) && result.skill.runtime.scripts.length > 0 ? ` · ${result.skill.runtime.scripts.length} 个可执行脚本` : ''}`)
+              : null,
+            // 命中自查（0.20.9 起模型侧就有，控制台以前看不到）：命中词 + 什么时候该判为错配。
+            result.skill.match && Array.isArray(result.skill.match.matchedTerms) && result.skill.match.matchedTerms.length > 0
+              ? h('div', { className: 'eng-actions', style: { marginBottom: 8, flexWrap: 'wrap' } }, h('span', { className: 'eng-label' }, '命中词'), result.skill.match.matchedTerms.slice(0, 12).map((term) => h(Badge, { key: term, tone: 'muted' }, term)))
+              : null,
+            result.skill.match && result.skill.match.selfCheck
+              ? h('details', { style: { marginBottom: 8 } },
+                h('summary', { className: 'eng-label', style: { cursor: 'pointer' } }, '命中自查'),
+                h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, result.skill.match.selfCheck))
+              : null,
             h('pre', { className: 'eng-pre' }, result.skill.body)) : null,
           recent.length > 0 ? h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 12 } },
             h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h('strong', null, '最近做过'), h('span', { className: 'eng-muted' }, '同一会话的最近两条')),
@@ -1733,7 +1946,8 @@ window.__ModuleLoader__.load({
                   h('strong', null, item.action || '（无做法）'),
                   h('span', { className: 'eng-mono' }, `Â ${fmtNumber(item.advantage)}`),
                   h('span', { className: 'eng-muted' }, `support ${item.support || 0} · sim ${fmtNumber(item.mean_similarity !== undefined ? item.mean_similarity : item.meanSimilarity)}`),
-                  item.typeName ? h('span', { className: 'eng-muted' }, item.typeName) : null),
+                  item.typeName ? h('span', { className: 'eng-muted' }, item.typeName) : null,
+                  item.applicability === 'mismatch' ? h(Badge, { tone: 'bad' }, '环境不匹配') : item.applicability === 'partial' ? h(Badge, { tone: 'warn' }, '部分匹配') : null),
                 h('div', { className: 'eng-stack' }, (item.evidence || []).map((evidence) => {
                   const [label, tone] = outcomeOf(evidence.outcome)
                   return h('div', { key: evidence.id, className: 'eng-row', style: { gridTemplateColumns: '60px 64px minmax(0,1fr) auto', cursor: 'default' } },
@@ -1751,12 +1965,13 @@ window.__ModuleLoader__.load({
                       h(Button, { small: true, onClick: () => feedback(evidence.id, 'hurt') }, '没帮上')))
                 })))
             : h('div', { key: item.id, className: 'eng-card', style: { padding: 14 } },
-                h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone: outcomeOf(item.outcome)[1] }, outcomeOf(item.outcome)[0]), h('span', { className: 'eng-mono' }, `G ${fmtNumber(item.G)}`)),
+                h('div', { className: 'eng-actions', style: { marginBottom: 6 } }, h(Badge, { tone: outcomeOf(item.outcome)[1] }, outcomeOf(item.outcome)[0]), h('span', { className: 'eng-mono' }, `G ${fmtNumber(item.G)}`),
+                  item.applicability === 'mismatch' ? h(Badge, { tone: 'bad' }, '环境不匹配') : item.applicability === 'partial' ? h(Badge, { tone: 'warn' }, '部分匹配') : null),
                 h('div', { className: 'eng-row-intent' }, item.intent || '（无意图）'),
                 h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—')))))))
     }
 
-    const EMPTY_RECORD = { intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', expectedG: '', expectedOutcome: '', skillId: '', blockedBy: '' }
+    const EMPTY_RECORD = { intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', stepRewards: '', expectedG: '', expectedOutcome: '', skillId: '', blockedBy: '' }
 
     function Record() {
       const [form, setForm] = useState(() => {
@@ -1769,6 +1984,7 @@ window.__ModuleLoader__.load({
       const [receipt, setReceipt] = useState(null)
       const [error, setError] = useState('')
       const [busy, setBusy] = useState(false)
+      const [lastStep, setLastStep] = useState(null)
       // 标签词表（按面分组）：选择器用；读不到就退化成手动输入，不阻塞记录。
       const registry = useLoad(useCallback(() => request('/tag-registry'), []))
       const tagGroups = registry.data && registry.data.groups ? registry.data.groups : null
@@ -1781,12 +1997,19 @@ window.__ModuleLoader__.load({
       const reset = () => {
         setForm({ ...EMPTY_RECORD })
         setReceipt(null)
+        setLastStep(null)
         setError('')
         try { sessionStorage.removeItem('eng:record-draft') } catch { /* 忽略 */ }
       }
       const stepWarn = form.kind === 'step' && form.stepIndex !== '' && form.stepTotal !== '' && Number(form.stepIndex) > Number(form.stepTotal)
       const submit = async () => {
         if (busy || form.intent.trim() === '' || form.action.trim() === '' || stepWarn) return
+        // 分步回报（0.21.1 P0）：逗号/空格分隔；越界或非数字在提交前就拦，别等后端 400。
+        const parsedStepRewards = String(form.stepRewards === undefined ? '' : form.stepRewards).split(/[,，\s]+/).filter((item) => item !== '').map(Number)
+        if (parsedStepRewards.some((value) => !Number.isFinite(value) || value < -1 || value > 1)) {
+          setError('分步回报要是 -1..1 的数字，用逗号分隔（例如 0.8, 0.5, -0.2）')
+          return
+        }
         setBusy(true); setError(''); setReceipt(null)
         try {
           const body = {
@@ -1795,6 +2018,7 @@ window.__ModuleLoader__.load({
             note: form.note,
           }
           if (form.taskId.trim() !== '') body.taskId = form.taskId.trim()
+          if (parsedStepRewards.length > 0) body.stepRewards = parsedStepRewards
           if (form.kind === 'step') {
             body.kind = 'step'
             if (form.stepIndex !== '') body.stepIndex = Number(form.stepIndex)
@@ -1805,6 +2029,7 @@ window.__ModuleLoader__.load({
           if (form.skillId.trim() !== '') body.skillId = form.skillId.trim()
           if (form.blockedBy.trim() !== '') body.blockedBy = form.blockedBy.trim()
           setReceipt(await request('/record', { method: 'POST', body }))
+          setLastStep(parsedStepRewards.length > 0 ? Math.min(...parsedStepRewards) : null)
           try { sessionStorage.removeItem('eng:record-draft') } catch { /* 忽略 */ }
         } catch (caught) {
           setError(caught.message || String(caught))
@@ -1829,6 +2054,8 @@ window.__ModuleLoader__.load({
               ? h('div', { className: 'eng-bad-text' }, `已丢弃不合规标签：${receipt.tagsRejected.join('、')}（项目实例名/版本/路径不能当标签）`)
               : null,
             receipt.tagWarning ? h('div', { className: 'eng-warn-text' }, `标签提醒：${receipt.tagWarning}`) : null,
+            lastStep === null ? null : h('div', { className: 'eng-muted' }, `分步最低 ${fmtNumber(lastStep)}（整条 G 取最弱一步）`),
+            receipt.signWarning ? h('div', { className: 'eng-warn-text' }, receipt.signWarning) : null,
             h('div', { className: 'eng-actions' }, h(Button, { small: true, onClick: reset }, '再记一条'))) : null,
           group('必填（意图 / 做法 / 结果 / 类型）', [
             h(Field, { key: 'intent', label: '意图（做什么）', wide: true }, h('input', { className: 'eng-input', value: form.intent, onChange: update('intent'), placeholder: '例如：给研学课 PPT 插一页过渡页' })),
@@ -1851,6 +2078,7 @@ window.__ModuleLoader__.load({
             h(Field, { key: 'kind', label: '粒度' }, h('select', { className: 'eng-select', value: form.kind, onChange: update('kind') }, h('option', { value: 'task' }, '整条任务'), h('option', { value: 'step' }, '任务步骤'))),
             h(Field, { key: 'stepIndex', label: '步骤序号（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepIndex, onChange: update('stepIndex') })),
             h(Field, { key: 'stepTotal', label: '步骤总数（kind=step）' }, h('input', { className: 'eng-input', type: 'number', value: form.stepTotal, onChange: update('stepTotal') })),
+            h(Field, { key: 'stepRewards', label: '分步回报（逗号分隔）', hint: '数字 -1..1；整条 G 取最弱一步，越界由服务端夹到 [-1,1]' }, h('input', { className: 'eng-input', value: form.stepRewards || '', onChange: update('stepRewards'), placeholder: '0.8, 0.5, -0.2' })),
           ]),
           group('预期与技能（可选）', [
             h(Field, { key: 'expectedG', label: '预期 G' }, h('input', { className: 'eng-input', type: 'number', step: '0.05', value: form.expectedG, onChange: update('expectedG'), placeholder: '0.8' })),
@@ -1912,8 +2140,10 @@ window.__ModuleLoader__.load({
     function Skills(props) {
       const skills = useLoad(useCallback(() => request('/skills'), []))
       const validation = useLoad(useCallback(() => request('/validate'), []))
+      // 0.21.2 P1：技能详情要解释「会不会进会话目录」，读设置里的 skillCatalog / 上限。
+      const settings = useLoad(useCallback(() => request('/settings'), []))
       useRefreshEvent(skills.reload)
-      const [selected, setSelected] = useState(null)
+      const [selected, setSelected] = useState(props && props.initialPath ? props.initialPath : null)
       const [intent, setIntent] = useState('')
       const [context, setContext] = useState('')
       const [notice, setNotice] = useState('')
@@ -1924,8 +2154,15 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = useState('')
       const [status, setStatus] = useState('')
       const [lifecycleFilter, setLifecycleFilter] = useState('')
-      const rows = skills.data ? skills.data.skills || [] : []
-      const tree = useMemo(() => normalizeSkillTree(skills.data), [skills.data])
+      const rows = skills.data ? skills.data.skills || [] : (Array.isArray(props.seedSkills) ? props.seedSkills : [])
+      const tree = useMemo(() => normalizeSkillTree(skills.data || (Array.isArray(props.seedSkills) ? { skills: props.seedSkills } : null)), [skills.data])
+      // 设置（或测试注入）里的目录配置：只用于把「目录资格」说清楚，不在这里改设置。
+      const engineConfig = (props.seedSettings && props.seedSettings.config && typeof props.seedSettings.config === 'object')
+        ? props.seedSettings.config
+        : (settings.data && settings.data.config && typeof settings.data.config === 'object' ? settings.data.config : {})
+      const catalogEnabled = engineConfig.skillCatalog !== false
+      const catalogMax = Number(engineConfig.catalogMaxSkills) || 5
+      const catalogChars = Number(engineConfig.catalogDescriptionChars) || 300
       const current = selected === null ? null : rowAtPath(rows, selected)
       const node = selected === null ? null : treeNodeAt(tree, selected) || (current === null ? null : {
         path: relativePathOf(current),
@@ -2181,6 +2418,32 @@ window.__ModuleLoader__.load({
                   current.lastVerifiedAt ? ` · 最后验证 ${fmtTime(current.lastVerifiedAt)}` : ' · 未登记验证时间',
                   current.reviewAfter ? ` · 建议复核 ${fmtTime(current.reviewAfter)}${current.reviewDue ? '（已到期）' : ''}` : '',
                   current.reviewNote ? ` · 复核记录：${current.reviewNote}` : ''),
+                // 0.21.2 P1：运行时（召回即用）与召回资格——让「模型到底拿到了什么」可核对。
+                current !== null && current.runtime
+                  ? h('div', { className: 'eng-card', style: { padding: 12, marginBottom: 10 } },
+                    h('div', { className: 'eng-label', style: { marginBottom: 6 } }, '运行时（召回时随正文交给模型）'),
+                    h('div', { className: 'eng-path-row' },
+                      h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: current.runtime.skillFile || current.runtime.dir }, current.runtime.dir),
+                      h(Button, { small: true, onClick: () => copyToClipboard(current.runtime.dir, '技能目录') }, '复制目录')),
+                    (Array.isArray(current.runtime.scripts) ? current.runtime.scripts : []).map((script) => h('div', { key: script.path || script.abs, className: 'eng-path-row', style: { marginTop: 4 } },
+                      h('span', { className: 'eng-mono', style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: script.run || script.path }, script.run || script.path),
+                      script.run ? h(Button, { small: true, onClick: () => copyToClipboard(script.run, '命令') }, '复制命令') : null)),
+                    Array.isArray(current.runtime.references) && current.runtime.references.length > 0
+                      ? h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, `附件：${current.runtime.references.map((item) => item.path).join('、')}`)
+                      : null,
+                    current.runtime.usage ? h('div', { className: 'eng-muted', style: { marginTop: 6, fontSize: 12 } }, current.runtime.usage) : null)
+                  : (current !== null ? h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } }, '运行时：未登记（老 skill.json，或示例数据里没有真实目录）') : null),
+                current !== null
+                  ? h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } },
+                    `召回状态：正文 ${current.bodyHash ? String(current.bodyHash).slice(0, 16) : '未计算'} · 目录资格 ${catalogEnabled ? `有（上限 ${catalogMax} 条、按名称排序、描述截断 ${catalogChars} 字）` : '无（会话技能目录已关）'}`,
+                    current.bodyHash ? h(Button, { small: true, onClick: () => copyToClipboard(current.bodyHash, '正文 hash') }, '复制 hash') : null,
+                    catalogEnabled ? h(Button, { small: true, onClick: () => copyToClipboard(current.id || pathOfCurrent, '技能名') }, '复制技能名') : null)
+                  : null,
+                current !== null ? (() => {
+                  const progress = skillProgressOf(current)
+                  return h('div', { className: 'eng-muted', style: { marginBottom: 10, fontSize: 12 } },
+                    `固化进度：uses ${progress.uses} · helped ${progress.helped} · hurt ${progress.hurt} · ${progress.hint}`)
+                })() : null,
                 isRootSkill
                   ? h('div', { className: 'eng-muted', style: { marginBottom: 8, fontSize: 12 } }, `套件：${Math.max(0, skillCount - 1)} 个子技能 · 已注册 ${registeredCount}/${skillCount}`)
                   : null,
@@ -2806,6 +3069,7 @@ window.__ModuleLoader__.load({
         await request('/verdicts', { method: 'POST', body: { verdicts: [{ id: row.id, outcome }] } })
         await Promise.all([pending.reload(), summary.reload(), usage.reload()])
       }
+      const pendingChanged = () => { pending.reload(); summary.reload(); usage.reload() }
       const error = usage.error || pending.error || summary.error
       const kpis = [
         ['调用次数', stat.calls, '次'],
@@ -2835,13 +3099,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, `待判定（${pendingRows.length}）`)),
           pendingRows.length === 0
             ? h('div', { className: 'eng-muted' }, pending.loading ? '读取中…' : '没有待判定的记录')
-            : h('div', { className: 'eng-stack' }, pendingRows.map((row) => h('div', { key: row.id, className: 'eng-pending-row' },
-              h('span', { className: 'eng-mono' }, row.id),
-              h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || row.action || '—'), row.brief ? h('div', { className: 'eng-row-sub' }, row.brief) : null),
-              h('div', { className: 'eng-actions' },
-                h(Button, { small: true, onClick: () => backfill(row, 'success') }, '成功'),
-                h(Button, { small: true, onClick: () => backfill(row, 'corrected') }, '纠正'),
-                h(Button, { small: true, onClick: () => backfill(row, 'failed') }, '失败')))))),
+            : h(PendingBackfill, { rows: pendingRows, loading: pending.loading, showId: true, onChanged: pendingChanged })),
         h('div', { className: 'eng-card eng-scroll eng-section' },
           h('div', { className: 'eng-toolbar', style: { padding: 'var(--eng-s-3)' } },
             h('select', { className: 'eng-select', style: { width: 160 }, value: tool, onChange: (event) => { setTool(event.target.value); setOpenRow(-1) } },
