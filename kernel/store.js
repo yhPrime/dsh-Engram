@@ -61,6 +61,7 @@ import {
   assertDeclaredBucketsIntact,
   buildManifest,
   compactStore,
+  dedupeRecordsById,
   hasShardFiles,
   manifestPath,
   migrateToShards,
@@ -74,6 +75,7 @@ import {
   shardsMismatch,
   storageBytes,
   storageFingerprint,
+  taskKeyHash,
   writeManifest,
   writeShards,
 } from './shard-store.js'
@@ -100,8 +102,11 @@ export const DEFAULT_MAX_TYPES = 24
 export const DEFAULT_NEW_TYPES_PER_DAY = 6
 export const DEFAULT_TYPE_SIMILARITY = 0.8
 
-/** 这些名字太泛，直接归「未分类」，不新建类型。 */
-const GENERIC_TYPE_NAMES = new Set(['其他', '其它', '杂项', '别的', '临时', '随便', '未分类', 'other', 'misc'])
+/**
+ * 这些名字太泛，直接归「未分类」，不新建类型。
+ * 「通用」是任务书口径里的通用词（0.21.3 R1 黑盒缺陷 2：以前会新建 `ty_xxx:通用`）。
+ */
+const GENERIC_TYPE_NAMES = new Set(['其他', '其它', '杂项', '别的', '临时', '随便', '通用', '未分类', 'other', 'misc'])
 
 export const FILE_NAME = 'exp-lib.json'
 export const SPACE_NAME = '经验库'
@@ -344,9 +349,11 @@ function normalizeStore(raw) {
     : []
   const types = (rawTypes.length > 0 ? rawTypes : [{ ...SYSTEM_TYPE }]).map((type) => (type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
   if (!types.some((type) => type.id === SYSTEM_TYPE.id)) types.push({ ...SYSTEM_TYPE })
-  const experiences = Array.isArray(raw.experiences)
+  // 同 id 多份只算一条（R6-D2）：分片被外部复制 / Git 合并取错一边时，同一条不能按两条计
+  // （dedupeRecordsById 按 hits/时间取较强的一份，字段不丢）。
+  const experiences = dedupeRecordsById(Array.isArray(raw.experiences)
     ? raw.experiences.filter((item) => item && typeof item === 'object' && !Array.isArray(item))
-    : []
+    : [])
   // typeId 悬空（types 丢失/被删）：读时归「未分类」，别让计数/召回读到幽灵类型。
   const typeIds = new Set(types.map((type) => type.id))
   for (const item of experiences) {
@@ -436,7 +443,9 @@ export function rebuildManifest(dataDir, options = {}) {
     cold: preserveCold ? options.cold : scan.cold,
     ...(typeof options.migratedFrom === 'string' && options.migratedFrom !== '' ? { migratedFrom: options.migratedFrom } : {}),
   }
-  const manifest = buildManifest(store, scan.buckets, previous)
+  // duplicates（R6-D2）：重建时看到过同 id 多份。只登记不在这里改分片（读路径不改事实源），
+  // 下一次 exp_record 见到这个标记会退全量读—改—写，把多出来的副本清掉。
+  const manifest = buildManifest(store, scan.buckets, previous, { duplicates: scan.duplicates })
   writeManifest(dataDir, manifest)
   clearHintCache(dataDir)
   return manifest
@@ -955,7 +964,12 @@ export function sanitizeUsageText(raw, limit = USAGE_TEXT_LIMIT) {
   }
   for (const [pattern, replacement] of USAGE_REDACTIONS) text = text.replace(pattern, replacement)
   const max = Math.max(0, Math.trunc(Number(limit) || USAGE_TEXT_LIMIT))
-  return text.length > max ? text.slice(0, max) : text
+  // 0.21.3 R8-D1：上限是「码点」不是 UTF-16 码元。slice 按码元切，emoji 会被劈出孤立代理码元
+  // （半个 emoji），和 cutField/truncateNote 的「按码点截断、不劈代理项」口径不一致。
+  // UTF-16 长度 ≤ max 时码点数必然 ≤ max，直接返回，不必为长文本先展开成数组。
+  if (text.length <= max) return text
+  const points = Array.from(text)
+  return points.length > max ? points.slice(0, max).join('') : text
 }
 
 /**
@@ -1163,6 +1177,30 @@ export function sanitizeField(raw) {
   return { text: text.trim(), sanitized }
 }
 
+/**
+ * 写侧字段上限（对抗测试发现）：10 万字符 note / 1 万字符 intent 会整段落库、把库撑大。
+ * 读侧本来只展示 300 字，写侧也按码点截断（不劈 emoji）。
+ */
+function cutField(text, max) {
+  const value = String(text || '')
+  // 0.21.3 R5 缺陷 D1：上限是「码点」而不是 UTF-16 码元。用 value.length 判是否超限时，
+  // 恰好 500/2000 码点但含 emoji 的文本（UTF-16 更长）会被误截成 499/1999 码点 + …，
+  // 落库值与键虽然仍同源，入参却被悄悄改写（数据保真）。先 Array.from 数码点再比较。
+  const points = Array.from(value)
+  return points.length <= max ? value : `${points.slice(0, Math.max(0, max - 1)).join('')}…`
+}
+
+/**
+ * 「同做法键」的写入侧口径（0.21.3 R1）：清洗 + 截断后的 intent 和做法。
+ *
+ * 必须和 `upsertExperience` 落库时用的清洗/截断**完全一致**，否则键对不上、纠正路径失效。
+ * 存量行里的 intent/action 已是同一口径的值，所以 `shard-store` 直接对行算哈希就得到同一个键。
+ * @returns {string} 16 位十六进制键；intent 为空时返回 ''（空键不参与索引）
+ */
+export function taskKeyOf(intent, action) {
+  return taskKeyHash(cutField(sanitizeField(intent).text, 500), cutField(sanitizeField(action).text, 2000))
+}
+
 /** 从残渣里捞回本该在参数里的值（如 `<parameter name="type">PPT / 课件`）。 */
 export function extractParameter(raw, name) {
   const pattern = new RegExp(`<\\s*parameter[^>]*name\\s*=\\s*["']${String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'][^>]*>([^<]*)`, 'i')
@@ -1344,12 +1382,6 @@ export function upsertExperience(store, input, options = {}) {
   const cleanIntent = sanitizeField(input.intent)
   const cleanAction = sanitizeField(input.action)
   const cleanNote = sanitizeField(rawNote)
-  // 写侧上限（对抗测试发现）：10 万字符 note / 1 万字符 intent 会整段落库、把库撑大。
-  // 读侧本来只展示 300 字，写侧也按码点截断（不劈 emoji）。
-  const cutField = (text, max) => {
-    const value = String(text || '')
-    return value.length <= max ? value : `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
-  }
   const intent = cutField(cleanIntent.text, 500)
   const action = cutField(cleanAction.text, 2000)
   cleanNote.text = cutField(cleanNote.text, 2000)
@@ -1383,16 +1415,27 @@ export function upsertExperience(store, input, options = {}) {
   })
   let type = resolved.type
   const hasExplicitType = typeName !== ''
+  // 引擎路由给的类型（0.21.3 R3 缺陷 3）：自动记录的归族结果也是「有类型」，但那不是模型补的分类，
+  // 不能触发 allowRetype 的跨类型就地改写——否则自动记录会把另一类型下的手动未分类条改写成路由簇。
+  const typeAssignedByRoute = input.typeFromRoute === true
   const state = abstractState(intent, action)
   // 没给类型时，若同做法已有归属明确的经验，就继承它的类型再走合并/取代判断；
   // 否则第二次不带 type 重记会被当成「未分类的新条」，hits 永远不涨（2026-11-07 回归测出来）。
+  let inheritedFrom = null
   if (!hasExplicitType) {
     const owner = store.experiences.find((item) => !item.deleted_at && !item.superseded_by
       && item.typeId && item.typeId !== SYSTEM_TYPE.id
       && actionKeyOf(item.action) === actionKeyOf(action)
       && stateSimilarity(state, item.state || {}) >= mergeThreshold)
-    if (owner !== undefined) type = (store.types || []).find((entry) => entry.id === owner.typeId) || undefined
+    if (owner !== undefined) {
+      // 类型被删的悬挂引用仍按旧行为当「没有类型」处理（别把已删类型复活成 SYSTEM 再参与取代判断）。
+      type = (store.types || []).find((entry) => entry.id === owner.typeId) || undefined
+      if (type !== undefined) inheritedFrom = type
+    }
   }
+  // 回执要报「实际生效的类型」：继承来的归属同样要出现在 type 回执里，
+  // 否则 tools 会按 resolved.reason='no-type' 拼出「本条未分类」的提示，与落盘值矛盾（R3 缺陷 1）。
+  const effectiveType = inheritedFrom === null ? resolved : { ...resolved, type: inheritedFrom, reason: 'inherited' }
   const now = new Date().toISOString()
   const nowMs = Date.now()
   const decayDays = options.feedbackDecayDays === undefined ? DEFAULT_FEEDBACK_DECAY_DAYS : options.feedbackDecayDays
@@ -1464,11 +1507,19 @@ export function upsertExperience(store, input, options = {}) {
   }
   // 同任务：kind 相同、类型相同；step 还要 stepIndex 相同；taskId 显式给出时必须相等，
   // 且**不把没有 taskId 的新记挂到别人的任务上**（2026-11-07 验收：无 taskId 的 step 曾复活别人的 step1）。
-  const sameTask = (item) => {
+  //
+  // 类型这一关有个例外（0.21.3 R1 缺陷 1/3）：**显式给了 typeName 时，类型变化当字段更新**。
+  // 用户说「这条分类错了」再带正确 typeName 重记同一 intent+action，旧条必须就地改类型、hits 累加，
+  // 而不是两台各留一条（否则错分类继续参与召回与统计，D1 的「能分就再补一次 typeName」是死胡同）。
+  // 注意只放宽**重复合并**这一处：退休负样本/复活/近似取代仍要求同类型，别把别的语义一起带崩。
+  const allowRetype = hasExplicitType && type !== undefined && typeAssignedByRoute !== true
+  const sameTask = (item, options = {}) => {
     if ((item.kind || 'task') !== kind) return false
-    const rowTypeId = item.typeId || SYSTEM_TYPE.id
-    const thisTypeId = type === undefined ? SYSTEM_TYPE.id : type.id
-    if (rowTypeId !== thisTypeId) return false
+    if (options.crossType !== true) {
+      const rowTypeId = item.typeId || SYSTEM_TYPE.id
+      const thisTypeId = type === undefined ? SYSTEM_TYPE.id : type.id
+      if (rowTypeId !== thisTypeId) return false
+    }
     if (kind === 'step') {
       const rowIndex = item.stepIndex === undefined || item.stepIndex === null ? null : Number(item.stepIndex)
       // stepIndex 缺失时也只匹配缺失的：否则「没编号的几步」会被当成同一步互相取代。
@@ -1489,7 +1540,7 @@ export function upsertExperience(store, input, options = {}) {
   // 分支判符号用**基准回报**（outcome 的符号），不用含反馈的 G：
   // 否则「成功但被 hurt 两次」的行会被当成负样本，重记失败原地合并、重记成功反而分裂（2026-11-07 验收实测）。
   const outcomeSignOf = (item) => signOf(item.GOutcome !== undefined && item.GOutcome !== null ? item.GOutcome : scoreOf(item.outcome))
-  const duplicate = active.find((item) => sameTask(item)
+  const duplicate = active.find((item) => sameTask(item, { crossType: allowRetype })
     && actionKeyOf(item.action) === actionKeyOf(action)
     && (hasOutcome ? (item.verdict === 'pending' || outcomeSignOf(item) === signOf(reward)) : true)
     && stateSimilarity(state, item.state || {}) >= mergeThreshold)
@@ -1539,7 +1590,7 @@ export function upsertExperience(store, input, options = {}) {
     }
     const retiredIds = retireNegatives(duplicate.id)
     if (options.skipClusters !== true) refreshClusters(store)
-    return { experience: duplicate, action: 'updated', retired: retiredIds, signMismatch, type: resolved, sanitized, typeRecoveredFromNote: recoveredType !== '' }
+    return { experience: duplicate, action: 'updated', retired: retiredIds, signMismatch, type: effectiveType, sanitized, typeRecoveredFromNote: recoveredType !== '' }
   }
 
   // 1b) 复活：同任务、同做法的**已被取代**条，如果又做成了 → 解除隐藏、就地更新，
@@ -1592,7 +1643,7 @@ export function upsertExperience(store, input, options = {}) {
       ? { type: 'revived', displaced: head === undefined ? null : head.id }
       : { type: 'revived', reason: 'retired' })
     if (options.skipClusters !== true) refreshClusters(store)
-    return { experience: revivable, action: 'revived', signMismatch, type: resolved, sanitized, typeRecoveredFromNote: recoveredType !== '' }
+    return { experience: revivable, action: 'revived', signMismatch, type: effectiveType, sanitized, typeRecoveredFromNote: recoveredType !== '' }
   }
 
   // 2) 近似替换：同类型、做法不同、意图相似度达阈值 → 新条 + 旧条 superseded_by。
@@ -1682,7 +1733,7 @@ export function upsertExperience(store, input, options = {}) {
   }
   const retiredIds = retireNegatives(experience.id)
   if (options.skipClusters !== true) refreshClusters(store)
-  return { experience, action: replaceTarget === undefined ? 'added' : 'superseded', supersededId: replaceTarget === undefined ? undefined : replaceTarget.id, retired: retiredIds, signMismatch, type: resolved, sanitized, typeRecoveredFromNote: recoveredType !== '' }
+  return { experience, action: replaceTarget === undefined ? 'added' : 'superseded', supersededId: replaceTarget === undefined ? undefined : replaceTarget.id, retired: retiredIds, signMismatch, type: effectiveType, sanitized, typeRecoveredFromNote: recoveredType !== '' }
 }
 
 /** 日志裁剪：优先淘汰 neutral（无信号），再淘汰最老的信号事件。
@@ -2853,7 +2904,7 @@ export function renderHintSlim(config = {}, maxCharacters = 1400) {
   }
   const active = visibleExperiences(store).length
   const lines = [
-    `经验库：先 exp_recall（intent 写「对象+任务」，别只写「再来一页」）；做完 exp_record（outcome 可省→pending，回执里用 verdicts 回填；被否定先 exp_feedback hurt）。共 ${active} 条。`,
+    `经验库：exp_recall 的 intent 写「对象+任务」；exp_record 顺手给主分类（分不出才留空），outcome 可省→pending，用 verdicts 回填；被否定 exp_feedback hurt。共 ${active} 条。`,
   ]
   const pending = pendingRows(store, 2)
   if (pending.length > 0) {

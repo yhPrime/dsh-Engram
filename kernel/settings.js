@@ -120,6 +120,13 @@ export const ENGINE_CONFIG_DEFAULTS = Object.freeze({
   catalogMaxSkills: 5,
   catalogDescriptionChars: 300,
   reuseReceipt: true,
+  // 主分类与路由（0.21.3 计划书 §0.1 D1/D3、§14 定案）：
+  // - routing：'on' 仍按类型收窄候选池（P2 / 0.21.4 按影子判据决定是否改 'off'）；
+  // - autoAssign：只有自动记录用它（手动记录不归族，主分类由模型给）；
+  // - autoRouteMinScore：自动记录专用门槛，比召回路由的 0.17 松，见 cluster.js 注释。
+  routing: 'on',
+  autoAssign: true,
+  autoRouteMinScore: 0.08,
 })
 
 /** 磁盘上真实保存的内核参数（不含默认值）。插件行配置的覆盖判断走这里，避免默认值压掉插件行。 */

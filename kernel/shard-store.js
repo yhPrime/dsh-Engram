@@ -68,6 +68,24 @@ export const MANIFEST_MAX_BYTES = 128 * 1024
 export const CACHE_MAX_BYTES = 32 * 1024 * 1024
 /** manifest.pending 最多登记几条（提示段只需要最近几条）。 */
 export const PENDING_INDEX_LIMIT = 50
+/**
+ * manifest.taskIndex 最多登记几个键（0.21.3 R1 缺陷 1/3）。
+ *
+ * 为什么要它：记录快路径只读目标类型分片（task-9 的结构判据），看不到别的类型下
+ * 「同 intent + 同做法」的旧条——于是「用户说这条分类错了 → 带正确 typeName 重记」
+ * 会新开一条，而不是就地改类型。索引只存 `同做法键 → 出现过的 typeId`，
+ * 记录时用它判断「要不要多读一个类型」，真正的合并判据仍在 store.js（sameTask/相似度）。
+ *
+ * 它是**可重建缓存**：丢了只会让某条旧记录少一次就地纠正（退化成新开一条），不会丢数据。
+ * 上限按最近的行保留（manifest 有 128 KiB 预算，索引必须是数量级的，不是全量的）。
+ */
+export const TASK_INDEX_LIMIT = 600
+/**
+ * `manifest.taskIndexDropped` 最多记几个被截断甩掉的同做法键（0.21.3 R7 缺陷 D1）。
+ * 只是「缺键是否可信」的判别名单，不参与定位；16 hex 一个键，2000 个约 38 KiB，
+ * 仍在 manifest 128 KiB 预算内。超了就不存名单（只留 truncated 标记，缺键一律退慢）。
+ */
+export const TASK_INDEX_DROPPED_LIMIT = 2000
 /** manifest.recent 每会话最多几条 / 总共最多几条（G5）。 */
 export const RECENT_PER_SESSION = 5
 export const RECENT_LIMIT = 100
@@ -192,7 +210,139 @@ export function normalizeCold(raw) {
   return { years }
 }
 
+/**
+ * 「同做法键」：intent + action（做法按 `actionKeyOf` 的口径 trim + lower）。
+ *
+ * 只用于 `manifest.taskIndex` 的**定位**，不参与合并判定——`upsertExperience` 里
+ * 仍要过 kind/stepIndex/taskId + actionKey + 状态相似度这几关。
+ * 与 store.js 的 `taskKeyOf` 同一口径：那边先把 intent/action 清洗+截断，这里只做哈希，
+ * 存量行的 intent/action 已是清洗后的值，所以两边算出来的是同一个键。
+ */
+export function taskKeyHash(intent, action) {
+  const text = String(intent === undefined || intent === null ? '' : intent)
+  if (text === '') return ''
+  // 0.21.3 R4 缺陷 D1：只有 C0/C1 控制字符（或控制字符+空白）的 intent 等同于空意图——
+  // 不能因为一串不可见字符就造出一个「同做法键」，让残渣行进入 taskIndex 参与定位。
+  // 注意只判「整串是否只剩不可见字符」：正常正文里夹带的控制字符仍原样参与哈希（R3/R4 白盒用例守着）。
+  if (text.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim() === '') return ''
+  const actionKey = String(action === undefined || action === null ? '' : action).trim().toLowerCase()
+  return createHash('sha1').update(`${text}\u0000${actionKey}`).digest('hex').slice(0, 16)
+}
+
+/** 一批行 → `{同做法键: 'typeId' | 'typeId,typeId'}`（行已在调用方筛过可见性）。 */
+function indexOfRows(rows) {
+  const index = {}
+  for (const row of rows) {
+    const key = taskKeyHash(row.intent, row.action)
+    if (key === '') continue
+    const typeId = String(row.typeId || 'ty_other')
+    const previous = index[key]
+    if (previous === undefined) index[key] = typeId
+    else if (!previous.split(',').includes(typeId)) index[key] = `${previous},${typeId}`
+  }
+  return index
+}
+
+/**
+ * 一批行 → `{index, dropped, truncated}`（只收可见行：合并只发生在可见条之间）。
+ * 超过上限时按**行顺序取最近的一段**（数组顺序=写入顺序），前面的老行丢掉。
+ *
+ * `dropped`（0.21.3 R7 缺陷 D1）：被上限甩掉的行涉及的**同做法键**名单。
+ * 快路径拿它区分「这个键从没出现过」（可放心新建）与「这个键的行被截断甩掉了」
+ * （索引里可能没有它/类型不全 → 必须退慢路径）。只记键、不记类型（16 hex × N，
+ * 比再存一份全量索引省得多）；名单本身超预算时丢掉并只留 `truncated`。
+ * `truncated` 为 true 表示索引**不完整**；`dropped` 缺失 + truncated=true 表示
+ * 「记不清甩过哪些键」——此时缺键一律不可信。
+ */
+function taskIndexEntries(rows, limit = TASK_INDEX_LIMIT) {
+  const list = (Array.isArray(rows) ? rows : [])
+    .filter((row) => row !== null && typeof row === 'object' && !Array.isArray(row) && !row.deleted_at && !row.superseded_by && !row.retired_at)
+  const capped = list.length > limit ? list.slice(list.length - limit) : list
+  const index = indexOfRows(capped)
+  if (list.length <= limit) return { index, dropped: [], truncated: false }
+  // 被甩掉的行里的键：只要出现过就记下来（同一键在保留段里也留着，覆盖可能不全 → 一并退慢）。
+  const dropped = Object.keys(indexOfRows(list.slice(0, list.length - limit)))
+    .filter((key) => key !== '')
+  return { index, dropped, truncated: dropped.length > 0 }
+}
+
+/**
+ * 增量维护同做法键索引：先摘掉 touched 类型贡献的 typeId（该类型的行被整体替换），
+ * 再按 `rowsByType` 里的新行补回。顺序 = 老键在前、新键在后，超上限时摘掉最前面的（最老）。
+ *
+ * `previous`：`{index, dropped, truncated}`（来自 manifest；老 manifest 没有索引时由调用方
+ * 用未触碰类型的现存分片补基线）。返回同形：被摘掉的键进 `dropped`，名单超预算则退化为
+ * `dropped: null` + `truncated: true`（缺键一律不可信，宁可慢不可错）。
+ */
+function mergeTaskIndex(previous, touched, rowsByType) {
+  const touchedSet = new Set((Array.isArray(touched) ? touched : []).map(String))
+  const previousIndex = previous !== null && previous !== undefined && previous.index !== null && previous.index !== undefined
+    && typeof previous.index === 'object' && !Array.isArray(previous.index)
+    ? previous.index
+    : null
+  const previousDropped = previous !== null && previous !== undefined && Array.isArray(previous.dropped) ? previous.dropped : null
+  const previousTruncated = previous !== null && previous !== undefined && previous.truncated === true
+  const next = {}
+  if (previousIndex !== null) {
+    for (const [key, value] of Object.entries(previousIndex)) {
+      if (key === '') continue
+      const kept = String(value === undefined || value === null ? '' : value)
+        .split(',')
+        .map((typeId) => typeId.trim())
+        .filter((typeId) => typeId !== '' && !touchedSet.has(typeId))
+      if (kept.length > 0) next[key] = [...new Set(kept)].join(',')
+    }
+  }
+  const freshRows = []
+  for (const typeId of touchedSet) {
+    if (Array.isArray(rowsByType[typeId])) freshRows.push(...rowsByType[typeId])
+  }
+  // 上限只对最终结果生效：先把这次的行全量展开（它们是最新的，不该被自己的上限截掉）。
+  const fresh = taskIndexEntries(freshRows, Number.MAX_SAFE_INTEGER).index
+  for (const [key, value] of Object.entries(fresh)) {
+    const previousValue = next[key]
+    if (previousValue === undefined) next[key] = value
+    else {
+      const merged = new Set([...previousValue.split(','), ...value.split(',')].map((typeId) => typeId.trim()).filter((typeId) => typeId !== ''))
+      next[key] = [...merged].join(',')
+    }
+  }
+  const keys = Object.keys(next)
+  const overflow = keys.length - TASK_INDEX_LIMIT
+  const droppedSet = new Set(previousDropped === null ? [] : previousDropped)
+  if (overflow > 0) {
+    for (const key of keys.slice(0, overflow)) {
+      delete next[key]
+      droppedSet.add(key)
+    }
+  }
+  // 之前已经「记不清」过，或这次名单超预算：只留 truncated 信号，缺键一律退慢路径。
+  const forgotten = (previousTruncated && previousDropped === null) || droppedSet.size > TASK_INDEX_DROPPED_LIMIT
+  const dropped = forgotten ? null : [...droppedSet]
+  return { index: next, dropped, truncated: forgotten || previousTruncated || overflow > 0 || dropped.length > 0 }
+}
+
+/**
+ * 同做法键索引（0.21.3 R1 缺陷 1/3）：`{键: 'typeId[,typeId]'}`。
+ *
+ * 消费方只有 `exp_record` 的快路径：显式给了 `typeName` 且索引里同一个键挂在**别的类型**下时，
+ * 把那些类型的分片一起读进来，让 upsert 有机会把旧条就地改类型（而不是新开一条）。
+ * 没有索引（老 manifest）时快路径不敢断言「没有跨类型旧条」，会退回慢路径一次，之后由写盘补上。
+ */
+export function taskIndexOf(manifest) {
+  const raw = manifest === null || manifest === undefined ? null : manifest.taskIndex
+  if (raw === null || raw === undefined || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return raw
+}
+
 function normalizeManifest(raw) {
+  // 被截断甩掉的键名单（R7-D1）：只在名单完整且不超预算时保留；超预算=记不清，
+  // 不能截一段留下（漏掉的键会被当成新键），改用 truncated 标记让缺键一律退慢。
+  const droppedRaw = Array.isArray(raw.taskIndexDropped)
+    ? raw.taskIndexDropped.filter((key) => typeof key === 'string' && key !== '')
+    : null
+  const droppedExact = droppedRaw !== null && droppedRaw.length > 0 && droppedRaw.length <= TASK_INDEX_DROPPED_LIMIT
+  const indexTruncated = raw.taskIndexTruncated === true || (droppedRaw !== null && droppedRaw.length > TASK_INDEX_DROPPED_LIMIT)
   return {
     schema: Number(raw.schema) || SHARD_SCHEMA,
     version: Number(raw.version) || 1,
@@ -204,6 +354,16 @@ function normalizeManifest(raw) {
     pending: Array.isArray(raw.pending) ? raw.pending : [],
     recent: Array.isArray(raw.recent) ? raw.recent : [],
     stats: raw.stats !== null && typeof raw.stats === 'object' && !Array.isArray(raw.stats) ? raw.stats : null,
+    // null = 「老 manifest 没有这份索引」（与「索引为空」区分：前者要退回慢路径一次补基线）。
+    taskIndex: raw.taskIndex !== null && raw.taskIndex !== undefined && typeof raw.taskIndex === 'object' && !Array.isArray(raw.taskIndex)
+      ? raw.taskIndex
+      : null,
+    // 重建时看到过的重复 id 副本数（R6-D2，派生缓存）：>0 时 exp_record 走全量读—改—写清掉副本。
+    ...(Number(raw.duplicates) > 0 ? { duplicates: Math.trunc(Number(raw.duplicates)) } : {}),
+    // 同做法键索引被截断过（R7-D1，派生缓存）：缺键不再等于「别的类型没有旧条」，快路径要退慢一次。
+    ...(indexTruncated ? { taskIndexTruncated: true } : {}),
+    // 被截断甩掉的具体键名单（R7-D1）：有名单时只有名单内的键不可信；缺名单=记不清，缺键一律不可信。
+    ...(droppedExact ? { taskIndexDropped: droppedRaw } : {}),
     cold: normalizeCold(raw.cold),
     ...(typeof raw.migratedFrom === 'string' && raw.migratedFrom !== '' ? { migratedFrom: raw.migratedFrom } : {}),
   }
@@ -294,20 +454,93 @@ function resolveBucketPath(dataDir, rel) {
   return resolved
 }
 
+/** 行的 id（字符串）；空/缺失返回 ''（没有 id 的行无法判定重复，原样保留）。 */
+function recordIdOf(row) {
+  const id = row !== null && typeof row === 'object' && !Array.isArray(row) ? row.id : undefined
+  return id === undefined || id === null ? '' : String(id)
+}
+
+/** 副本的「归属是否正确」：行里的 typeId 与它所在分片的类型一致得 1 分（复制进别的类型分片得 0）。 */
+function recordPlacementOf(entry) {
+  const bucketTypeId = entry.bucketTypeId === undefined || entry.bucketTypeId === null ? '' : String(entry.bucketTypeId)
+  if (bucketTypeId === '') return 1
+  const rowTypeId = String((entry.row && entry.row.typeId) || 'ty_other')
+  return rowTypeId === bucketTypeId ? 1 : 0
+}
+
+/** 副本是否是「已终结」状态（删/取代/退休）：终结状态只会在记录生命后期出现，优先于旧副本。 */
+function isTerminalCopy(entry) {
+  const row = entry.row
+  return Boolean(row && (row.deleted_at || row.superseded_by || row.retired_at))
+}
+
+/** 同一 id 的两份副本：已终结优先，其次归属正确，再次 hits 更大，最后更晚见到（字符串 ISO 可直接比较）。 */
+function betterRecordCopy(candidate, current) {
+  const terminal = Number(isTerminalCopy(candidate)) - Number(isTerminalCopy(current))
+  if (terminal !== 0) return terminal > 0
+  const placed = recordPlacementOf(candidate) - recordPlacementOf(current)
+  if (placed !== 0) return placed > 0
+  const hits = (Number(candidate.row && candidate.row.hits) || 0) - (Number(current.row && current.row.hits) || 0)
+  if (hits !== 0) return hits > 0
+  const candidateSeen = String((candidate.row && (candidate.row.lastSeenAt || candidate.row.ts)) || '')
+  const currentSeen = String((current.row && (current.row.lastSeenAt || current.row.ts)) || '')
+  return candidateSeen > currentSeen
+}
+
 /**
- * 读全部分片记录（按 manifest 登记顺序）。
+ * 分片出现重复 id（Git 合并取错一边 / 外部复制 / 手改追加）时的读侧口径（R6 缺陷 D2）：
+ * **同一条只能算一条**。保留「已终结（删/取代/退休）> 归属正确 > hits 更大 > 更晚见到」的那份完整行，
+ * 其余副本从读视图里丢掉——统计不会翻倍、召回不会把同一条证据给两次，也不会把已删的行复活；
+ * 下一次写回该类型时按完整行集重写，盘上自然收敛成一份。
+ *
+ * 读侧去重而不是抛错：重复 id 是缓存/合并事故，抛错会让整库不可读（召回、列表全挂），
+ * 而两份内容是同一行，丢掉较弱的一份不会损失任何字段。
+ */
+function dedupeRecordEntries(entries) {
+  const list = Array.isArray(entries) ? entries : []
+  const best = new Map()
+  for (const entry of list) {
+    const id = recordIdOf(entry.row)
+    if (id === '') continue
+    const current = best.get(id)
+    if (current === undefined || betterRecordCopy(entry, current)) best.set(id, entry)
+  }
+  const seen = new Set()
+  const out = []
+  for (const entry of list) {
+    const id = recordIdOf(entry.row)
+    if (id === '') {
+      out.push(entry)
+      continue
+    }
+    // 不能「先到先得」：弱副本先出现时它既不是 best、又会把 id 标成已见，
+    // 随后真正的 best 也被跳过 → 两份都丢（R7 缺陷 R7-D2）。只在真正输出 best 时占位。
+    if (best.get(id) !== entry || seen.has(id)) continue
+    seen.add(id)
+    out.push(entry)
+  }
+  return out
+}
+
+/** 纯行数组的去重入口（没有分片归属可比）：旧单库/聚合路径用，按 hits + 时间取较强的一份。 */
+export function dedupeRecordsById(rows) {
+  return dedupeRecordEntries((Array.isArray(rows) ? rows : []).map((row) => ({ row }))).map((entry) => entry.row)
+}
+
+/**
+ * 读全部分片记录（按 manifest 登记顺序）。同 id 多份只返回一条（R6-D2）。
  * 单桶损坏/丢失/UTF-8 非法/行数少于 manifest 声明都抛错，不静默少读——
  * 少读会被下一次写回覆盖成永久丢失（D3，2026-11-12）。
  */
 export function readShardRecords(dataDir, manifest) {
   if (manifest === null || manifest === undefined) throw new Error('readShardRecords 需要 manifest')
-  const rows = []
+  const entries = []
   for (const bucket of manifest.buckets) {
     const file = resolveBucketPath(dataDir, bucket.file)
     const loaded = readBucketRows(file, bucket.file, { missing: 'throw', bucket })
-    rows.push(...loaded)
+    for (const row of loaded) entries.push({ row, bucketTypeId: String(bucket.typeId || '') })
   }
-  return rows
+  return dedupeRecordEntries(entries).map((entry) => entry.row)
 }
 
 function latestTsOf(rows) {
@@ -428,22 +661,32 @@ export function scanShards(dataDir) {
   } catch {
     names = []
   }
-  const records = []
-  const buckets = []
+  const entries = []
+  const bucketMeta = []
   for (const name of names) {
     const full = path.join(dirBuckets, name)
+    const rel = `${BUCKETS_DIR}/${name}`
+    const bucketTypeId = BUCKET_NAME_RE.exec(name)[1]
     // 重建路径同样逐行做 UTF-8 校验：坏字节不能因为「manifest 坏了要重建」就被吞成 U+FFFD。
-    const rows = readBucketRows(full, `${BUCKETS_DIR}/${name}`)
-    records.push(...rows)
-    buckets.push({
-      file: `${BUCKETS_DIR}/${name}`,
-      typeId: BUCKET_NAME_RE.exec(name)[1],
-      count: rows.length,
-      bytes: fs.statSync(full).size,
-      latestTs: latestTsOf(rows),
-    })
+    const rows = readBucketRows(full, rel)
+    for (const row of rows) entries.push({ row, bucketTypeId, file: rel })
+    bucketMeta.push({ file: rel, typeId: bucketTypeId, bytes: fs.statSync(full).size })
   }
-  return { records, buckets, cold: scanCold(dir) }
+  // 重复 id 只算一条（R6-D2）：重建出的 manifest 也不能把同一条当两条计（stats/桶声明都按去重后的行算）。
+  const kept = dedupeRecordEntries(entries)
+  const keptByFile = new Map()
+  for (const entry of kept) {
+    if (!keptByFile.has(entry.file)) keptByFile.set(entry.file, [])
+    keptByFile.get(entry.file).push(entry.row)
+  }
+  const buckets = bucketMeta.map((bucket) => {
+    const keptRows = keptByFile.get(bucket.file) || []
+    return { ...bucket, count: keptRows.length, latestTs: latestTsOf(keptRows) }
+  })
+  // 重建时看到的重复副本数（R6-D2）：manifest 里留个标记，下一次 exp_record 据此退全量
+  // 读—改—写（writeStore 会重写所有类型的分片，副本自然清掉）；没有标记就只能在 touched
+  // 类型里收敛，别的类型分片里的副本会一直留着、盘上仍两份。
+  return { records: kept.map((entry) => entry.row), buckets, cold: scanCold(dir), duplicates: entries.length - kept.length }
 }
 
 /**
@@ -520,16 +763,12 @@ export function assertDeclaredBucketsIntact(dataDir, buckets, cold = null) {
     const label = String(bucket.file || '')
     if (label === '') continue
     const file = resolveBucketPath(dataDir, label)
-    let actual = 0
-    try {
-      const rows = readBucketRows(file, label)
-      actual = rows.length
-    } catch (error) {
-      // UTF-8/JSON 损坏照常抛出（那是另一种损坏，不在这里放行）。
-      if (error && String(error.message).includes('不是合法 UTF-8')) throw error
-      if (error && String(error.message).includes('不是合法 JSON')) throw error
-      actual = 0
-    }
+    // R7 缺陷 R7-D4：这里原来用 catch 把所有读取错误都吞成 actual=0，`null` 行这类
+    // 「不是对象」的坏行会把 6 行有效数据谎报成「实际 0 行」，排障直接被误导。
+    // 只把「文件不在」（readBucketRows 返回 null）记作 0 行；其余损坏带着原始
+    // 文件+行号的错误直接抛出去。
+    const rows = readBucketRows(file, label)
+    const actual = rows === null ? 0 : rows.length
     if (actual < declared) shrunk.push({ label, declared, actual })
   }
   if (shrunk.length === 0) return
@@ -830,6 +1069,35 @@ function downsampleManifest(manifest) {
     if (Buffer.byteLength(text, 'utf8') <= MANIFEST_MAX_BYTES) return manifest
     limit = Math.floor(limit / 2)
   }
+  // 同做法键索引也是可重建缓存：仍超限就摘最老的键（代价只是那条旧记录少一次就地纠正，不丢数据）。
+  let indexKeys = manifest.taskIndex !== null && manifest.taskIndex !== undefined && typeof manifest.taskIndex === 'object'
+    ? Object.keys(manifest.taskIndex)
+    : []
+  while (indexKeys.length > 0) {
+    text = `${JSON.stringify(manifest, null, 2)}\n`
+    if (Buffer.byteLength(text, 'utf8') <= MANIFEST_MAX_BYTES) return manifest
+    // 体积降采样同样会摘键（R7-D1）：摘掉的键要进 dropped 名单，否则快路径会把它们当新键。
+    manifest.taskIndexTruncated = true
+    const half = Math.ceil(indexKeys.length / 2)
+    const removed = indexKeys.slice(0, half)
+    indexKeys = indexKeys.slice(half)
+    const trimmed = {}
+    for (const key of indexKeys) trimmed[key] = manifest.taskIndex[key]
+    manifest.taskIndex = trimmed
+    const dropped = [...new Set([
+      ...(Array.isArray(manifest.taskIndexDropped) ? manifest.taskIndexDropped : []),
+      ...removed,
+    ])]
+    if (dropped.length <= TASK_INDEX_DROPPED_LIMIT) manifest.taskIndexDropped = dropped
+    else delete manifest.taskIndexDropped
+  }
+  // 索引已摘空还超限：先放弃精确 dropped 名单（退化为「缺键不可信」）。
+  if (manifest.taskIndexDropped !== undefined) {
+    delete manifest.taskIndexDropped
+    manifest.taskIndexTruncated = true
+    text = `${JSON.stringify(manifest, null, 2)}\n`
+    if (Buffer.byteLength(text, 'utf8') <= MANIFEST_MAX_BYTES) return manifest
+  }
   for (const cluster of manifest.clusters) cluster.signature = { artifacts: [], tokens: [], cgrams: [] }
   return manifest
 }
@@ -841,6 +1109,9 @@ export function buildManifest(store, buckets, previous = null, options = {}) {
     : options.cold
   // 故意不写 updated_at（D1，2026-11-12）：manifest 每次记录都会重写，
   // 时间戳是纯噪音，而且正是 Git 冲突里最容易被两边都改的一行。
+  const builtIndex = options.taskIndex !== undefined && options.taskIndex !== null
+    ? { index: options.taskIndex, dropped: [], truncated: false }
+    : taskIndexEntries(store && store.experiences)
   const manifest = {
     schema: SHARD_SCHEMA,
     version: Number(store && store.version) || 1,
@@ -850,11 +1121,21 @@ export function buildManifest(store, buckets, previous = null, options = {}) {
     pending: pendingEntries(store),
     recent: Array.isArray(options.recent) ? options.recent : recentEntries(store),
     stats: options.stats !== undefined && options.stats !== null ? options.stats : statsEntries(store),
+    // 同做法键索引（0.21.3 R1）：全量重建时直接用全部行重算，增量路径由 writeTypeShards 维护。
+    taskIndex: builtIndex.index,
     cold: normalizeCold(previousCold),
+  }
+  // 索引被截断过（R7-D1）：快路径不能把缺键当成「没有跨类型旧条」。
+  // 名单在预算内就记下来（缺键可精确判别）；超预算只留 truncated 标记（缺键一律退慢）。
+  if (builtIndex.truncated) manifest.taskIndexTruncated = true
+  if (Array.isArray(builtIndex.dropped) && builtIndex.dropped.length > 0 && builtIndex.dropped.length <= TASK_INDEX_DROPPED_LIMIT) {
+    manifest.taskIndexDropped = builtIndex.dropped
   }
   const migratedFrom = options.migratedFrom
     || (previous !== null && previous !== undefined && typeof previous.migratedFrom === 'string' ? previous.migratedFrom : '')
   if (typeof migratedFrom === 'string' && migratedFrom !== '') manifest.migratedFrom = migratedFrom
+  // 重建时发现的重复 id 副本数（R6-D2）：只在显式传入（readManifest 自愈）时登记，写盘路径一律清掉。
+  if (Number(options.duplicates) > 0) manifest.duplicates = Math.trunc(Number(options.duplicates))
   return downsampleManifest(manifest)
 }
 
@@ -1180,20 +1461,21 @@ function rollbackColdAppends(dir, appends) {
 
 /**
  * 只读指定类型的分片（G1，P3 的省读入口）：`typeIds` 为空表示全部。
+ * 同 id 多份（本类型桶内重复 / 复制进别的类型桶）只返回一条（R6-D2）。
  * @returns {{records: object[], files: string[]}}
  */
 export function readShardRecordsOfTypes(dataDir, manifest, typeIds = []) {
   if (manifest === null || manifest === undefined) throw new Error('readShardRecordsOfTypes 需要 manifest')
   const wanted = new Set((Array.isArray(typeIds) ? typeIds : [typeIds]).map(String).filter((id) => id !== ''))
   const files = []
-  const records = []
+  const entries = []
   for (const bucket of manifest.buckets) {
     if (wanted.size > 0 && !wanted.has(String(bucket.typeId))) continue
     files.push(bucket.file)
     const rows = readBucketRows(resolveBucketPath(dataDir, bucket.file), bucket.file, { bucket })
-    records.push(...rows)
+    for (const row of rows) entries.push({ row, bucketTypeId: String(bucket.typeId || '') })
   }
-  return { records, files }
+  return { records: dedupeRecordEntries(entries).map((entry) => entry.row), files }
 }
 
 /**
@@ -1381,6 +1663,25 @@ export function writeTypeShards(dataDir, manifest, payload = {}) {
   }
   const nextStats = mergeTypeStats(dir, manifest.stats, touched, computedByType)
   const nextRecent = mergeRecent(manifest.recent, touched, computedByType)
+  // 同做法键索引（0.21.3 R1）：老 manifest 没有索引时，用**没被本次写过的类型**的现存分片补出基线
+  // （touched 类型的分片刚被替换，不能按旧 manifest 去读，否则会读到半写状态）。
+  // 只补一次：写回之后 manifest 就带索引，后续都是纯增量。
+  let taskIndexPrevious = {
+    index: taskIndexOf(manifest),
+    dropped: Array.isArray(manifest.taskIndexDropped) ? manifest.taskIndexDropped : null,
+    truncated: manifest.taskIndexTruncated === true,
+  }
+  if (taskIndexPrevious.index === null) {
+    const untouchedTypeIds = [...new Set(untouched.map((bucket) => String(bucket.typeId)))]
+      .filter((typeId) => !touched.includes(typeId))
+    taskIndexPrevious = {
+      index: taskIndexEntries(readShardRecordsOfTypes(dir, manifest, untouchedTypeIds).records, Number.MAX_SAFE_INTEGER).index,
+      dropped: [],
+      truncated: false,
+    }
+  }
+  const mergedIndex = mergeTaskIndex(taskIndexPrevious, touched, rowsByType)
+  const nextTaskIndex = mergedIndex.index
   const nextTypes = Array.isArray(payload.types) ? payload.types.map((type) => ({ ...type })) : manifest.types
   const typeOrder = new Map((Array.isArray(nextTypes) ? nextTypes : []).map((type, index) => [String(type && type.id), index]))
   const next = {
@@ -1393,9 +1694,16 @@ export function writeTypeShards(dataDir, manifest, payload = {}) {
     )),
     stats: nextStats,
     recent: nextRecent,
+    taskIndex: nextTaskIndex,
     ...(Array.isArray(payload.pending) ? { pending: payload.pending } : {}),
     ...(payload.cold !== undefined && payload.cold !== null ? { cold: normalizeCold(payload.cold) } : {}),
   }
+  // 索引完整性标记（R7-D1）：增量写无法证明索引完整，老 manifest 截断过就仍是截断；
+  // 只有全量写（buildManifest）才会重新判定并清掉。
+  if (mergedIndex.truncated) next.taskIndexTruncated = true
+  else delete next.taskIndexTruncated
+  if (mergedIndex.dropped !== null && mergedIndex.dropped.length > 0) next.taskIndexDropped = mergedIndex.dropped
+  else delete next.taskIndexDropped
   // 先写数据、后写 manifest（manifest 是唯一入口）。
   writeManifest(dir, next)
   return next

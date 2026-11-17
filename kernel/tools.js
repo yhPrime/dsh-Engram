@@ -35,6 +35,7 @@ import {
   visibleExperiences,
   renameType,
   scoreOf,
+  taskKeyOf,
   withStoreLock,
   upsertExperience,
   writeStore,
@@ -44,14 +45,14 @@ import {
   normalizeIsoDate,
   normalizeVolatility,
 } from './retrieval.js'
-import { readRecordsByIds, readShardRecordsOfTypes, recordShardWrite, writeTypeShards } from './shard-store.js'
+import { readRecordsByIds, readShardRecordsOfTypes, recordShardWrite, taskIndexOf, writeTypeShards } from './shard-store.js'
 import { findActiveSession, findRecordBinding, userMessageForRecord } from './session.js'
 import { measure, slimRecall, slimReceipt } from './token-budget.js'
 import { rankByTags } from './tag-rank.js'
 import { ensureTagOverrides } from './tag-registry.js'
 import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
-import { ensureClusters, routeCluster } from './cluster.js'
+import { AUTO_ROUTE_MIN_SCORE, ensureClusters, routeCluster } from './cluster.js'
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
@@ -136,6 +137,12 @@ function typesFromManifest(manifest) {
   const taskCounts = stats !== null && stats.tasksByType !== null && typeof stats.tasksByType === 'object' ? stats.tasksByType : null
   if (taskCounts === null) return null
   const types = Array.isArray(manifest.types) ? manifest.types : []
+  // 类型声明漂移（R6 缺陷 D3）：`stats.tasksByType` 还引用 `manifest.types` 里没有的 typeId，
+  // 说明 manifest 只取到了一边 / 类型声明被手删而分片旧行仍在。逐项取数会把那些行整条算丢
+  // （实测「未分类:0」而可见 2 行）——与「stats 缺失」同属「计数不可信」，返回 null 让调用方
+  // 回退全量读 + listTypes；发生一次写盘后 manifest 就自愈了。
+  const knownTypeIds = new Set(types.map((type) => String((type && type.id) || '')))
+  if (Object.keys(taskCounts).some((typeId) => !knownTypeIds.has(String(typeId)))) return null
   return types
     .map((type) => ({
       id: type.id,
@@ -147,6 +154,46 @@ function typesFromManifest(manifest) {
       count: Number(taskCounts[type.id]) || 0,
     }))
     .sort((left, right) => Number(left.system) - Number(right.system) || right.count - left.count || left.name.localeCompare(right.name, 'zh'))
+}
+
+/**
+ * `manifest.taskIndex` 是否能用来回答「这个键下有没有别的类型的旧条」（R6 缺陷 D1 / R7 缺陷 D1）。
+ *
+ * 三种情况：
+ *  - 键在索引里、值全是 typeId：可信（但键在 `taskIndexDropped` 名单里时，它的行被截断甩过、
+ *    类型覆盖可能不全 → 不可信）；
+ *  - 键不在索引、也不在 `taskIndexDropped` 名单、且名单**精确存在**：确实是新键 → 可信；
+ *  - 键不在索引、名单缺失（truncated 但没有 dropped 名单，记不清了）→ 不可信。
+ *
+ * 值被手改/冲突写成 `[]` / `null` / `''` / 数字 / 布尔 / 对象 / 数字数组 / 超长垃圾串时一律不可信：
+ * 解析不出**全部**是 typeId 就退回慢路径（与「缺索引 / 空键」同一收口），由写盘的
+ * `mergeTaskIndex` 重建索引。R7 缺陷 R7-D1：原来只判「有非空片段」，于是 `0` / `true` /
+ * `[1,2]` / 5000 字符垃圾都被当成可信，快路径照旧把同一条重开。typeId 口径是本仓库统一的
+ * `ty_[A-Za-z0-9_-]{1,64}`（预设 `ty_dev`、新建 `ty_<8hex>`、分片名同口径清洗）。
+ * 键不存在仍视为可信（确实没有别的类型挂这个键）；值里是旧 typeId 也照旧用——那个类型的分片
+ * 还在盘上就仍能定位到旧条（R5 ④a 的既有契约：类型声明漂移不牵连分片读取）。
+ */
+const TASK_INDEX_TYPE_ID_RE = /^ty_[A-Za-z0-9_-]{1,64}$/
+function isTypeIdList(raw) {
+  if (typeof raw !== 'string') return false
+  const candidates = raw.split(',').map((typeId) => typeId.trim())
+  return candidates.length > 0 && candidates.every((typeId) => TASK_INDEX_TYPE_ID_RE.test(typeId))
+}
+
+function fastIndexTrusted(manifest, taskKey) {
+  if (manifest === null || manifest === undefined || taskKey === '') return true
+  const taskIndex = taskIndexOf(manifest)
+  if (taskIndex === null) return true
+  const raw = taskIndex[taskKey]
+  const dropped = Array.isArray(manifest.taskIndexDropped) ? manifest.taskIndexDropped : null
+  // 这个键有行被 600 键上限甩掉过：索引里即使还留着它，typeId 覆盖也可能不全 → 退慢。
+  if (dropped !== null && dropped.includes(taskKey)) return false
+  if (raw === undefined) {
+    // 有精确 dropped 名单 → 不在名单里就是新键，可放心走快路径；
+    // 只有 truncated 标记、没有名单（超预算记不清）→ 缺键一律不可信。
+    return manifest.taskIndexTruncated !== true || dropped !== null
+  }
+  return isTypeIdList(raw)
 }
 
 /**
@@ -194,7 +241,7 @@ export function buildTools(defineTool, config = {}) {
       action: { type: 'string', required: true, description: '采取的做法或方案名。' },
       outcome: { type: 'string', enum: ['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'], description: '结果；影响回报 G。' },
       // 不叫 type：与 JSON Schema 的 type 关键字同名时，provider 严格校验会把参数当关键字读。
-      typeName: { type: 'string', description: '类型名（可选）。不填归「未分类」；填了新名字会按需新建类型（受上限与近似合并限制）。' },
+      typeName: { type: 'string', description: '这条经验该归哪个主分类。先自己判断；实在判断不出来才留空，留空即落「未分类」。填了新名字会按需新建类型（受上限与近似合并限制）。' },
       typeDescription: { type: 'string', description: '新建类型时的描述（≤120 字）：这个类型收什么、召回时怎么用。复用已有类型时忽略。' },
       note: { type: 'string', description: '关键步骤、为什么有效、踩了什么坑。' },
       taskId: { type: 'string', description: '可选：多步任务的任务 id。同 taskId 的步骤会归到同一任务，统计按任务算一次。' },
@@ -228,14 +275,24 @@ export function buildTools(defineTool, config = {}) {
       const manifest = readManifest(dataDir)
       const host = hostSessionOf(exec)
       const hostCwd = host.cwd !== '' ? host.cwd : (config.cwd || process.cwd())
-      // 没给类型时按簇路由自动归族（config.routing='off' 或 autoAssign=false 可关）；落不进任何簇就保持「未分类」。
+      // 主分类由模型负责（0.21.3 计划书 §0.1 D1）：手动调用**不再自动归族**——没给就落「未分类」，
+      // 回执里给 typeWarning 提示模型补；分不出来保持原样也允许（D2：不阻断保存）。
+      // 只有自动记录（`args.origin==='auto'`，由 auto-record.js 传入）才用词面路由兜底，
+      // 且用独立门槛 autoRouteMinScore（默认 0.08，比召回路由的 0.17 松），见 §0.1 D3。
       // 路由只用 manifest 的 clusters 缓存（与全量重算的一致性有测试守着）。
-      const autoAssign = config.autoAssign !== false && config.routing !== 'off'
+      const isAutoRecord = String(args.origin || '').toLowerCase() === 'auto'
+      // 门槛只认 (0, 1]（0.21.3 R1 健壮性缺陷 4）：`Number('')`=0 / 负数 / null / NaN 都会让门槛失效，
+      // 自动记录于是把 score=0 的无关意图也归族。非法值一律回落 AUTO_ROUTE_MIN_SCORE。
+      const rawAutoRouteMinScore = Number(config.autoRouteMinScore)
+      const autoRouteMinScore = Number.isFinite(rawAutoRouteMinScore) && rawAutoRouteMinScore > 0 && rawAutoRouteMinScore <= 1
+        ? rawAutoRouteMinScore
+        : AUTO_ROUTE_MIN_SCORE
+      const autoAssign = isAutoRecord && config.autoAssign !== false && config.routing !== 'off'
       let typeName = args.typeName !== undefined ? args.typeName : args.type
       const typeNameGiven = !(typeName === undefined || typeName === null || String(typeName).trim() === '')
       let routedCluster = null
       if (!typeNameGiven && autoAssign && manifest !== null) {
-        const route = routeCluster({ types: manifest.types, clusters: manifest.clusters }, String(args.intent || ''))
+        const route = routeCluster({ types: manifest.types, clusters: manifest.clusters }, String(args.intent || ''), { minScore: autoRouteMinScore })
         if (!route.fallback) {
           typeName = route.name
           routedCluster = { clusterId: route.clusterId, name: route.name, score: route.score }
@@ -299,6 +356,8 @@ export function buildTools(defineTool, config = {}) {
         artifacts: args.artifacts,
         dimensions: args.dimensions,
         type: typeName,
+        // 这个类型是引擎按簇路由给的（不是模型补的）：store 不能用它触发跨类型就地改写。
+        typeFromRoute: routedCluster !== null,
         typeDescription: args.typeDescription,
         note: args.note,
         volatility: args.volatility,
@@ -336,26 +395,55 @@ export function buildTools(defineTool, config = {}) {
 
       // 快路径（task-9）：有 manifest 且不需要跨类型回填时，只读目标类型（+ pending 所在类型）的行，
       // upsert 后走 recordShardWrite（定向写 + 压缩触发）。partial store 绝不交给 writeStore。
-      if (manifest !== null && !haveVerdicts) {
+      //
+      // 同做法键索引（0.21.3 R1 缺陷 1/3）是部分读的前提：没有它就不知道「别的类型下还有没有
+      // 同 intent+action 的旧条」。老 manifest 缺这份索引时宁可退回慢路径一次（写盘时补齐），
+      // 也不能在看不到旧条的情况下新开一条——那等于把「补 typeName 就地纠正」变成永远的新增。
+      const taskIndex = taskIndexOf(manifest)
+      // 同做法键（显式给类型时才需要）：用来在 taskIndex 里定位**别的类型**下的同键旧条。
+      const fastTaskKey = typeNameGiven ? taskKeyOf(args.intent, args.action) : ''
+      // 0.21.3 R5 缺陷 D2（R4 修复的副作用）：控制字符-only 的 intent 算出空键、不进 taskIndex（R4 有意为之），
+      // 快路径因此定位不到跨类型旧条；partial store 看不到别的类型的分片，upsert 只会新开一条——
+      // 与慢路径的「就地改类型」分裂。空键时无从定位，退回慢路径。
+      const fastKeyUsable = !(typeNameGiven && fastTaskKey === '')
+      // 索引值可信度（R6 缺陷 D1）：值被写坏（空数组/null/空串）时解析不出候选类型、定位不到
+      // 别的类型下的旧条，退回慢路径就地纠正，不能新开一条。缺失键仍可信。
+      const fastIndexUsable = !typeNameGiven || fastIndexTrusted(manifest, fastTaskKey)
+      // 分片重复 id（R6 缺陷 D2）：重建 manifest 时看到过同一条的多份副本（duplicates>0）。
+      // 副本可能躺在**任何**类型的分片里，partial 读看不全，快路径写回只能在 touched 类型内收敛，
+      // 别的分片里那份会留着。这时退回全量读—改—写（writeStore 重写所有类型，副本一次清干净）。
+      const fastDuplicateFree = !(manifest !== null && Number(manifest.duplicates) > 0)
+      // 快路径自己 resolve 一次类型（可能要新建），upsert 里二次 resolve 时类型已存在 → created=false。
+      // 所以「本次是否新建类型」要在快路径这一层记下来，否则快/慢两条入口的回执不一致（R3 缺陷 2）。
+      let fastTypeCreated = false
+      if (manifest !== null && !haveVerdicts && taskIndex !== null && fastKeyUsable && fastIndexUsable && fastDuplicateFree) {
         const typeStore = {
           version: manifest.version,
           types: (Array.isArray(manifest.types) ? manifest.types : []).map((type) => ({ ...type })),
           experiences: [],
           clusters: manifest.clusters,
         }
-        const resolved = resolveTypeForRecord(typeStore, typeNameGiven ? String(typeName) : '', {
-          typeDescription: args.typeDescription,
-          maxTypes: config.maxTypes,
-          newTypesPerDay: config.newTypesPerDay,
-          similarity: config.typeSimilarity,
-        })
+        // 自动记录归族：路由簇名就是目标类型，快路径要按它 resolve（否则会解析成「未分类」而被
+        // needsCrossTypeInheritance 退回慢路径，R1 的分片快路径等于没被自动记录用上，R3 缺陷 3）。
+        const resolved = resolveTypeForRecord(
+          typeStore,
+          typeNameGiven ? String(typeName) : (routedCluster === null ? '' : String(typeName)),
+          {
+            typeDescription: args.typeDescription,
+            maxTypes: config.maxTypes,
+            newTypesPerDay: config.newTypesPerDay,
+            similarity: config.typeSimilarity,
+          },
+        )
         // 没给显式类型、又落到「未分类」时，upsert 会跨类型继承归属——partial store 看不到别的类型，走慢路径。
-        const needsCrossTypeInheritance = !typeNameGiven
+        // 路由给的类型不需要继承（它自带归属），所以只有「模型没给 + 没路由」才退慢路径。
+        const needsCrossTypeInheritance = !typeNameGiven && routedCluster === null
           && resolved.type !== undefined && resolved.type !== null
           && resolved.type.id === SYSTEM_TYPE.id
         if (resolved.type !== undefined && resolved.type !== null && !needsCrossTypeInheritance) {
+          fastTypeCreated = resolved.created === true
           const targetTypeId = String(resolved.type.id)
-          if (!typeNameGiven) {
+          if (!typeNameGiven && routedCluster === null) {
             typeName = resolved.type.name
             upsertInput.type = typeName
           }
@@ -365,36 +453,57 @@ export function buildTools(defineTool, config = {}) {
             .filter((ref) => ref.id !== '')
           const loadedTypeIds = new Set([targetTypeId])
           for (const ref of pendingRefs) loadedTypeIds.add(ref.typeId)
+          // 类型纠正：显式给了 typeName，而同一个「同做法键」在**别的类型**下也有行 →
+          // 那些类型的分片必须一起读进来，否则 upsert 看不到旧条，只会新开一条。
+          if (typeNameGiven) {
+            // 空键在 gate 处已退回慢路径（R5 缺陷 D2），这里只处理非空键。
+            const listed = fastTaskKey === '' ? '' : String(taskIndex[fastTaskKey] === undefined || taskIndex[fastTaskKey] === null ? '' : taskIndex[fastTaskKey])
+            for (const typeId of listed.split(',')) {
+              const candidate = typeId.trim()
+              if (candidate !== '' && candidate !== targetTypeId) loadedTypeIds.add(candidate)
+            }
+          }
           const loadedRows = readShardRecordsOfTypes(dataDir, manifest, [...loadedTypeIds]).records
-          const store = { version: manifest.version, types: typeStore.types, clusters: manifest.clusters, experiences: loadedRows }
-          pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
-          // skipClusters：partial store 上重算簇没有意义（别的类型没有行），由 recordShardWrite 按
-          // touched 类型重算（签名走 state 快速路径，成本很小）。
-          result = upsertExperience(store, upsertInput, { ...upsertOptions, skipClusters: true })
-          // 写回：touched = 读过的类型 + upsert 实际落到/新建的类型；每类都要给**全部行**（含墓碑）。
-          const rowsByType = groupRowsByType(store.experiences)
-          const touched = [...new Set([...loadedTypeIds, String(result.experience.typeId || targetTypeId)])]
-          const rowsPayload = {}
-          for (const typeId of touched) rowsPayload[typeId] = rowsByType[typeId] || []
-          const updated = recordShardWrite(dataDir, manifest, {
-            touchedTypeIds: touched,
-            rowsByType: rowsPayload,
-            types: store.types,
-            compact: config.compactShard,
-          })
-          activeCount = Number.isFinite(Number(updated.stats && updated.stats.visible)) ? Number(updated.stats.visible) : 0
+          // 错分片（R7 缺陷 R7-D3）：读到的行如果声明了没被读进来的类型，说明它是「跨类型新 id 的
+          // 唯一副本躺在别的类型分片里」（外部追加/Git 合并取错边）。快路径只写 touched 类型，
+          // groupRowsByType 会把它分到没写的类型 → 整行从盘上消失，而 mergeTypeStats 还保留该类型
+          // 旧计数（stats.visible 永久多 1，桶声明与实际一致所以不自愈）。退回慢路径让 writeStore
+          // 按行自己的 typeId 归位重写；正常数据里行 typeId 必在 loadedTypeIds 内，不触发。
+          const loadedTypeSet = new Set(loadedTypeIds)
+          const misplacedRow = loadedRows.some((row) => !loadedTypeSet.has(String((row && row.typeId) || SYSTEM_TYPE.id)))
+          if (!misplacedRow) {
+            const store = { version: manifest.version, types: typeStore.types, clusters: manifest.clusters, experiences: loadedRows }
+            pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
+            // skipClusters：partial store 上重算簇没有意义（别的类型没有行），由 recordShardWrite 按
+            // touched 类型重算（签名走 state 快速路径，成本很小）。
+            result = upsertExperience(store, upsertInput, { ...upsertOptions, skipClusters: true })
+            // 写回：touched = 读过的类型 + upsert 实际落到/新建的类型；每类都要给**全部行**（含墓碑）。
+            const rowsByType = groupRowsByType(store.experiences)
+            const touched = [...new Set([...loadedTypeIds, String(result.experience.typeId || targetTypeId)])]
+            const rowsPayload = {}
+            for (const typeId of touched) rowsPayload[typeId] = rowsByType[typeId] || []
+            const updated = recordShardWrite(dataDir, manifest, {
+              touchedTypeIds: touched,
+              rowsByType: rowsPayload,
+              types: store.types,
+              compact: config.compactShard,
+            })
+            activeCount = Number.isFinite(Number(updated.stats && updated.stats.visible)) ? Number(updated.stats.visible) : 0
+          }
         }
       }
 
       // 慢路径（老库 / 带 verdicts 回填 / 需要跨类型继承）：保持 0.13 的全量读—改—写。
       if (result === null) {
         const store = readStore(dataDir)
-        if (!typeNameGiven && autoAssign) {
-          const route = routeCluster(store, String(args.intent || ''))
+        if (!typeNameGiven && autoAssign && routedCluster === null) {
+          const route = routeCluster(store, String(args.intent || ''), { minScore: autoRouteMinScore })
           if (!route.fallback) {
             typeName = route.name
             routedCluster = { clusterId: route.clusterId, name: route.name, score: route.score }
             upsertInput.type = typeName
+            // 老库没有 manifest 时自动记录只能走慢路径：路由类型同样不算模型给的分类。
+            upsertInput.typeFromRoute = true
           }
         }
         // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。
@@ -407,6 +516,18 @@ export function buildTools(defineTool, config = {}) {
         result = upsertExperience(store, upsertInput, upsertOptions)
         writeStore(dataDir, store)
         activeCount = visibleExperiences(store).length
+      }
+      // 回执自洽（0.21.3 R4 缺陷 1）：pending 快照取在 upsert 之前（「本轮新记的 pending 不当轮提醒」），
+      // 而 outcome 合并会在 upsert 里把同一行就地置 decided。同一份回执不能既报 verdict=decided
+      // 又把它列进 pending（否则模型会对已判定行重复回填，resolveVerdicts 不拒已判定行）。
+      // 快路径/慢路径的行对象都是 store 内的引用，按 upsert 后的真实状态过滤即可。
+      // R7 缺陷 D2：被取代（superseded_by）/退休/删除的行 verdict 仍是 pending，只判 verdict
+      // 会把「本轮刚被取代」的 p1 又列成待判定（回执自相矛盾，模型还会重复回填）。按可见性一起滤。
+      pendingOut = {
+        rows: pendingOut.rows.filter((item) => item !== null && typeof item === 'object'
+          && item.verdict === 'pending'
+          && !item.superseded_by && !item.retired_at && !item.deleted_at),
+        skipped: pendingOut.skipped,
       }
       // 技能账本：用了技能就回填结果；撞到障碍就按签名计数（连续 3 次覆盖并归档）。
       let skillResult = null
@@ -474,9 +595,15 @@ export function buildTools(defineTool, config = {}) {
         G: result.experience.G,
         typeName: result.experience.typeName,
         dimensions: Array.isArray(result.experience.dimensions) && result.experience.dimensions.length > 0 ? result.experience.dimensions : undefined,
-        typeCreated: typeInfo.created === true ? true : undefined,
+        typeCreated: typeInfo.created === true || fastTypeCreated === true ? true : undefined,
         typeMergedInto: typeInfo.mergedInto || undefined,
-        typeWarning: typeInfo.rejected ? `${typeInfo.reason}（已归「未分类」）` : undefined,
+        // 未分类不再静默（0.21.3 D2）：类型被拒或被判「没有类型」都要回执告诉模型。
+        // 自动记录不谈「补一次 typeName」（那条回执不给模型看），只留 rejected 的说法。
+        typeWarning: typeInfo.rejected
+          ? `${typeInfo.reason}（已归「未分类」）`
+          : !isAutoRecord && ['no-type', 'generic-name', 'invalid-name'].includes(String(typeInfo.reason || ''))
+            ? '本条未分类——能分就再补一次 typeName，分不出来就保持原样。'
+            : undefined,
         typeRecoveredFromNote: result.typeRecoveredFromNote === true ? true : undefined,
         noteSanitized: sanitized.note === true || sanitized.intent === true || sanitized.action === true ? true : undefined,
         routedCluster,
@@ -1029,6 +1156,17 @@ export function buildTools(defineTool, config = {}) {
         induction: typeof result.induction === 'string',
         marked: args.mark === true,
         markedCount: Number(result.marked) || 0,
+        // 影子 top5 落盘（0.21.3 计划书 §21.1）：只记 id 与重合度，够算「重合度 / 增量」两个判据，
+        // 不写正文、不改召回结果；tagShadow 关着时这一行不出现。
+        ...(tagShadowEnabled && payload.tagShadow !== undefined
+          ? {
+            shadow: {
+              overlapAt5: payload.tagShadow.overlapAt5,
+              tagTop: (payload.tagShadow.tagTop || []).slice(0, 5).map((item) => item && item.id).filter((id) => typeof id === 'string' && id !== ''),
+              typeTop: (payload.tagShadow.typeRoutingTop || []).slice(0, 5),
+            },
+          }
+          : {}),
         chars: measure(payload),
       }, usageOptions)
       return payload

@@ -195,6 +195,16 @@ export function refreshClusters(store) {
 export const ROUTE_MIN_SCORE = 0.17
 
 /**
+ * 自动记录的归族门槛（0.21.3 计划书 §0.1 D3）：只给 `exp_record` 的自动记录路径用。
+ *
+ * 为什么比 0.17 松：自动记录没有模型参与，词面路由是唯一零成本手段；0.17 是按「查询式意图」
+ * 标定的，自动记录的意图常是短追问（「记得组件团队去干哦」这类），词面信号天然弱。
+ * 0.08 在 2026-11-17 那 43 条未分类上回放可捞回约 19 条，且已剔除「路由回未分类」的无效项。
+ * 手动记录不再走路由（主分类由模型负责），所以这个门槛不影响召回侧。
+ */
+export const AUTO_ROUTE_MIN_SCORE = 0.08
+
+/**
  * 簇的规模权重：1 条经验的簇签名只由那一条经验决定，容易与任意提到同一产物的查询撞高分
  * （实测：1 条经验的「文档 / 教案」簇在「改 PPT 页码」上压过 5 条经验的「PPT / 课件」簇）。
  * 5 条以上视为证据充分，不降权。1 条取 0.6 而不是 0.5：降太狠会让冷启动簇永远接不住。
@@ -209,6 +219,39 @@ function round4(value) {
 }
 
 /**
+ * 路由前的缓存清洗（0.21.3 R2 健壮性缺陷 D1）。
+ *
+ * `manifest.clusters` 是派生缓存，正常原子写不会产生坏元素，但手改 / 合并冲突 / 半写可能留下
+ * `null` 元素或缺字段的对象。以前 `active` 过滤直接读 `cluster.stats`（tools.js 两处传的是**未清洗**
+ * 的 manifest.clusters），一个 null 就让 `exp_record(origin='auto')` 与 `exp_recall` 一起抛
+ * TypeError。缓存不可信时按「没有这个簇」处理：非对象丢弃，缺 signature/stats 补空壳，
+ * 分数自然低、路由回退全库——派生缓存坏了只该降级，不该打断记录与召回。
+ * @param {unknown[]} clusters
+ * @returns {object[]}
+ */
+function usableClusters(clusters) {
+  const out = []
+  for (const cluster of clusters) {
+    if (cluster === null || typeof cluster !== 'object' || Array.isArray(cluster)) continue
+    const stats = cluster.stats !== null && typeof cluster.stats === 'object' && !Array.isArray(cluster.stats) ? cluster.stats : {}
+    if ((Number(stats.count) || 0) <= 0) continue
+    const signature = cluster.signature !== null && typeof cluster.signature === 'object' && !Array.isArray(cluster.signature) ? cluster.signature : {}
+    out.push({
+      id: cluster.id,
+      name: typeof cluster.name === 'string' ? cluster.name : '',
+      description: typeof cluster.description === 'string' ? cluster.description : '',
+      signature: {
+        artifacts: Array.isArray(signature.artifacts) ? signature.artifacts : [],
+        tokens: Array.isArray(signature.tokens) ? signature.tokens : [],
+        cgrams: Array.isArray(signature.cgrams) ? signature.cgrams : [],
+      },
+      stats,
+    })
+  }
+  return out
+}
+
+/**
  * 确定性簇路由：替代论文里的 LLM router（论文 §C.2 实测对自带检索的系统加路由无收益、成本 +8–29%）。
  *
  * 只把「有经验的簇」纳入候选：空簇没有签名，分数来自手写描述，不可信。
@@ -219,9 +262,14 @@ function round4(value) {
  */
 export function routeCluster(store, intent, options = {}) {
   const clusters = Array.isArray(store.clusters) ? store.clusters : ensureClusters(store)
-  const minScore = Number.isFinite(Number(options.minScore)) ? Number(options.minScore) : ROUTE_MIN_SCORE
+  // 门槛只认「有限且 ≥0」的实数（0.21.3 R1 健壮性缺陷 4）：负数 / NaN / Infinity 以前会被当门槛用
+  // （`-1` 等于「什么都命中」），自动记录于是把无关意图归到 top1 簇。
+  // 0 仍然合法——那是「只要 top1 存在就选它」的既定契约（cluster.test.mjs 钉着），
+  // 但它只能来自**程序内显式调用**：配置值在 tools.js 入口已按 (0,1] 校验，0/空串/null 一律回落默认。
+  const rawMinScore = Number(options.minScore)
+  const minScore = Number.isFinite(rawMinScore) && rawMinScore >= 0 ? rawMinScore : ROUTE_MIN_SCORE
   const query = stateOf(intent)
-  const active = clusters.filter((cluster) => (Number(cluster.stats && cluster.stats.count) || 0) > 0)
+  const active = usableClusters(clusters)
   // 簇身份：手写描述声明的产物 + 经验主产物（跨簇泛标签剔除）。
   const artifactDf = new Map()
   for (const cluster of active) {
@@ -261,8 +309,14 @@ export function buildBrief(store, route, candidates = [], maxCharacters = 300) {
   if (route === null || route === undefined || route.fallback) {
     lines.push(`【经验库】没有同族经验，已全库检索（${list.length} 条候选；无成败对照时参考证据而非排名）。`)
   } else {
-    const cluster = (Array.isArray(store.clusters) ? store.clusters : []).find((item) => item.id === route.clusterId)
-    const stats = cluster === undefined ? { count: 0, success: 0, fail: 0 } : cluster.stats
+    // 同一份派生缓存也可能被手改/损坏（0.21.3 R2 健壮性 D1）：`tools.js` 的 partial 路径把**未清洗**的
+    // `manifest.clusters` 交给这里，`[null]` 时以前在 `item.id` 上抛 TypeError，把整次召回打断。
+    // 找不到 / 缺 stats 就按「0 条」报——简报是附属信息，不该成为新的崩溃点。
+    const cluster = (Array.isArray(store.clusters) ? store.clusters : [])
+      .find((item) => item !== null && typeof item === 'object' && item.id === route.clusterId)
+    const stats = cluster === undefined || cluster.stats === null || typeof cluster.stats !== 'object'
+      ? { count: 0, success: 0, fail: 0 }
+      : cluster.stats
     lines.push(`【簇】${route.name}（${stats.count} 条｜成功 ${stats.success}｜失败 ${stats.fail}）`)
     const top = list[0]
     if (top !== undefined) {

@@ -35,6 +35,14 @@
 
 ## 当前发布
 
+- **v0.23.0（主分类回到模型负责 / 路由只服务自动记录 / 影子落盘）**
+  - `exp_record` 的 `typeName` 描述改成「这条经验该归哪个主分类。先自己判断；实在判断不出来才留空，留空即落『未分类』」；提示段补一句「记经验时顺手给主分类，分不出来才留空」；未分类时回执给 `typeWarning`，不再静默
+  - **手动记录不再自动归族**：引擎簇路由只服务自动记录（`origin='auto'`），门槛走独立配置 `autoRouteMinScore`（默认 0.08，只认 (0,1]，越界回落）；`ENGINE_CONFIG_DEFAULTS` 增加 `routing` / `autoAssign` / `autoRouteMinScore`
+  - **跨类型重记就地纠正**：用户说「这条分类错了」再带正确 `typeName` 重记同一 intent+action → 就地改类型、hits 累加（此前会新增一条把旧的留着）；分片快路径新增「同做法键」索引，快慢路径同键命中
+  - `exp_recall` 的 usage 行在 `tagShadow` 开启时新增 `shadow{overlapAt5,tagTop,typeTop}`（只记 id，不写正文），为「类型是否退出路由」的切换判据提供数据
+  - 迭代 R1~R8 八轮四类（白盒/黑盒/模拟真实使用/健壮性）累计抓 25 个真缺陷并全部修复（类型继承回执、自动记录吞手动条、pending 自相矛盾、500/2000 码点截断劈 emoji、taskIndex 可信度、分片重复 id、usage 截断劈代理项等）；32 个 `iter-0213` 用例 + 全量回归连跑两遍 0 失败
+  - 已知局限：控制字符-only intent 写侧仍落 1 行不可见数据；`exp_type rename` 后 `create` 旧名会撞同一 id（未修，建议单开任务）
+
 - **v0.22.0（控制台 P2：复核到期清单 / 自动记录关闭提示 / 技能正文模式）**
   - 经验页与技能页新增「到期复核 N」入口与共用 `ReviewDuePanel`：勾选批量或单条「确认仍有效 / 标待复核」，逐条调 `/review`，失败逐条回显，不整批回滚
   - 经验页到期清单走 `/experiences?due=1`（`reviewAfter` 已过期或生命周期已是 `stale`）；技能页按 `reviewDue` / `stale` 推导（技能默认易腐）
