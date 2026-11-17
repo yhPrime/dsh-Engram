@@ -349,37 +349,20 @@ function normalizeStore(raw) {
     : []
   const types = (rawTypes.length > 0 ? rawTypes : [{ ...SYSTEM_TYPE }]).map((type) => (type.id === SYSTEM_TYPE.id ? { ...type, system: true } : type))
   if (!types.some((type) => type.id === SYSTEM_TYPE.id)) types.push({ ...SYSTEM_TYPE })
-  // 同 id 多份类型（0.23.1 迁移）：改名保留旧 id，之后重新创建旧名会算出同一个 id。
-  // 后出现的那份换新 id，并按「旧 id + 名字」把经验改挂过去（同 id 的行可能属于任一类型，名字是唯一可靠判据）。
-  const typeIdRemap = []
+  // 类型是存储桶：一个 id 只对应一个类型（0.23.2 起 id 随机分配，这条结构上不可能被违反）。
+  // 读到同 id 两份 = 库里数据已损坏（旧哈希 id 时代留下的），直接报错，不静默拆开、不猜归属。
   const seenTypeIds = new Set()
   for (const type of types) {
-    if (!seenTypeIds.has(type.id)) {
-      seenTypeIds.add(type.id)
-      continue
+    if (seenTypeIds.has(type.id)) {
+      throw new Error(`经验库结构损坏：类型 id 重复（${type.id}）——一个 id 只能对应一个类型`)
     }
-    const oldId = type.id
-    const oldName = String(type.name || '')
-    type.id = uniqueTypeId(types, type.name, type)
     seenTypeIds.add(type.id)
-    typeIdRemap.push({ oldId, oldName, newId: type.id })
   }
   // 同 id 多份只算一条（R6-D2）：分片被外部复制 / Git 合并取错一边时，同一条不能按两条计
   // （dedupeRecordsById 按 hits/时间取较强的一份，字段不丢）。
   const experiences = dedupeRecordsById(Array.isArray(raw.experiences)
     ? raw.experiences.filter((item) => item && typeof item === 'object' && !Array.isArray(item))
     : [])
-  // 把撞 id 的类型名下的经验改挂到新 id（必须在悬空判定之前）。
-  if (typeIdRemap.length > 0) {
-    for (const item of experiences) {
-      for (const entry of typeIdRemap) {
-        if (item.typeId === entry.oldId && String(item.typeName || '') === entry.oldName) {
-          item.typeId = entry.newId
-          break
-        }
-      }
-    }
-  }
   // typeId 悬空（types 丢失/被删）：读时归「未分类」，别让计数/召回读到幽灵类型。
   const typeIds = new Set(types.map((type) => type.id))
   for (const item of experiences) {
@@ -1151,7 +1134,7 @@ export function resolveTypeForRecord(store, rawName, options = {}) {
   }
 
   const type = {
-    id: uniqueTypeId(store.types, name),
+    id: newTypeId(store.types),
     name,
     description: String(options.typeDescription || '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 120),
     createdAt: new Date().toISOString(),
@@ -1214,29 +1197,24 @@ export function hasVisibleText(raw) {
   return text.replace(/[\u0000-\u001F\u007F-\u009F]/gu, '').replace(/\s+/gu, '') !== ''
 }
 
-/** 类型 id 的规范算法：名字小写 sha1 前 8 位。 */
-function typeIdOfName(name) {
-  return `ty_${createHash('sha1').update(String(name).toLowerCase()).digest('hex').slice(0, 8)}`
-}
-
 /**
- * 类型 id 去重（0.23.1）：改名保留旧 id，所以「旧名被重新创建」会算出同一个 id，
- * 两个类型共享 id → `exp_type list` 把同一批行算两遍、`readStore().types` 出现同 id 两项。
- * 撞了就加盐重算，绝不让两个类型共用 id（数据侧由 normalizeStore 的迁移兜底）。
+ * 类型 id：创建时随机分配一次，**不由名字推导、永不复用**（0.23.2）。
+ *
+ * 类型是存储桶：一个 id 只对应一个类型，这是结构约束，不是"尽量别撞"。
+ * 名字与 id 解耦之后，「改名释放名字再重新创建」不会重新算出同一个 id，
+ * 也就不需要加盐、不需要读库时拆撞 id 的迁移。
+ * 存量库里的旧 id（名字哈希时代留下的）原样保留，只是不再产生新的哈希 id。
  */
-function uniqueTypeId(types, name, exceptType = null) {
+function newTypeId(types) {
   const taken = new Set()
   for (const type of Array.isArray(types) ? types : []) {
-    if (!type || type === exceptType) continue
-    if (typeof type.id === 'string' && type.id !== '') taken.add(type.id)
+    if (type && typeof type.id === 'string' && type.id !== '') taken.add(type.id)
   }
-  const base = typeIdOfName(name)
-  if (!taken.has(base)) return base
-  for (let salt = 2; salt <= 999; salt += 1) {
-    const candidate = `ty_${createHash('sha1').update(`${String(name).toLowerCase()}#${salt}`).digest('hex').slice(0, 8)}`
-    if (!taken.has(candidate)) return candidate
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const id = `ty_${createHash('sha1').update(`${Date.now()}|${Math.random()}|${attempt}`).digest('hex').slice(0, 8)}`
+    if (!taken.has(id)) return id
   }
-  return `ty_${createHash('sha1').update(`${String(name).toLowerCase()}#${Date.now()}`).digest('hex').slice(0, 8)}`
+  return `ty_${createHash('sha1').update(`${Date.now()}|${Math.random()}|fallback`).digest('hex').slice(0, 12)}`
 }
 
 /**
@@ -2859,7 +2837,7 @@ export function createType(store, rawName, description = '') {
   if (name === '') throw new Error('类型名无效（2–16 个字符）')
   if (findType(store.types, name) !== null) throw new Error(`类型已存在：${name}`)
   const type = {
-    id: uniqueTypeId(store.types, name),
+    id: newTypeId(store.types),
     name,
     description: String(description || '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 120),
     createdAt: new Date().toISOString(),
