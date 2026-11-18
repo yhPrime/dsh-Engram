@@ -1425,7 +1425,7 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(value))))))),
           notice ? h(Banner, { bad: true }, notice) : null,
           autoRecordState === false
-            ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '自动记录已关闭：回合收尾不再自动落待判定经验（去「设置 → 内核参数」打开）。')
+            ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '自动记录已关闭（默认关）：回合收尾不会自动落待判定经验；要记去「设置 → 内核参数 → 自动记录回合」打开。')
             : null,          h('div', { className: 'eng-card eng-section eng-section-card' },
             h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '存储结构')),
             storage === null
@@ -5628,7 +5628,7 @@ window.__ModuleLoader__.load({
           const update = draftSetter(setDraft)
           let control
           if (field.type === 'boolean') {
-            // 未保存过的项按字段声明的默认值显示（如「自动记录回合」默认开），而不是一律显示关。
+            // 未保存过的项按字段声明的默认值显示（如「自动记录回合」默认关），而不是一律显示关。
             const checked = value === undefined ? field.default === true : value === true
             control = h('label', { className: 'eng-actions', style: { fontWeight: 400 } },
               h('input', { type: 'checkbox', checked, onChange: (event) => update(field.key, event.target.checked) }),

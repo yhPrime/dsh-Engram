@@ -11,7 +11,7 @@ import path from 'node:path'
 import { createTools } from './engine.js'
 import { createAutoRecorder } from './auto-record.js'
 import { ensureDefaultTypes, renderHint } from './store.js'
-import { readSavedEngineConfig, resolveEngramDataDir } from './settings.js'
+import { ENGINE_CONFIG_DEFAULTS, readSavedEngineConfig, resolveEngramDataDir } from './settings.js'
 import { createSkillCatalogHook } from './skills.js'
 
 export const name = 'dsh-engram'
@@ -29,16 +29,26 @@ function audit(config, line) {
   }
 }
 
-export async function apply(ctx, rawConfig = {}) {
-  // 设置页保存的参数优先于插件行配置，且每次读取都取最新值。
-  // 只认「磁盘上真存了的键」：默认值不能压掉插件行配置（例如插件行显式写 skillCatalog:false）。
-  const config = new Proxy({}, {
+/**
+ * 配置视图：设置页保存的值 > 插件行配置 > 内核缺省值，每次读取都取最新值。
+ * 0.24.1 起缺省值也参与——否则 `autoRecord` 这类「没存过就该关」的开关在插件行没写时会退化成
+ * undefined。缺省值只补插件行确实没写的键，仍然不压插件行配置（例如插件行显式写 skillCatalog:false）。
+ */
+export function createConfigView(rawConfig = {}) {
+  return new Proxy({}, {
     get(_target, key) {
+      const name = String(key)
       const overrides = readSavedEngineConfig()
-      if (Object.prototype.hasOwnProperty.call(overrides, String(key))) return overrides[String(key)]
-      return rawConfig[key]
+      if (Object.prototype.hasOwnProperty.call(overrides, name)) return overrides[name]
+      if (Object.prototype.hasOwnProperty.call(rawConfig, name)) return rawConfig[name]
+      if (Object.prototype.hasOwnProperty.call(ENGINE_CONFIG_DEFAULTS, name)) return ENGINE_CONFIG_DEFAULTS[name]
+      return undefined
     },
   })
+}
+
+export async function apply(ctx, rawConfig = {}) {
+  const config = createConfigView(rawConfig)
   let defineTool = (definition) => definition
   // 首次安装 / 换到全新目录：开箱即用的默认主分类。
   // 已有业务类型或经验时 ensureDefaultTypes 自己会跳过，不覆盖用户数据。
@@ -56,7 +66,7 @@ export async function apply(ctx, rawConfig = {}) {
   }
 
   const tools = createTools(config, defineTool)
-  // 自动记录钩子（0.24.1）：回合收尾时把交付过程落成 pending 经验；`autoRecord: false` 关闭。
+  // 自动记录钩子（0.24.1）：回合收尾时把交付过程落成 pending 经验；**默认关闭**，`autoRecord: true` 才开。
   const recordTool = tools.find((tool) => tool.name === 'exp_record') || null
   const recorder = recordTool === null ? null : createAutoRecorder({ config, record: recordTool, audit })
   // 单会话技能目录（0.21.1 P1）：pre-step 按可见面判目录在不在，被压缩遮罩就整份补发。

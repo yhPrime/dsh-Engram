@@ -13,7 +13,8 @@
  * - **标签也要自带**（0.24.x）：自动记录没有模型参与，只能按词表 + 工具信号确定性打标签，
  *   否则每条自动记录都是「无标签」，用户要在控制台一条条补。
  * - 模型本回合已经手动 exp_record 的，不再重复记。
- * - 默认开启，`autoRecord: false` 可关。
+ * - **默认关闭**（0.24.1 用户口径）：`ENGINE_CONFIG_DEFAULTS.autoRecord = false`，插件入口的 config
+ *   代理把缺省值补成 false；要记由设置页或插件行显式打开。每轮都落一条待判定经验既没人回填又占库。
  */
 
 import path from 'node:path'
@@ -199,7 +200,8 @@ const ACTION_RULES = [
 /** 产出类工具：没有任何命令可抽时，它们至少证明这一回合在「编写/交付」。 */
 const WRITE_TOOLS = new Set(['write', 'edit', 'present'])
 
-/** 标签词表的用户覆盖按数据目录加载一次；读坏不拖垮记录。 */function loadTagOverrides(dataDir) {
+/** 标签词表的用户覆盖按数据目录加载一次；读坏不拖垮记录。 */
+function loadTagOverrides(dataDir) {
   const dir = String(dataDir || '').trim()
   if (dir === '') return
   try {
@@ -209,15 +211,29 @@ const WRITE_TOOLS = new Set(['write', 'edit', 'present'])
   }
 }
 
-/** 把意图、过程、原始命令、产物路径拼成一段可做词面匹配的文本。 */
-function signalTextOf({ intent, process, artifacts, cwd, tools }) {
+/**
+ * 对象面的文本：只认「这一轮要做什么 + 产物在哪 + 在哪个工作区」。
+ *
+ * 0.24.1 修正：**不扫命令正文**。命令里出现的词是脚本内容/参数，不是这一轮做的事——
+ * 曾经有一条改回填脚本的命令带着 `tags: ['课件', '编写']` 字面量，于是「推送发布安装」
+ * 被安上了对象标签「课件」。对象面只该来自意图、产物路径、工作区。
+ */
+function objectTextOf({ intent, artifacts, cwd }) {
+  return [intent, ...(Array.isArray(artifacts) ? artifacts : []), cwd]
+    .filter((part) => typeof part === 'string' && part.trim() !== '')
+    .join('\n')
+    .slice(0, 12000)
+}
+
+/** 动作/主题面的文本：意图 + 过程摘要 + 真实命令（每条前 2000 码点）。命令只用来证明「做了什么动作」。 */
+function actionTextOf({ intent, process, tools }) {
   const commands = []
   for (const tool of Array.isArray(tools) ? tools : []) {
     if (!tool || typeof tool !== 'object' || String(tool.name) !== 'pwsh') continue
     const command = (tool.args && tool.args.command) || ''
     if (typeof command === 'string' && command.trim() !== '') commands.push(clipByCodePoint(command, 2000))
   }
-  return [intent, process, ...commands, ...(Array.isArray(artifacts) ? artifacts : []), cwd]
+  return [intent, process, ...commands]
     .filter((part) => typeof part === 'string' && part.trim() !== '')
     .join('\n')
     .slice(0, 12000)
@@ -227,18 +243,24 @@ function signalTextOf({ intent, process, artifacts, cwd, tools }) {
  * 自动记录的标签推导（纯函数）。
  *
  * 自动记录没有模型参与，标签只能从**已登记词表**与工具信号里确定性推出：
- * - 先按词面抽词（`extractQueryTags`，对象/动作/主题）；
- * - 对象面没命中时按路径与产物类型兜底；
- * - 动作面没命中时按真实命令兜底（git commit→提交、npm test→校验……）。
- * 只收已登记的词，不凭空造标签；推不出来就不给标签（标签只是检索指纹，不是硬门槛）。
+ * - 对象面：意图 / 产物路径 / 工作区（词面 → 路径与产物类型兜底），**不看命令正文**；
+ * - 动作面：意图里的词 + 命令里的结构化信号（git commit→提交、npm test→校验…）+ 产出类工具→编写；
+ * - 主题面：意图里的已登记主题词（如 计划书）。
+ * 词面只认「用户说的话」：命令正文里的字面量（脚本、参数、被改文件的内容）不算这一轮做的事——
+ * 0.24.1 修正前，一条带 `tags: ['课件', '编写']` 的命令让「推送发布安装」被安上了课件和编写。
+ * 只收已登记的词，不凭空造标签；推不出来就不给标签。
  *
  * @returns {string[]} 最多 6 个标签，顺序为对象 → 动作 → 主题
  */
 export function autoTagsOf({ intent, process, artifacts, cwd, tools, dataDir } = {}) {
   loadTagOverrides(dataDir)
-  const text = signalTextOf({ intent, process, artifacts, cwd, tools })
-  if (text === '') return []
-  const extracted = extractQueryTags(text)
+  const intentText = clipByCodePoint(String(intent === undefined || intent === null ? '' : intent).trim(), 6000)
+  const objectText = objectTextOf({ intent, artifacts, cwd })
+  const actionText = actionTextOf({ intent, process, tools })
+  if (objectText === '' && actionText === '') return []
+  // 词面命中只认用户意图；命令正文只用来跑结构化动作规则（见下）。
+  const intentTags = extractQueryTags(intentText)
+  const objectTags = extractQueryTags(objectText)
   const tags = []
   const push = (name) => {
     const value = String(name === undefined || name === null ? '' : name).trim()
@@ -246,20 +268,20 @@ export function autoTagsOf({ intent, process, artifacts, cwd, tools, dataDir } =
     if (tags.some((tag) => tag.toLowerCase() === value.toLowerCase())) return
     tags.push(value)
   }
-  for (const name of extracted.object.slice(0, 2)) push(name)
-  if (extracted.object.length === 0) {
-    const rule = OBJECT_RULES.find((item) => item.pattern.test(text))
+  for (const name of objectTags.object.slice(0, 2)) push(name)
+  if (objectTags.object.length === 0) {
+    const rule = OBJECT_RULES.find((item) => item.pattern.test(objectText))
     if (rule !== undefined) push(rule.tag)
   }
   let actionCount = 0
-  for (const name of extracted.action.slice(0, 2)) {
+  for (const name of intentTags.action.slice(0, 2)) {
     const before = tags.length
     push(name)
     if (tags.length > before) actionCount += 1
   }
   for (const rule of ACTION_RULES) {
     if (actionCount >= 2) break
-    if (!rule.pattern.test(text)) continue
+    if (!rule.pattern.test(actionText)) continue
     const before = tags.length
     push(rule.tag)
     if (tags.length > before) actionCount += 1
@@ -269,7 +291,7 @@ export function autoTagsOf({ intent, process, artifacts, cwd, tools, dataDir } =
   if (actionCount === 0 && (Array.isArray(tools) ? tools : []).some((tool) => tool && WRITE_TOOLS.has(String(tool.name)))) {
     push('编写')
   }
-  for (const name of extracted.topic.slice(0, 2)) push(name)
+  for (const name of intentTags.topic.slice(0, 2)) push(name)
   return tags.slice(0, 6)
 }
 
@@ -342,6 +364,14 @@ export function createAutoRecorder({ config, record, audit }) {
   const buffers = new Map()
   const handled = new Set()
 
+  /**
+   * 缺省值由配置层给（`ENGINE_CONFIG_DEFAULTS.autoRecord = false`，插件入口的 config 代理补齐），
+   * 这里只把「显式关」当关闭——测试与外部调用传进来的 config 不带这个键时仍按旧行为。
+   */
+  function enabled() {
+    return config.autoRecord !== false
+  }
+
   /** 标签词表的用户覆盖按数据目录加载（配置代理每次读最新设置）。 */
   function dataDirOf() {
     try {
@@ -353,7 +383,7 @@ export function createAutoRecorder({ config, record, audit }) {
 
   function onToolResult(exec, result) {
     try {
-      if (config.autoRecord === false) return
+      if (!enabled()) return
       const sessionId = exec && exec.agent && typeof exec.agent.id === 'string' ? exec.agent.id : ''
       if (sessionId === '') return
       const list = buffers.get(sessionId) || []
@@ -371,7 +401,7 @@ export function createAutoRecorder({ config, record, audit }) {
   }
 
   async function onTurnStopping(payload) {
-    if (config.autoRecord === false) return
+    if (!enabled()) return
     const agent = payload && payload.agent
     const sessionId = agent && typeof agent.id === 'string' ? agent.id : ''
     const turn = Number(payload && payload.turn)

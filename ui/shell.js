@@ -63,7 +63,7 @@ export const SETTINGS_SPEC = {
     { key: 'recallLimitDefault', label: '召回默认条数', type: 'number', hint: '默认 3', tip: 'exp_recall 不传 limit 时返回几条候选。显式传 limit 时按传的来（上限 8）。' },
     { key: 'pendingTtl', label: '待判定提醒次数', type: 'number', hint: '默认 3', tip: '一条待判定记录随回执出现几次仍未被回填，就自动转 skipped（止损，不再打扰模型）。' },
     { key: 'pendingReceipt', label: '回执带待判定', type: 'boolean', tip: '关闭后 exp_record / exp_recall 的返回里不再附带 pending，判定只能靠控制台查看。' },
-    { key: 'autoRecord', label: '自动记录回合', type: 'boolean', default: true, hint: '默认开', tip: '每个回合收尾时，把这一轮的交付动作自动记成一条待判定经验（note 里带工具序列与产物，成败留待回填）。纯问答、寒暄、以及本回合已经手动 exp_record 的不会重复记；关掉后完全依赖模型手动记录。' },
+    { key: 'autoRecord', label: '自动记录回合', type: 'boolean', default: false, hint: '默认关', tip: '默认关闭。打开后每个回合收尾时，把这一轮的交付动作自动记成一条待判定经验（note 里带工具序列与产物，成败留待回填）；每轮都记会攒下大量没人回填的待判定行。纯问答、寒暄、以及本回合已经手动 exp_record 的不会重复记；关着就完全依赖模型手动记录。' },
     { key: 'tagShadow', label: '标签影子对照', type: 'boolean', default: false, hint: '默认关', tip: '打开后每次召回都额外算一遍「只按标签排序」的结果（不改候选顺序与数量），用于观察标签排序与类型路由的差异；控制台检索页可临时勾选查看，不必长期打开。' },
     { key: 'skillBodyMode', label: '技能正文模式', type: 'enum', values: ['full', 'clip'], labels: { full: '全文（默认）', clip: '裁剪 6000 字（排障）' }, hint: '默认全文', tip: '全文＝像普通技能一样让模型通读（安全上限 30000 字，超了保留开头与 Resources/脚本节）；裁剪＝只给前 6000 字并保留末尾脚本节，仅用于排障或省 token。' },
     { key: 'skillCatalog', label: '会话技能目录', type: 'boolean', default: true, hint: '默认开', tip: '命中过的技能会发一份会话级技能目录；上下文被压缩遮掉后，下一步自动补发一份替换版，模型据此按 exp_recall({skill, load:true}) 重取正文。关掉就完全退回 0.20.9 行为：每次命中都给全文，不发目录也不补发。目录条数上限 / 描述截断长度只在 settings.json 里改（catalogMaxSkills / catalogDescriptionChars），不在本页。' },

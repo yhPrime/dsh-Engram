@@ -786,7 +786,7 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 
 - **0.20.7**：`/review`、`/record` 的校验与业务错误按文档返回 400/404/409，坏 JSON → 400；`/recall` 顶层透传 `lifecycleNote`（slim/detail 都有）；列表/详情/关系图标签统一归一，未登记自由标签保留；坏 manifest 且无分片/无 legacy → `store-unreadable`；空库 `/types` 行带数字 `count`。
 - **0.20.9**：`exp_recall` 技能回执新增 `runtime`（`{ dir, skillFile, scripts: [{ path, abs, bytes, run }], references, usage }`）；技能正文默认全文（安全上限 30000 字符，超了保留开头 + 末尾 Resources/脚本节）；`skillBodyMode: 'clip'` 回到 6000 字裁剪档；`helped` 会写 `lastVerifiedAt` 并按易腐层重排 `reviewAfter`（`hurt` 不冒充验证）。
-- **0.20.9**：`exp_record` 接受 `origin`（`auto` / `manual` / `external`，缺省 `manual`；自动记录钩子写 `auto`）与 `stepRewards`（数字数组，越界夹到 [-1,1]，非法值 400）；设置 `autoRecord` 控制回合收尾自动记录。
+- **0.20.9**：`exp_record` 接受 `origin`（`auto` / `manual` / `external`，缺省 `manual`；自动记录钩子写 `auto`）与 `stepRewards`（数字数组，越界夹到 [-1,1]，非法值 400）；设置 `autoRecord` 控制回合收尾自动记录（**0.24.1 起默认关**，要记需显式打开）。
 - **0.21.0**：技能命中三态 `first/reuse/regive` 只在内核 usage 行与回执 `give` 里体现；`/usage` 只外露 `skill/reused/bodyHash`，**不**外露 `session` / `reuseReason` / `catalog` / `catalogSize`；会话技能目录是 `agent/pre-step` 的宿主消息（`source.kind='engram-skill-catalog'`、条目名 `engram:<slug>`），**不进 HTTP API**；设置 `skillCatalog` / `catalogMaxSkills` / `catalogDescriptionChars` / `reuseReceipt`（后两个支持但不暴露在设置页）。
 
 ## 0.22.0 增量（P2：到期复核 / 自动记录提示 / skillBodyMode）
@@ -809,4 +809,4 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 ### 控制台
 
 - 到期复核面板（经验/技能页共用 `ReviewDuePanel`）：勾选批量或单条「确认仍有效 / 标待复核」；不新增导航项。
-- 概览在 `autoRecord=false` 时显示「自动记录已关闭」提示，避免误以为钩子失效。
+- 概览在 `autoRecord=false` 时显示「自动记录已关闭」提示，避免误以为钩子失效（该开关 0.24.1 起默认关）。
