@@ -480,6 +480,51 @@ export function firstUserMessageAfterTurn(events, turn) {
   return ''
 }
 
+/**
+ * 某 turn 结束之后的**全部用户消息文本**（按出现顺序，跳过空文本）。
+ *
+ * 锚点规则与 `firstUserMessageAfterTurn` 一致，区别：
+ * - 返回列表而不是第一条（宿主注入的提醒常排在最前面，调用方要自己能跳）；
+ * - `turn < 0` 表示「从头开始」（首回合用）；
+ * - **找不到锚点时返回空数组**，不是从头扫——否则会把会话最早的旧消息当成本回合的输入。
+ */
+export function userMessagesAfterTurn(events, turn) {
+  const list = Array.isArray(events) ? events : []
+  const target = Number(turn)
+  if (!Number.isFinite(target)) return []
+  let anchor = -1
+  for (let index = 0; index < list.length; index += 1) {
+    const event = list[index]
+    if (event && event.type === 'assistant/message' && event.data && Number(event.data.turn) === target) anchor = index
+  }
+  if (anchor < 0) {
+    for (let index = 0; index < list.length; index += 1) {
+      const event = list[index]
+      if (event && event.type === 'turn/end' && event.data && Number(event.data.turn) === target) anchor = index
+    }
+  }
+  if (anchor < 0 && target >= 0) return []
+  const out = []
+  for (let index = anchor + 1; index < list.length; index += 1) {
+    const event = list[index]
+    if (!event || event.type !== 'user/message') continue
+    const text = userTextOf(event)
+    if (text !== '') out.push(text)
+  }
+  return out
+}
+
+/** 会话里全部用户消息文本（按顺序，跳过空文本）。 */
+export function userMessagesOfSession(events) {
+  const out = []
+  for (const event of Array.isArray(events) ? events : []) {
+    if (!event || event.type !== 'user/message') continue
+    const text = userTextOf(event)
+    if (text !== '') out.push(text)
+  }
+  return out
+}
+
 /** 某 turn 内的工具调用（name + arguments 原文）。 */
 export function toolCallsOfTurn(events, turn) {
   const target = Number(turn)

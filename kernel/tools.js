@@ -62,6 +62,30 @@ const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
 const TRIAL_MIN_SIMILARITY = 0.18
 
+/**
+ * 自动记录的类型兜底（0.24.x）：标签的对象面 → 预设主分类名。
+ *
+ * 自动记录没有模型参与，只能靠引擎。簇路由命中就用簇；没命中时如果对象面已经认出
+ * 「这是 DSH插件 / 课件 / 代码……」，档案柜不该还挂在「未分类」上。
+ * 只映射到已有的类型（不新建），映射不到就保持原样——宁可未分类，也不凭空造分类。
+ */
+const AUTO_TYPE_BY_OBJECT_TAG = {
+  DSH插件: '开发', 代码: '开发', 脚本: '开发', 网页应用: '开发', Agent: '开发', 智能体平台: '开发',
+  PPT: '办公', Word: '办公', Excel: '办公', WPS: '办公', 课件: '办公', 任务卡: '办公', 版式: '办公', 插页: '办公',
+}
+
+/** 用标签里的对象面挑一个已存在的类型名；挑不到返回 ''。 */
+function autoTypeFromTags(tags, types) {
+  const list = Array.isArray(types) ? types : []
+  for (const tag of Array.isArray(tags) ? tags : []) {
+    const wanted = AUTO_TYPE_BY_OBJECT_TAG[tag]
+    if (wanted === undefined) continue
+    const hit = list.find((type) => type && String(type.name).toLowerCase() === wanted.toLowerCase())
+    if (hit !== undefined) return String(hit.name)
+  }
+  return ''
+}
+
 function renderJson(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value) }]
 }
@@ -275,6 +299,25 @@ export function buildTools(defineTool, config = {}) {
       const manifest = readManifest(dataDir)
       const host = hostSessionOf(exec)
       const hostCwd = host.cwd !== '' ? host.cwd : (config.cwd || process.cwd())
+      // 标签写入规则（0.20.0 P0）：别名归一 + 命名校验 + 面覆盖。
+      // 违规的标签**不落盘**（新记录不能保存项目实例名，计划书 §13-P0 验收），但也不整条拒收：
+      // 记录本身是主要产物，标签问题以 tagWarning 回执给模型补（计划书 §3.4「不静默通过」）。
+      //
+      // context 与 labels 必须**各自**校验、各自回填：store 的重复分支里
+      // `context` 是「替换」而 `labels` 是「追加」，把两者合并成一个字段会改掉重记语义。
+      //
+      // 校验提前到路由之前（0.24.x）：自动记录的簇路由没命中时，要用标签的对象面兜底选类型。
+      const ctxGiven = args.context !== undefined
+      const lblGiven = args.labels !== undefined
+      const reviewAfterInput = checkedIsoDate(args.reviewAfter, 'reviewAfter')
+      const contextProvidedNonEmpty = Array.isArray(args.context)
+        ? args.context.length > 0
+        : (typeof args.context === 'string' && args.context.trim() !== '')
+      const ctxCheck = validateTagSet(args.context)
+      const lblCheck = validateTagSet(args.labels)
+      const allTags = [...ctxCheck.tags, ...lblCheck.tags]
+        .filter((name, index, list) => list.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
+      const rejectedTags = [...ctxCheck.rejected, ...lblCheck.rejected]
       // 主分类由模型负责（0.21.3 计划书 §0.1 D1）：手动调用**不再自动归族**——没给就落「未分类」，
       // 回执里给 typeWarning 提示模型补；分不出来保持原样也允许（D2：不阻断保存）。
       // 只有自动记录（`args.origin==='auto'`，由 auto-record.js 传入）才用词面路由兜底，
@@ -291,11 +334,20 @@ export function buildTools(defineTool, config = {}) {
       let typeName = args.typeName !== undefined ? args.typeName : args.type
       const typeNameGiven = !(typeName === undefined || typeName === null || String(typeName).trim() === '')
       let routedCluster = null
+      let typeFromTags = false
       if (!typeNameGiven && autoAssign && manifest !== null) {
         const route = routeCluster({ types: manifest.types, clusters: manifest.clusters }, String(args.intent || ''), { minScore: autoRouteMinScore })
         if (!route.fallback) {
           typeName = route.name
           routedCluster = { clusterId: route.clusterId, name: route.name, score: route.score }
+        } else {
+          // 簇路由也没接住时，用写入口自带的标签兜底（0.24.x）：自动记录没有模型补分类，
+          // 对象面已经认出「这是 DSH插件 / 课件 / 代码」的就别再挂「未分类」。
+          const byTag = autoTypeFromTags(ctxCheck.tags, manifest.types)
+          if (byTag !== '') {
+            typeName = byTag
+            typeFromTags = true
+          }
         }
       }
       // 绑定会话 turn：读最近会话里的 tool/call，把本条记录挂到它所在的回合（只读，失败就跳过）。
@@ -323,23 +375,6 @@ export function buildTools(defineTool, config = {}) {
         }
       }
       const sessionId = binding !== null ? binding.sessionId : (activeSession === null ? undefined : activeSession.sessionId)
-      // 标签写入规则（0.20.0 P0）：别名归一 + 命名校验 + 面覆盖。
-      // 违规的标签**不落盘**（新记录不能保存项目实例名，计划书 §13-P0 验收），但也不整条拒收：
-      // 记录本身是主要产物，标签问题以 tagWarning 回执给模型补（计划书 §3.4「不静默通过」）。
-      //
-      // context 与 labels 必须**各自**校验、各自回填：store 的重复分支里
-      // `context` 是「替换」而 `labels` 是「追加」，把两者合并成一个字段会改掉重记语义。
-      const ctxGiven = args.context !== undefined
-      const lblGiven = args.labels !== undefined
-      const reviewAfterInput = checkedIsoDate(args.reviewAfter, 'reviewAfter')
-      const contextProvidedNonEmpty = Array.isArray(args.context)
-        ? args.context.length > 0
-        : (typeof args.context === 'string' && args.context.trim() !== '')
-      const ctxCheck = validateTagSet(args.context)
-      const lblCheck = validateTagSet(args.labels)
-      const allTags = [...ctxCheck.tags, ...lblCheck.tags]
-        .filter((name, index, list) => list.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
-      const rejectedTags = [...ctxCheck.rejected, ...lblCheck.rejected]
       // 写入口的入参/选项：fast / slow 两条路径共用（保证语义只在一处定义）。
       const upsertInput = {
         intent: args.intent,
@@ -356,8 +391,8 @@ export function buildTools(defineTool, config = {}) {
         artifacts: args.artifacts,
         dimensions: args.dimensions,
         type: typeName,
-        // 这个类型是引擎按簇路由给的（不是模型补的）：store 不能用它触发跨类型就地改写。
-        typeFromRoute: routedCluster !== null,
+        // 这个类型是引擎按簇路由 / 标签兜底给的（不是模型补的）：store 不能用它触发跨类型就地改写。
+        typeFromRoute: routedCluster !== null || typeFromTags,
         typeDescription: args.typeDescription,
         note: args.note,
         volatility: args.volatility,
@@ -496,7 +531,7 @@ export function buildTools(defineTool, config = {}) {
       // 慢路径（老库 / 带 verdicts 回填 / 需要跨类型继承）：保持 0.13 的全量读—改—写。
       if (result === null) {
         const store = readStore(dataDir)
-        if (!typeNameGiven && autoAssign && routedCluster === null) {
+        if (!typeNameGiven && autoAssign && routedCluster === null && !typeFromTags) {
           const route = routeCluster(store, String(args.intent || ''), { minScore: autoRouteMinScore })
           if (!route.fallback) {
             typeName = route.name
@@ -504,6 +539,15 @@ export function buildTools(defineTool, config = {}) {
             upsertInput.type = typeName
             // 老库没有 manifest 时自动记录只能走慢路径：路由类型同样不算模型给的分类。
             upsertInput.typeFromRoute = true
+          } else {
+            // 与快路径同一口径：簇路由接不住时用标签的对象面兜底（0.24.x）。
+            const byTag = autoTypeFromTags(ctxCheck.tags, store.types)
+            if (byTag !== '') {
+              typeName = byTag
+              typeFromTags = true
+              upsertInput.type = typeName
+              upsertInput.typeFromRoute = true
+            }
           }
         }
         // 回填（0.13.0）：模型把上一条 pending 的判定带回来；插件只写回，不判断。

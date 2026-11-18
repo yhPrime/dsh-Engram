@@ -6,8 +6,12 @@
  *
  * 设计取舍：
  * - 只记「有交付动作」的回合：纯问答、纯检索、寒暄不记，避免把经验库冲成日志。
+ * - 宿主注入的提醒（`<system-reminder>` / 运行时记忆快照 / 后台任务通知）不是用户意图，不记；
+ *   以前它们会顶替真实用户消息成为 intent，落成一堆看不出内容的脏行。
  * - outcome 缺省 → pending：自动判成败不可靠，留给 verdicts 回填或 exp_feedback 修正。
  * - 过程写进 note（工具序列 + 产物路径），结果留给用户/模型后补。
+ * - **标签也要自带**（0.24.x）：自动记录没有模型参与，只能按词表 + 工具信号确定性打标签，
+ *   否则每条自动记录都是「无标签」，用户要在控制台一条条补。
  * - 模型本回合已经手动 exp_record 的，不再重复记。
  * - 默认开启，`autoRecord: false` 可关。
  */
@@ -15,7 +19,9 @@
 import path from 'node:path'
 
 import { findSessionFile } from './chat-save.js'
-import { firstUserMessageAfterTurn, readSessionEvents, sessionCwd } from './session.js'
+import { readSessionEvents, sessionCwd, userMessagesAfterTurn, userMessagesOfSession } from './session.js'
+import { resolveEngramDataDir } from './settings.js'
+import { ensureTagOverrides, extractQueryTags, facetOf } from './tag-registry.js'
 
 /** 这些工具不构成「做完的活」：只读、记忆自身、流程控制。 */
 const NON_DELIVER_TOOLS = new Set([
@@ -42,16 +48,41 @@ const CHITCHAT = new Set([
   'ok', 'okay', 'yes', 'no', 'go', 'continue',
 ])
 
-/** 事件里的用户文本（与 session.js 的取法一致；那边没导出）。 */
-function userTextOf(event) {
-  const data = (event && event.data) || {}
-  const content = Array.isArray(data.content) ? data.content : (data.message && data.message.content)
-  if (!Array.isArray(content)) return ''
-  return content
-    .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n')
-    .trim()
+/**
+ * 宿主注入的文本：不是用户说的话。
+ * 这类消息会出现在 user/message 里，`intentOfTurn` 以前直接把它当成本回合的意图，
+ * 于是经验库里出现「intent = <system-reminder>…」「intent = background job … finished」的脏行。
+ */
+const NOISE_PREFIXES = [
+  '<system-reminder>',
+  'system-reminder',
+  '[MNEMON]',
+  'MNEMON RUNTIME MEMORY SNAPSHOT',
+  'MNEMON VIEW TOOLS',
+  'background job ',
+  'Time sampled while preparing',
+]
+
+/** 用户文本是不是宿主注入的提醒 / 通知（不是真实意图）。 */
+export function isNoiseUserText(value) {
+  const text = String(value === undefined || value === null ? '' : value).trim()
+  if (text === '') return true
+  const head = text.slice(0, 80)
+  return NOISE_PREFIXES.some((prefix) => head.startsWith(prefix))
+}
+
+/** 只有空白 / 控制字符（含零宽字符）的文本：写进去也召回不到，不如不记。 */
+const INVISIBLE_ONLY = /^[\u0000-\u0020\u007f-\u009f\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]*$/u
+
+/** 按**码点**安全截断：刀口落在代理对高位时退一格，别把 emoji 劈成孤立代理项。 */
+export function clipByCodePoint(value, max) {
+  const text = String(value === undefined || value === null ? '' : value)
+  const limit = Number(max)
+  if (!Number.isFinite(limit) || limit <= 0 || text.length <= limit) return text
+  let out = text.slice(0, limit)
+  const last = out.charCodeAt(out.length - 1)
+  if (last >= 0xd800 && last <= 0xdbff) out = out.slice(0, -1)
+  return out
 }
 
 /** 工具名是否算「做了交付」。 */
@@ -62,11 +93,14 @@ export function isDeliverTool(name) {
   return DELIVER_PREFIXES.some((prefix) => tool === prefix || tool.startsWith(prefix))
 }
 
-/** 意图是否值得自动记（太短、寒暄、系统时间戳都跳过）。 */
+/** 意图是否值得自动记（太短、寒暄、宿主注入、全不可见、时间戳都跳过）。 */
 export function isRecordableIntent(intent) {
   const text = String(intent || '').trim()
   if (text.length < 4) return false
-  if (/^Time sampled while preparing/iu.test(text)) return false
+  // 只有控制字符 / 零宽字符的意图：store 写侧会拒收（0.23.1 契约），这里先挡住，
+  // 别让每个这种回合都在审计里留一条 'auto-record failed'。
+  if (INVISIBLE_ONLY.test(text)) return false
+  if (isNoiseUserText(text)) return false
   const head = text.toLowerCase().replace(/[。！？!?.,，~～\s]/gu, '')
   if (CHITCHAT.has(head)) return false
   return true
@@ -88,7 +122,7 @@ export function describeTool(tool) {
   }
   if (name === 'pwsh') {
     const command = String(args.command || '').split(/\r?\n/u)[0].trim()
-    return command ? `跑 ${command.slice(0, 40)}` : '跑命令'
+    return command ? `跑 ${clipByCodePoint(command, 40)}` : '跑命令'
   }
   if (name === 'present') {
     const files = Array.isArray(args.files) ? args.files : []
@@ -111,7 +145,7 @@ export function summarizeProcess(tools, max = 6) {
     .map(describeTool)
     .filter((part) => part !== '')
   const unique = parts.filter((part, index) => index === 0 || part !== parts[index - 1])
-  return unique.slice(0, max).join(' → ').slice(0, 300)
+  return clipByCodePoint(unique.slice(0, max).join(' → '), 300)
 }
 
 /** 从工具参数里抽产物路径（write/edit/present）。 */
@@ -132,11 +166,118 @@ export function artifactsOf(tools, max = 5) {
   return [...new Set(out)].slice(0, max)
 }
 
+/* ---------------------------------------------------------------- 自带标签 */
+
+/**
+ * 对象面兜底规则：词面没命中对象标签时，按路径 / 产物类型认一个（只取最具体的一个）。
+ * 顺序即优先级：先认项目级对象（DSH插件），再认文档类型，最后才退到「代码」。
+ */
+const OBJECT_RULES = [
+  { tag: 'DSH插件', pattern: /(?:dsh[-_ ]?engram|awesome-dsh-plugin|[\\/]插件(?:[\\/]|$)|经验库插件|\.exp[\\/])/iu },
+  { tag: '智能体平台', pattern: /(?:eigenflux|智能体平台)/iu },
+  { tag: 'PPT', pattern: /(?:\.pptx?\b|\bppt\b|幻灯片|演示文稿)/iu },
+  { tag: '课件', pattern: /(?:课件|研学课|教案)/u },
+  { tag: 'Word', pattern: /(?:\.docx\b|\bword\b)/iu },
+  { tag: 'Excel', pattern: /(?:\.xlsx?\b|\bxlsx\b)/iu },
+  { tag: '网页应用', pattern: /(?:\.html?\b|网页应用)/iu },
+  { tag: '代码', pattern: /\.(?:js|mjs|cjs|ts|tsx|py|css)\b/iu },
+]
+
+/**
+ * 动作面兜底规则：工具序列里真正发生的动作（只收已登记的动作词）。
+ * 一条自动记录至多两个动作标签——凑出「对象 + 动作」的可检索指纹即可，不追求打全。
+ */
+const ACTION_RULES = [
+  { tag: '提交', pattern: /\bgit\b[^\n]{0,160}\bcommit\b|\bcommit\s+-m\b/iu },
+  { tag: '推送', pattern: /\bgit\b[^\n]{0,160}\bpush\b/iu },
+  { tag: '校验', pattern: /\b(?:npm|pnpm|yarn)\s+(?:run\s+)?test\b|\btest:ui\b|\bvitest\b|\bnode\s+[^\n]*test\.(?:mjs|js|cjs)\b|\baudit\b/iu },
+  { tag: '注册', pattern: /\bplugin_manager\b|\binstall_bundle\b|\bremove_bundle\b|\bdsh\s+plugin\b/iu },
+  { tag: '沉淀', pattern: /\bexp_consolidate\b|\bexp_skill_attach\b/iu },
+  { tag: '分类', pattern: /\bexp_type\b|\bassignType\b|tag-registry/iu },
+]
+
+/** 产出类工具：没有任何命令可抽时，它们至少证明这一回合在「编写/交付」。 */
+const WRITE_TOOLS = new Set(['write', 'edit', 'present'])
+
+/** 标签词表的用户覆盖按数据目录加载一次；读坏不拖垮记录。 */function loadTagOverrides(dataDir) {
+  const dir = String(dataDir || '').trim()
+  if (dir === '') return
+  try {
+    ensureTagOverrides(dir)
+  } catch {
+    // 覆盖文件读坏时按内建词表算标签。
+  }
+}
+
+/** 把意图、过程、原始命令、产物路径拼成一段可做词面匹配的文本。 */
+function signalTextOf({ intent, process, artifacts, cwd, tools }) {
+  const commands = []
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    if (!tool || typeof tool !== 'object' || String(tool.name) !== 'pwsh') continue
+    const command = (tool.args && tool.args.command) || ''
+    if (typeof command === 'string' && command.trim() !== '') commands.push(clipByCodePoint(command, 2000))
+  }
+  return [intent, process, ...commands, ...(Array.isArray(artifacts) ? artifacts : []), cwd]
+    .filter((part) => typeof part === 'string' && part.trim() !== '')
+    .join('\n')
+    .slice(0, 12000)
+}
+
+/**
+ * 自动记录的标签推导（纯函数）。
+ *
+ * 自动记录没有模型参与，标签只能从**已登记词表**与工具信号里确定性推出：
+ * - 先按词面抽词（`extractQueryTags`，对象/动作/主题）；
+ * - 对象面没命中时按路径与产物类型兜底；
+ * - 动作面没命中时按真实命令兜底（git commit→提交、npm test→校验……）。
+ * 只收已登记的词，不凭空造标签；推不出来就不给标签（标签只是检索指纹，不是硬门槛）。
+ *
+ * @returns {string[]} 最多 6 个标签，顺序为对象 → 动作 → 主题
+ */
+export function autoTagsOf({ intent, process, artifacts, cwd, tools, dataDir } = {}) {
+  loadTagOverrides(dataDir)
+  const text = signalTextOf({ intent, process, artifacts, cwd, tools })
+  if (text === '') return []
+  const extracted = extractQueryTags(text)
+  const tags = []
+  const push = (name) => {
+    const value = String(name === undefined || name === null ? '' : name).trim()
+    if (value === '' || facetOf(value) === null) return
+    if (tags.some((tag) => tag.toLowerCase() === value.toLowerCase())) return
+    tags.push(value)
+  }
+  for (const name of extracted.object.slice(0, 2)) push(name)
+  if (extracted.object.length === 0) {
+    const rule = OBJECT_RULES.find((item) => item.pattern.test(text))
+    if (rule !== undefined) push(rule.tag)
+  }
+  let actionCount = 0
+  for (const name of extracted.action.slice(0, 2)) {
+    const before = tags.length
+    push(name)
+    if (tags.length > before) actionCount += 1
+  }
+  for (const rule of ACTION_RULES) {
+    if (actionCount >= 2) break
+    if (!rule.pattern.test(text)) continue
+    const before = tags.length
+    push(rule.tag)
+    if (tags.length > before) actionCount += 1
+  }
+  // 没有命令可抽的交付回合（只写 .pptx/.docx、present 交付）也要有动作面：
+  // 写/改/交付本身就是一个动作，别让文档类自动记录只剩对象标签。
+  if (actionCount === 0 && (Array.isArray(tools) ? tools : []).some((tool) => tool && WRITE_TOOLS.has(String(tool.name)))) {
+    push('编写')
+  }
+  for (const name of extracted.topic.slice(0, 2)) push(name)
+  return tags.slice(0, 6)
+}
+
 /**
  * 纯函数：根据一回合的工具序列生成 exp_record 入参。
  * @returns {object|null} null = 不该自动记
  */
-export function buildAutoRecord({ sessionId, turn, cwd, intent, tools }) {
+export function buildAutoRecord({ sessionId, turn, cwd, intent, tools, dataDir }) {
   const text = String(intent || '').trim()
   if (!isRecordableIntent(text)) return null
   const list = (Array.isArray(tools) ? tools : []).filter((tool) => tool && typeof tool.name === 'string')
@@ -149,10 +290,11 @@ export function buildAutoRecord({ sessionId, turn, cwd, intent, tools }) {
   const artifacts = artifactsOf(list)
   const noteParts = [`[auto] ${delivered.length} 次交付动作${failed > 0 ? `，${failed} 次工具失败` : ''}`, `过程：${process}`]
   if (artifacts.length > 0) noteParts.push(`产物：${artifacts.join('、')}`)
+  const tags = autoTagsOf({ intent: text, process, artifacts, cwd, tools: list, dataDir })
   return {
-    intent: text.slice(0, 500),
-    action: process.slice(0, 2000),
-    note: noteParts.join('；').slice(0, 2000),
+    intent: clipByCodePoint(text, 500),
+    action: clipByCodePoint(process, 2000),
+    note: clipByCodePoint(noteParts.join('；'), 2000),
     sessionId,
     turn,
     cwd,
@@ -163,22 +305,33 @@ export function buildAutoRecord({ sessionId, turn, cwd, intent, tools }) {
     // 这样自动记录与手动记录共用一条写入路径，避免两套逻辑漂移。
     origin: 'auto',
     artifacts,
+    // 标签必须自带（0.24.x）：自动记录没有模型参与，事后没人补，用户只能一条条手填。
+    ...(tags.length === 0 ? {} : { context: tags }),
     // 不写 outcome：走 pending，等回执/用户纠正回填。
   }
 }
 
-/** 读本回合的用户输入（上一回合结束后的第一条；首回合退到最后一条）。 */
+/**
+ * 读本回合的用户输入（上一回合结束之后的第一条**真实**用户消息）。
+ * 宿主注入的提醒常常排在本回合最前面，跳过它们继续往后找；找不到就不记。
+ * （以前是「第一条 user/message 直接用」，于是 `<system-reminder>` / 后台任务通知被当成意图。）
+ *
+ * 上一回合没有锚点（回合被中止 / 宿主漏写 assistant、turn-end）时不能从头扫，
+ * 否则会把会话最早的旧意图写进本回合；这时只认「会话最后一条 user/message 本身就是真实用户消息」。
+ */
 export function intentOfTurn(events, turn) {
   const list = Array.isArray(events) ? events : []
-  const previous = firstUserMessageAfterTurn(list, Number(turn) - 1)
-  if (previous !== '') return previous
-  for (let index = list.length - 1; index >= 0; index -= 1) {
-    const event = list[index]
-    if (!event || event.type !== 'user/message') continue
-    const text = userTextOf(event)
-    if (text !== '' && !/^Time sampled while preparing/iu.test(text)) return text
+  const current = Number(turn)
+  if (!Number.isFinite(current)) return ''
+  const candidates = userMessagesAfterTurn(list, current <= 1 ? -1 : current - 1)
+  for (const text of candidates) {
+    if (!isNoiseUserText(text)) return text
   }
-  return ''
+  // 有候选但全是宿主注入 → 本回合没有真实用户输入，不记（别把上一轮的话搬过来）。
+  if (candidates.length > 0) return ''
+  const texts = userMessagesOfSession(list)
+  const last = texts[texts.length - 1]
+  return last !== undefined && !isNoiseUserText(last) ? last : ''
 }
 
 /**
@@ -188,6 +341,15 @@ export function intentOfTurn(events, turn) {
 export function createAutoRecorder({ config, record, audit }) {
   const buffers = new Map()
   const handled = new Set()
+
+  /** 标签词表的用户覆盖按数据目录加载（配置代理每次读最新设置）。 */
+  function dataDirOf() {
+    try {
+      return resolveEngramDataDir(config)
+    } catch {
+      return ''
+    }
+  }
 
   function onToolResult(exec, result) {
     try {
@@ -227,7 +389,7 @@ export function createAutoRecorder({ config, record, audit }) {
       const events = readSessionEvents(file)
       const intent = intentOfTurn(events, turn)
       const cwd = sessionCwd(events)
-      const args = buildAutoRecord({ sessionId, turn, cwd, intent, tools })
+      const args = buildAutoRecord({ sessionId, turn, cwd, intent, tools, dataDir: dataDirOf() })
       if (args === null) return
       const exec = { agent: { id: sessionId, session: { header: { cwd: args.cwd } } } }
       await record.execute(args, exec)

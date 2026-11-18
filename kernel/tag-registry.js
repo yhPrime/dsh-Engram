@@ -80,6 +80,8 @@ const SEED = [
   { name: '沉淀', facet: 'action', core: true, description: '把做法固化成技能/文档。', aliases: ['exp_consolidate'] },
   { name: '注册', facet: 'action', core: true, description: '把产物登记到某个系统（技能注册、插件注册）。', aliases: [] },
   { name: '技能沉淀', facet: 'action', core: false, description: '把多条经验固化成一条技能。', aliases: [] },
+  // 0.24.0：自动记录没有命令可抽时（只写了 .pptx/.docx、没有 git/测试），需要至少一个动作面词。
+  { name: '编写', facet: 'action', core: true, description: '写文档/改文稿/产出一版内容（不限于代码）。', aliases: ['撰写', '写作'] },
 
   // —— 主题 / 场景 ——
   // 已拍板（2026-11-14）：EigenFlux 的「具体功能」用主题标签表达，不做层级树。
