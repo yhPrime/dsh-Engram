@@ -130,6 +130,11 @@ export const ENGINE_CONFIG_DEFAULTS = Object.freeze({
   // 回合收尾自动记录（0.24.1 用户口径）：**默认关闭**——每轮都落一条待判定经验是噪音，
   // 既没人回填又占库。要记就显式打开（设置页「自动记录回合」或插件行 autoRecord: true）。
   autoRecord: false,
+  // 标签进查询（0.25.0 计划书 P1）：复用既有 contextMatch，不新增排序代码。
+  // - shadow：抽 queryTags 并记录（usage.shadow.tagRankApplied），不改召回；
+  // - on：把自动抽出的标签并进 context，走 contextMatch 加分；
+  // - off：完全不抽（退回 0.24.x 行为）。
+  tagRank: 'shadow',
 })
 
 /** 磁盘上真实保存的内核参数（不含默认值）。插件行配置的覆盖判断走这里，避免默认值压掉插件行。 */

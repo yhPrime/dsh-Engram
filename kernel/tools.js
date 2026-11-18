@@ -49,7 +49,7 @@ import { readRecordsByIds, readShardRecordsOfTypes, recordShardWrite, taskIndexO
 import { findActiveSession, findRecordBinding, userMessageForRecord } from './session.js'
 import { measure, slimRecall, slimReceipt } from './token-budget.js'
 import { rankByTags } from './tag-rank.js'
-import { ensureTagOverrides } from './tag-registry.js'
+import { extractQueryTags, ensureTagOverrides } from './tag-registry.js'
 import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
 import { AUTO_ROUTE_MIN_SCORE, ensureClusters, routeCluster } from './cluster.js'
@@ -84,6 +84,23 @@ function autoTypeFromTags(tags, types) {
     if (hit !== undefined) return String(hit.name)
   }
   return ''
+}
+
+/**
+ * 查询标签：把 `extractQueryTags` 的分面结果摊平成数组。
+ * 0.25.0 P1 复用点：抽词只跑一次，结果直接喂给既有 `contextMatch`，不新增排序代码。
+ * 面内顺序按排序权重（动作 0.55 > 主题 0.30 > 对象 0.15 > 质量）：截到 8 个时先保动作/主题，
+ * 否则「对象面词多」的意图会把动作信号整体挤掉。
+ */
+function flattenQueryTags(queryTags) {
+  if (queryTags === null || typeof queryTags !== 'object') return []
+  const out = []
+  for (const facet of ['action', 'topic', 'object', 'quality']) {
+    for (const name of Array.isArray(queryTags[facet]) ? queryTags[facet] : []) {
+      if (typeof name === 'string' && name !== '' && !out.includes(name)) out.push(name)
+    }
+  }
+  return out.slice(0, TAG_MAX_COUNT)
 }
 
 function renderJson(_args, value) {
@@ -933,7 +950,49 @@ export function buildTools(defineTool, config = {}) {
       // 运行环境（P1）：设置里的 currentModel/currentTool/currentEnvironment 为默认，
       // 本次调用的 currentEnv 字段级覆盖；都没有时是空环境 → applicability=unscoped（不硬拦）。
       const currentEnv = mergeRuntimeEnv(readRuntimeEnv(config), args.currentEnv)
-      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: args.context, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
+      // 0.25.0 P1：标签进查询（复用 contextMatch，不新增排序代码）。
+      // - on：把自动抽出的 queryTags 并进 context（显式传的 context 在前、自动的补充）；
+      // - shadow：照常召回，只把「会加什么标签」记进 usage，不改候选；
+      // - off：完全不抽（退回 0.24.x 行为）。
+      const tagRankMode = coldMode ? 'off' : (config.tagRank === 'on' ? 'on' : (config.tagRank === 'off' ? 'off' : 'shadow'))
+      // 显式 context 统一清洗（off 档也用清洗后的值，影子才与 off 完全一致）：先滤掉 String() 会抛错的项，
+      // 再去掉空串、先滤后切 8 个——先切后滤会丢掉「前 8 项全是空值」里的第 9 个合法标签。
+      const explicitProvided = args.context !== undefined && args.context !== null
+      const explicitTags = normalizeContext(
+        Array.isArray(args.context)
+          ? args.context
+            .filter((tag) => {
+              try {
+                String(tag)
+              } catch {
+                return false
+              }
+              return typeof tag === 'string' && tag.trim() !== ''
+            })
+            .slice(0, TAG_MAX_COUNT)
+          : args.context,
+      )
+      let rankContext = explicitProvided ? explicitTags : args.context
+      let tagRankShadow = null
+      // 声明放在块外：weak 清空判断在 if 块外读它（R3 缺陷：块内 const 在块外不可见，弱相关召回必崩）。
+      let tagRankAppliedNow = false
+      if (tagRankMode !== 'off') {
+        try {
+          ensureTagOverrides(dataDir)
+        } catch {
+          // 词表覆盖读坏不拖垮召回：按内建词表抽词。
+        }
+        // 抽词只看前 12000 字：标签是短词，2MB 意图没必要整段扫描（超长文本会拖慢召回）。
+        const autoTags = flattenQueryTags(extractQueryTags(String(args.intent || '').slice(0, 12000)))
+        // 显式优先：contextMatch 的分母是「查询标签数」，合并会稀释显式标签的命中（2/2 变 2/7），
+        // 所以只要调用方给了 context（哪怕是空数组/全非法），就只用显式；完全没给才用自动抽的标签。
+        const mergedTags = explicitProvided ? explicitTags : autoTags
+        tagRankAppliedNow = tagRankMode === 'on' && mergedTags.length > 0
+        // on 才改用 mergedTags；off/shadow 用同一个清洗后的显式值（影子必须与 off 完全一致）。
+        if (tagRankMode === 'on') rankContext = mergedTags
+        if (tagRankMode === 'shadow') tagRankShadow = { mode: 'shadow', queryTags: autoTags, explicit: explicitTags.length, merged: mergedTags.length }
+      }
+      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: rankContext, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
       if (Array.isArray(recentRows)) rankOptions.recentRows = recentRows
       const result = rankExperiences(store, String(args.intent || ''), recallLimit, rankOptions)
       // 类型路由影子（P1）：只在显式 tagShadow / config.tagShadow 时计算；只读、不碰 candidates。
@@ -960,7 +1019,9 @@ export function buildTools(defineTool, config = {}) {
         }
       }
       // 相似度低于 0.20 且判 weak：不展示噪声候选（无关任务时避免「1 条沾边候选」被当推荐）。
-      if (result.weak === true && Number(result.topSimilarity || 0) < 0.2) result.candidates = []
+      // tagRank=on 时标签重排会压低「展示条最高词面相似度」，此时清空会把正常召回打成 0 条；
+      // 自动标签是加分信号，不该拥有「清空候选」的权力，所以 on 档跳过这道清空。
+      if (result.weak === true && Number(result.topSimilarity || 0) < 0.2 && !tagRankAppliedNow) result.candidates = []
       result.pendingSkills = pendingSkills
       // 待判定：随回执带出（≤2 条）。cold 模式不查待判定、更不写盘。
       // partial 路径用 manifest.pending 的 id+typeId 定向读 pending 所在类型，再定向写回
@@ -1104,6 +1165,19 @@ export function buildTools(defineTool, config = {}) {
           }),
         }
         if (tagShadowEnabled) skillPayload.tagShadow = buildTagShadow(candidates)
+        // 0.25.0 P1：技能命中早退也要落 tagRankApplied，否则影子报表会少算技能召回那一部分。
+        const skillShadow = (tagShadowEnabled && skillPayload.tagShadow !== undefined) || tagRankShadow !== null
+          ? {
+            ...(tagShadowEnabled && skillPayload.tagShadow !== undefined
+              ? {
+                overlapAt5: skillPayload.tagShadow.overlapAt5,
+                tagTop: (skillPayload.tagShadow.tagTop || []).slice(0, 5).map((item) => item && item.id).filter((id) => typeof id === 'string' && id !== ''),
+                typeTop: (skillPayload.tagShadow.typeRoutingTop || []).slice(0, 5),
+              }
+              : {}),
+            ...(tagRankShadow !== null ? { tagRankApplied: tagRankShadow } : {}),
+          }
+          : null
         logUsage(dataDir, {
           tool: 'exp_recall',
           intent: String(args.intent || ''),
@@ -1119,6 +1193,7 @@ export function buildTools(defineTool, config = {}) {
             ...(host.sessionId === '' ? {} : { session: sessionHashOf(host.sessionId) }),
             ...catalogUsage,
           }),
+          ...(skillShadow === null ? {} : { shadow: skillShadow }),
           chars: measure(skillPayload),
         }, usageOptions)
         return skillPayload
@@ -1202,12 +1277,18 @@ export function buildTools(defineTool, config = {}) {
         markedCount: Number(result.marked) || 0,
         // 影子 top5 落盘（0.21.3 计划书 §21.1）：只记 id 与重合度，够算「重合度 / 增量」两个判据，
         // 不写正文、不改召回结果；tagShadow 关着时这一行不出现。
-        ...(tagShadowEnabled && payload.tagShadow !== undefined
+        // 0.25.0 P1：tagRank=shadow 时把「会加什么标签」也记进来（tagRankApplied），供 P0 报表用。
+        ...((tagShadowEnabled && payload.tagShadow !== undefined) || tagRankShadow !== null
           ? {
             shadow: {
-              overlapAt5: payload.tagShadow.overlapAt5,
-              tagTop: (payload.tagShadow.tagTop || []).slice(0, 5).map((item) => item && item.id).filter((id) => typeof id === 'string' && id !== ''),
-              typeTop: (payload.tagShadow.typeRoutingTop || []).slice(0, 5),
+              ...(tagShadowEnabled && payload.tagShadow !== undefined
+                ? {
+                  overlapAt5: payload.tagShadow.overlapAt5,
+                  tagTop: (payload.tagShadow.tagTop || []).slice(0, 5).map((item) => item && item.id).filter((id) => typeof id === 'string' && id !== ''),
+                  typeTop: (payload.tagShadow.typeRoutingTop || []).slice(0, 5),
+                }
+                : {}),
+              ...(tagRankShadow !== null ? { tagRankApplied: tagRankShadow } : {}),
             },
           }
           : {}),

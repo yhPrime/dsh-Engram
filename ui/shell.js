@@ -32,7 +32,7 @@ import {
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { defaultDataDir, moveDataRoot, readEngineConfig, readGitConfig, readRuntimeEnv, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, storageRootFor, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
+import { defaultDataDir, moveDataRoot, readEngineConfig, readGitConfig, readRuntimeEnv, readSettings, readUiConfig, resolveEngramDataDir, setCurrentRoot, settingsFile, storageRootFor, writeEngineConfig, writeGitConfig, writeUiConfig } from '../kernel/settings.js'
 import { ensureDefaultTypes } from '../kernel/store.js'
 import { galleryHtml } from './icons-gallery.js'
 import { gitInit, gitPull, gitPush, gitStatus } from '../kernel/git-sync.js'
@@ -40,6 +40,7 @@ import { importSkills } from '../kernel/import-skill.js'
 import { applySkillNodeAction, bodyHashOf, buildSkillTree, forgetSkill, registerSkillGlobally, skillRuntimeOf, unregisterSkillFromDsh, updateSkillMeta } from '../kernel/skills.js'
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
+import { shadowReport } from '../kernel/tag-rank.js'
 import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
 import { validateTagSet } from '../kernel/tag-registry.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
@@ -65,6 +66,7 @@ export const SETTINGS_SPEC = {
     { key: 'pendingReceipt', label: '回执带待判定', type: 'boolean', tip: '关闭后 exp_record / exp_recall 的返回里不再附带 pending，判定只能靠控制台查看。' },
     { key: 'autoRecord', label: '自动记录回合', type: 'boolean', default: false, hint: '默认关', tip: '默认关闭。打开后每个回合收尾时，把这一轮的交付动作自动记成一条待判定经验（note 里带工具序列与产物，成败留待回填）；每轮都记会攒下大量没人回填的待判定行。纯问答、寒暄、以及本回合已经手动 exp_record 的不会重复记；关着就完全依赖模型手动记录。' },
     { key: 'tagShadow', label: '标签影子对照', type: 'boolean', default: false, hint: '默认关', tip: '打开后每次召回都额外算一遍「只按标签排序」的结果（不改候选顺序与数量），用于观察标签排序与类型路由的差异；控制台检索页可临时勾选查看，不必长期打开。' },
+    { key: 'tagRank', label: '标签进查询', type: 'enum', values: ['shadow', 'on', 'off'], labels: { shadow: '影子（默认，只记录）', on: '生效', off: '关' }, hint: '默认 shadow', tip: 'shadow：从意图自动抽标签，只写 usage 供 P0 判据报表，不改召回；on：把抽出的标签并进 context，走既有 contextMatch 加分（复用同一套排序，不新增打分代码）；off：完全不抽。P0 判据达标前别改 on。' },
     { key: 'skillBodyMode', label: '技能正文模式', type: 'enum', values: ['full', 'clip'], labels: { full: '全文（默认）', clip: '裁剪 6000 字（排障）' }, hint: '默认全文', tip: '全文＝像普通技能一样让模型通读（安全上限 30000 字，超了保留开头与 Resources/脚本节）；裁剪＝只给前 6000 字并保留末尾脚本节，仅用于排障或省 token。' },
     { key: 'skillCatalog', label: '会话技能目录', type: 'boolean', default: true, hint: '默认开', tip: '命中过的技能会发一份会话级技能目录；上下文被压缩遮掉后，下一步自动补发一份替换版，模型据此按 exp_recall({skill, load:true}) 重取正文。关掉就完全退回 0.20.9 行为：每次命中都给全文，不发目录也不补发。目录条数上限 / 描述截断长度只在 settings.json 里改（catalogMaxSkills / catalogDescriptionChars），不在本页。' },
     { key: 'reuseReceipt', label: '复用短回执', type: 'boolean', default: true, hint: '默认开', tip: '同一个技能本会话已给过全文、且那条结果仍在可见上下文里时，只给 ≤400 字短回执（3 条正文二级标题锚点 + 「对不上就重取」提示），不再重发 4–7k token 的全文。关掉后每次都发全文，只用于排障。' },
@@ -779,6 +781,29 @@ function rankGraphExperiences(rows) {
       || right.lastSeen - left.lastSeen)
 }
 
+/** 关系图性能样本：只收数字与短字符串，避免任意页面往日志里灌内容。 */
+function sanitizeGraphPerf(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  const number = (value) => (Number.isFinite(Number(value)) ? Math.round(Number(value) * 100) / 100 : 0)
+  const record = (value, limit, keyLimit) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return Object.fromEntries(Object.entries(value).slice(0, limit).map(([key, item]) => [String(key).slice(0, keyLimit), number(item)]))
+  }
+  return {
+    at: new Date().toISOString(),
+    nodes: number(body.nodes),
+    edges: number(body.edges),
+    fps: number(body.fps),
+    p50: number(body.p50),
+    p95: number(body.p95),
+    frame: number(body.frame),
+    tier: String(body.tier || '').slice(0, 16),
+    size: record(body.size, 4, 12),
+    phases: record(body.phases, 8, 20),
+    counts: record(body.counts, 20, 24),
+  }
+}
+
 /** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
 export function buildGraph(source, params) {
   const read = readOf(source)
@@ -1243,6 +1268,36 @@ export async function handleRequest(req, res, source, deps = {}) {
     if (route === '/graph') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
       return json(res, 200, { ok: true, data: buildGraph(active, url.searchParams) })
+    }
+    // 0.25.0 P0：影子判据只读报表（数据全来自现成的 usage.shadow，不新增埋点）。
+    if (route === '/shadow-report') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      if (!active || active.mode !== 'live') return fail(res, 400, 'unsupported', '示例数据不支持影子报表')
+      try {
+        return json(res, 200, { ok: true, data: shadowReport(String(readOf(active).dataDir || '')) })
+      } catch (error) {
+        return fail(res, 500, 'report-failed', String((error && error.message) || error))
+      }
+    }
+    if (route === '/graph-perf') {
+      // 页面里开了 `?graphPerf=1` 才回传；只写本机 ~/.dsh/engram/graph-perf.jsonl，
+      // 不进经验库仓、不暴露到 UI。单条 >256KB 的日志会保留最后 500 条。
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const sample = sanitizeGraphPerf(await readBody(req))
+      if (sample === null) return fail(res, 400, 'bad-perf', '统计载荷不合法')
+      try {
+        const dir = path.dirname(settingsFile())
+        fs.mkdirSync(dir, { recursive: true })
+        const file = path.join(dir, 'graph-perf.jsonl')
+        fs.appendFileSync(file, `${JSON.stringify(sample)}\n`, 'utf8')
+        if (fs.statSync(file).size > 256 * 1024) {
+          const lines = fs.readFileSync(file, 'utf8').trim().split('\n').slice(-500)
+          fs.writeFileSync(file, `${lines.join('\n')}\n`, 'utf8')
+        }
+        return json(res, 200, { ok: true, data: { logged: true } })
+      } catch (error) {
+        return fail(res, 500, 'perf-log-failed', String((error && error.message) || error))
+      }
     }
     if (route === '/validate') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

@@ -11,8 +11,8 @@
  * 质量分只复用现有 G（归一成 0..1），不写回历史；stale 经验照算但标注 stale。
  */
 import { lifecycleOf } from './retrieval.js'
-import { canonicalTag, visibleExperiences } from './store.js'
-import { extractQueryTags, TAG_FACETS } from './tag-registry.js'
+import { canonicalTag, readStore, readUsage, visibleExperiences } from './store.js'
+import { ensureTagOverrides, extractQueryTags, facetOf, TAG_FACETS } from './tag-registry.js'
 
 /** 面权重（总和 1）：动作 > 主题 > 对象。 */
 export const TAG_FACET_WEIGHTS = Object.freeze({ action: 0.55, topic: 0.30, object: 0.15 })
@@ -148,5 +148,91 @@ export function rankByTags(store, intent, options = {}) {
     queryTags,
     top: scored.slice(0, limit),
     total: scored.length,
+  }
+}
+
+/**
+ * P0 影子判据报表（0.25.0，只读）。
+ *
+ * 数据全部来自现成的东西：`usage.jsonl` 里 0.21.3 起落的 `shadow{overlapAt5}`、
+ * 0.25.0 起落的 `shadow.tagRankApplied`，以及库本身的标签覆盖度——不新增埋点、不写盘。
+ *
+ * @returns {{samples:number, overlapMedian:number|null, tagRankSamples:number, coverage:{visible:number, objectAction:number, noTags:number, ratio:number|null}, thresholds:object}}
+ */
+export function shadowReport(dataDir) {
+  const dir = String(dataDir === undefined || dataDir === null ? '' : dataDir).trim()
+  if (dir === '') {
+    return {
+      samples: 0,
+      overlapMedian: null,
+      overlapRatio: null,
+      tagRankSamples: 0,
+      tagHitRate: null,
+      tagReadyRate: null,
+      coverage: { visible: 0, objectAction: 0, noTags: 0, ratio: null },
+      thresholds: { samples: 20, overlap: 0.6, coverage: 0.8 },
+      noDataDir: true,
+    }
+  }
+  // 报表要按自己的目录加载词表：否则覆盖率随「上一次 exp_recall 加载过哪个目录」漂移。
+  try {
+    ensureTagOverrides(dir)
+  } catch {
+    // 词表读坏时按内建词表算，报表不抛错。
+  }
+  const rows = readUsage(dir, 5000)
+  const overlaps = []
+  let overlapping = 0
+  let tagRankSamples = 0
+  let tagReady = 0
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const shadow = row && row.shadow
+    if (shadow === null || typeof shadow !== 'object') continue
+    // 只认 0–5 的真数字：null/''/false 以前会被 Number() 当 0（虚增样本、拉低中位数），越界值会把比例推出 0–1。
+    const overlap = shadow.overlapAt5
+    if (typeof overlap === 'number' && Number.isFinite(overlap) && overlap >= 0 && overlap <= 5) {
+      overlaps.push(overlap)
+      if (overlap > 0) overlapping += 1
+    }
+    // 只有「非 null、非数组的对象」才算一条影子样本：null/字符串/数字/数组都是坏行，跳过。
+    if (shadow.tagRankApplied !== null && typeof shadow.tagRankApplied === 'object' && !Array.isArray(shadow.tagRankApplied)) {
+      tagRankSamples += 1
+      if (Array.isArray(shadow.tagRankApplied.queryTags) && shadow.tagRankApplied.queryTags.length > 0) tagReady += 1
+    }
+  }
+  const sorted = overlaps.slice().sort((left, right) => left - right)
+  const overlapMedian = sorted.length === 0
+    ? null
+    : (sorted.length % 2 === 1
+      ? sorted[(sorted.length - 1) / 2]
+      : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2)
+  const coverage = { visible: 0, objectAction: 0, noTags: 0, ratio: null }
+  let storeError = ''
+  try {
+    const visible = visibleExperiences(readStore(dir))
+    coverage.visible = visible.length
+    for (const row of visible) {
+      const tags = Array.isArray(row.context) ? row.context : []
+      if (tags.length === 0) coverage.noTags += 1
+      const facets = new Set(tags.map((tag) => facetOf(tag)).filter((facet) => facet !== null))
+      if (facets.has('object') && facets.has('action')) coverage.objectAction += 1
+    }
+    coverage.ratio = coverage.visible === 0 ? null : round4(coverage.objectAction / coverage.visible)
+  } catch (error) {
+    // 坏库要能区分「读不出来」和「覆盖率 0」：带上 storeError，别把丢了显示成没有。
+    storeError = String((error && error.message) || error)
+  }
+  return {
+    samples: overlaps.length,
+    // overlapAt5 是「交集条数（0–5）」：中位数要除以 5 才能和阈值 0.6 比，别拿条数直接比。
+    overlapMedian,
+    overlapRatio: overlapMedian === null ? null : round4(overlapMedian / 5),
+    tagRankSamples,
+    // 标签命中率：标签排序与类型路由 Top5 有交集的样本占比；标签可用率：抽得出标签的 shadow 样本占比。
+    tagHitRate: overlaps.length === 0 ? null : round4(overlapping / overlaps.length),
+    tagReadyRate: tagRankSamples === 0 ? null : round4(tagReady / tagRankSamples),
+    coverage,
+    thresholds: { samples: 20, overlap: 0.6, coverage: 0.8 },
+    ...(storeError === '' ? {} : { storeError }),
   }
 }

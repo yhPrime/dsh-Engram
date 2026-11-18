@@ -1501,7 +1501,17 @@ function weightedCoverage(units, idf, candidateText) {
 export function matchSkill(skills, intent, options = {}) {
   const list = Array.isArray(skills) ? skills : []
   const query = abstractState(String(intent || ''))
-  const queryContext = Array.isArray(options.context) ? options.context.map((tag) => String(tag).toLowerCase()) : []
+  // R3 缺陷（既有路径）：context 里放 null 原型对象 / toString 抛错的对象时 String() 会崩；
+  // 逐项兜住，保留数字/布尔等可字符串化的值，只跳过真转不了的。
+  const queryContext = Array.isArray(options.context)
+    ? options.context.flatMap((tag) => {
+      try {
+        return [String(tag).toLowerCase()]
+      } catch {
+        return []
+      }
+    })
+    : []
   const units = queryUnits(query)
   const corpusTexts = list.map((skill) => [skill.name, skill.description, ...(skill.meta.triggers || []), ...(skill.meta.context || [])].join(' ').toLowerCase())
   const idf = unitIdf(units, corpusTexts)

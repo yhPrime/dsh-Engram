@@ -3984,6 +3984,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 帧时间分位（最近秩）：输入未排序样本，q∈[0,1]；空样本返回 0。
+     * 抽成纯函数，P0 的 `?graphPerf=1` 读数与单测用同一口径。
+     */
+    function graphPercentile(values, q) {
+      if (!Array.isArray(values) || values.length === 0) return 0
+      const sorted = values.slice().sort((left, right) => left - right)
+      const clamped = Math.max(0, Math.min(1, Number(q) || 0))
+      const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(clamped * sorted.length) - 1))
+      return sorted[index]
+    }
+
+    /**
      * 关系图布局（纯函数，O(N+E)）：类型球面锚点、经验按类型分层、技能/套件按父子环摆放。
      * 抽出来是为了能单测 1k/3k 夹具；不依赖 React / DOM。
      */
@@ -4158,6 +4170,8 @@ window.__ModuleLoader__.load({
       const [allowAll, setAllowAll] = useState(false)
       const [focusedType, setFocusedType] = useState(null)
       const [isolate, setIsolate] = useState(false)
+      const isolateRef = useRef(isolate)
+      isolateRef.current = isolate
       const [panelOpen, setPanelOpen] = useState(false)
       const searchRef = useRef(null)
       useEffect(() => {
@@ -4298,8 +4312,46 @@ window.__ModuleLoader__.load({
         const bloom = ui.graphBloom !== false
         const glitch = ui.graphGlitch !== false
         const dustCount = Math.max(0, Math.min(240, Number(ui.graphDust) || 70))
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return undefined
+        // 性能统计：默认只记帧时间（开销可忽略）；`?graphPerf=1` / localStorage 才额外
+        // 用 Proxy 数 canvas 调用，避免统计本身把被测对象拖慢。
+        const perfOn = (() => {
+          try {
+            return (typeof location !== 'undefined' && /(?:^|[?&])graphPerf=1(?:&|$)/.test(location.search))
+              || (typeof localStorage !== 'undefined' && localStorage.getItem('eng:graphPerf') === '1')
+          } catch { return false }
+        })()
+        const rawCtx = canvas.getContext('2d')
+        if (!rawCtx) return undefined
+        const opCounts = perfOn ? Object.create(null) : null
+        const ctx = opCounts === null ? rawCtx : new Proxy(rawCtx, {
+          get(target, prop) {
+            const value = Reflect.get(target, prop)
+            if (typeof value !== 'function' || prop === 'canvas') return value
+            return (...args) => {
+              opCounts[prop] = (opCounts[prop] || 0) + 1
+              return value.apply(target, args)
+            }
+          },
+          set(target, prop, value) {
+            Reflect.set(target, prop, value)
+            return true
+          },
+        })
+        // 渐变对象按「颜色 + 半径桶 + 明暗」缓存；坐标都在局部原点，
+        // 画之前 translate 到节点位置，复用同一对象不会串位。
+        const radialCache = new Map()
+        const cachedRadial = (key, r0, r1, stops) => {
+          const hit = radialCache.get(key)
+          if (hit) return hit
+          const gradient = ctx.createRadialGradient(0, 0, r0, 0, 0, r1)
+          for (const [offset, color] of stops) gradient.addColorStop(offset, color)
+          if (radialCache.size >= 256) radialCache.clear()
+          radialCache.set(key, gradient)
+          return gradient
+        }
+        const frameTimes = []
+        const phaseAvg = { project: 0, edges: 0, pulses: 0, nodes: 0, labels: 0 }
+        const labelWidths = new Map()
         const store = stateRef.current
         const cam = store.cam
         const FOCAL = 1100
@@ -4345,6 +4397,7 @@ window.__ModuleLoader__.load({
             }
             store.userZoom = true
             store.fit = null
+            radialCache.clear()
           }
         }
         const radiusOf = (node, weight) => {
@@ -4574,6 +4627,7 @@ window.__ModuleLoader__.load({
         const refreshPalette = () => {
           if (paletteKey !== 'dsh') return
           palette = readDshGraphPalette(canvas)
+          radialCache.clear()
         }
         let themeObserver = null
         try {
@@ -4629,11 +4683,7 @@ window.__ModuleLoader__.load({
           }
           lastDrawAt = now
           frameCount += 1
-          if (frameCount % 30 === 0 && typeof window !== 'undefined') {
-            const elapsed = Math.max(1, now - (store.perfAt || now - 500))
-            store.perfAt = now
-            window.__engGraph = { nodes: store.nodes.size, edges: store.edges.size, fps: Math.round(30000 / elapsed), at: Date.now() }
-          }
+          const frameStart = performance.now()
           if (frameCount % 30 === 0 && paletteKey === 'dsh') palette = readDshGraphPalette(canvas)
           const dt = Math.min(0.05, (now - last) / 1000)
           last = now
@@ -4736,15 +4786,23 @@ window.__ModuleLoader__.load({
             entry.screenF = projected.f
             entry.depth = projected.depth
           }
+          const tProject = performance.now()
           const focusId = store.selected !== null ? store.selected : store.hovered
-          const neighbors = new Set()
-          if (focusId !== null) {
-            neighbors.add(focusId)
-            for (const edgeState of store.edges.values()) {
-              if (edgeState.edge.source === focusId) neighbors.add(edgeState.edge.target)
-              if (edgeState.edge.target === focusId) neighbors.add(edgeState.edge.source)
+          // 邻居集合只在选中/悬停或边数变化时重算；不每帧扫全量边。
+          const neighborKey = `${store.selected}|${store.hovered}|${store.edges.size}`
+          if (store.neighborKey !== neighborKey) {
+            const nextNeighbors = new Set()
+            if (focusId !== null) {
+              nextNeighbors.add(focusId)
+              for (const edgeState of store.edges.values()) {
+                if (edgeState.edge.source === focusId) nextNeighbors.add(edgeState.edge.target)
+                if (edgeState.edge.target === focusId) nextNeighbors.add(edgeState.edge.source)
+              }
             }
+            store.neighborKey = neighborKey
+            store.neighborSet = nextNeighbors
           }
+          const neighbors = store.neighborSet
           const edgeList = store.edges
           const pulses = []
           for (const [key, edgeState] of edgeList) {
@@ -4758,15 +4816,15 @@ window.__ModuleLoader__.load({
             const near = (from.screenF + to.screenF) * 0.5
             const bright = focusId !== null && (edgeState.edge.source === focusId || edgeState.edge.target === focusId)
             const relatedEdge = focusId === null || bright
-            ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolate ? 0.02 : 0.1))
+            ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolateRef.current ? 0.02 : 0.1))
             const isSuiteEdge = edgeState.edge.kind === 'suite'
             const isLabelEdge = edgeState.edge.kind === 'label'
             // 同标签关系是“弱连接”，但必须看得见：原先 0.025 + 0.32×strength ≈ 0.08 透明度，
             // 在深色背景上几乎等于没有线。这里单独给 label 边一个可见基线。
             if (isLabelEdge) {
-              ctx.globalAlpha = Math.min(0.78, (0.16 + strength * 0.9) * near) * (relatedEdge ? 1 : (isolate ? 0.03 : 0.18)) * (bright ? 1.3 : 1)
+              ctx.globalAlpha = Math.min(0.78, (0.16 + strength * 0.9) * near) * (relatedEdge ? 1 : (isolateRef.current ? 0.03 : 0.18)) * (bright ? 1.3 : 1)
             } else {
-              ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolate ? 0.02 : 0.1))
+              ctx.globalAlpha = Math.min(1, (0.025 + strength * 0.32) * near * (bright ? 1.9 : 1)) * (relatedEdge ? 1 : (isolateRef.current ? 0.02 : 0.1))
             }
             ctx.strokeStyle = isLabelEdge ? (palette.node2 || palette.edge) : (isSuiteEdge ? (palette.glow || palette.node) : (palette.edge || palette.node))
             ctx.lineWidth = isLabelEdge
@@ -4802,6 +4860,7 @@ window.__ModuleLoader__.load({
           }
           ctx.setLineDash([])
           ctx.shadowBlur = 0
+          const tEdges = performance.now()
           if (pulses.length > 0) {
             ctx.save()
             ctx.globalCompositeOperation = 'lighter'
@@ -4834,6 +4893,7 @@ window.__ModuleLoader__.load({
             }
             ctx.restore()
           }
+          const tPulses = performance.now()
           const ordered = [...store.nodes.values()].sort((left, right) => right.depth - left.depth)
           let polyBudget = GRAPH_POLY_BUDGET
           for (const entry of ordered) {
@@ -4855,7 +4915,7 @@ window.__ModuleLoader__.load({
               }
             }
             const related = focusId === null || neighbors.has(node.id)
-            const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing * energy * (related ? 1 : (isolate && focusId !== null ? 0.06 : 0.3)) * (isSelected ? 1.2 : 1)
+            const alphaBase = entry.alpha * Math.min(1, 0.2 + entry.screenF * 0.85) * breathing * energy * (related ? 1 : (isolateRef.current && focusId !== null ? 0.06 : 0.3)) * (isSelected ? 1.2 : 1)
             const screenRadius = Math.max(0.4, entry.r * entry.screenF * (0.85 + entry.currentWeight * 0.3))
             const paint = (offsetX, offsetY, alphaMultiplier) => {
               ctx.save()
@@ -4885,10 +4945,12 @@ window.__ModuleLoader__.load({
                 // 浅色主题上也不会叠出一片脏兮兮的暗晕。
                 ctx.save()
                 ctx.globalCompositeOperation = 'lighter'
-                const halo = ctx.createRadialGradient(0, 0, screenRadius * 0.34, 0, 0, haloRadius)
-                halo.addColorStop(0, withAlpha(haloColor, 0.3))
-                halo.addColorStop(0.42, withAlpha(haloColor, 0.1))
-                halo.addColorStop(1, withAlpha(haloColor, 0))
+                const haloKey = `halo|${haloColor}|${palette.dark ? 1 : 0}|${Math.round(screenRadius * 2) / 2}`
+                const halo = cachedRadial(haloKey, screenRadius * 0.34, haloRadius, [
+                  [0, withAlpha(haloColor, 0.3)],
+                  [0.42, withAlpha(haloColor, 0.1)],
+                  [1, withAlpha(haloColor, 0)],
+                ])
                 ctx.fillStyle = halo
                 ctx.beginPath()
                 ctx.arc(0, 0, haloRadius, 0, Math.PI * 2)
@@ -4899,10 +4961,12 @@ window.__ModuleLoader__.load({
               }
               // 中心主星：外面一层日冕 + 8 条缓慢旋转的恒星芒，里面保留二十面体晶壳。
               if (node.kind === 'root') {
-                const corona = ctx.createRadialGradient(0, 0, screenRadius * 0.2, 0, 0, screenRadius * 4.6)
-                corona.addColorStop(0, withAlpha(sun.hot, 0.36))
-                corona.addColorStop(0.42, withAlpha(sun.glow, 0.16))
-                corona.addColorStop(1, withAlpha(sun.glow, 0))
+                const coronaKey = `corona|${sun.hot}|${sun.glow}|${Math.round(screenRadius * 2) / 2}`
+                const corona = cachedRadial(coronaKey, screenRadius * 0.2, screenRadius * 4.6, [
+                  [0, withAlpha(sun.hot, 0.36)],
+                  [0.42, withAlpha(sun.glow, 0.16)],
+                  [1, withAlpha(sun.glow, 0)],
+                ])
                 ctx.save()
                 ctx.globalCompositeOperation = 'lighter'
                 ctx.fillStyle = corona
@@ -4925,10 +4989,12 @@ window.__ModuleLoader__.load({
                   glow: true,
                 })
                 if (node.kind === 'root') {
-                  const starCore = ctx.createRadialGradient(0, 0, 0, 0, 0, screenRadius * 1.1)
-                  starCore.addColorStop(0, 'rgba(255, 255, 255, 1)')
-                  starCore.addColorStop(0.35, withAlpha(sun.hot, Math.min(1, 0.75 * STAR_CORE_BOOST)))
-                  starCore.addColorStop(1, withAlpha(sun.hot, 0))
+                  const starKey = `star|${sun.hot}|${Math.round(screenRadius * 2) / 2}`
+                  const starCore = cachedRadial(starKey, 0, screenRadius * 1.1, [
+                    [0, 'rgba(255, 255, 255, 1)'],
+                    [0.35, withAlpha(sun.hot, Math.min(1, 0.75 * STAR_CORE_BOOST))],
+                    [1, withAlpha(sun.hot, 0)],
+                  ])
                   ctx.save()
                   ctx.globalCompositeOperation = 'lighter'
                   ctx.fillStyle = starCore
@@ -4952,11 +5018,13 @@ window.__ModuleLoader__.load({
                 ctx.restore()
                 return
               }
-              const core = ctx.createRadialGradient(0, 0, 0, 0, 0, Math.max(0.6, screenRadius))
-              core.addColorStop(0, withAlpha(hot, 0.98))
-              core.addColorStop(0.5, withAlpha(color, 0.96))
-              // 边缘留一点实色，别糊成一团：星星是「亮点 + 星芒」，不是一团雾
-              core.addColorStop(1, withAlpha(color, 0.72))
+              const coreKey = `core|${color}|${hot}|${palette.dark ? 1 : 0}|${Math.round(screenRadius * 2) / 2}`
+              const core = cachedRadial(coreKey, 0, Math.max(0.6, screenRadius), [
+                [0, withAlpha(hot, 0.98)],
+                [0.5, withAlpha(color, 0.96)],
+                // 边缘留一点实色，别糊成一团：星星是「亮点 + 星芒」，不是一团雾
+                [1, withAlpha(color, 0.72)],
+              ])
               ctx.fillStyle = core
               ctx.strokeStyle = withAlpha(palette.highlight || color, 0.85)
               ctx.lineWidth = isSelected ? 1.6 : 0.6
@@ -4998,6 +5066,7 @@ window.__ModuleLoader__.load({
               ctx.restore()
             }
           }
+          const tNodes = performance.now()
           ctx.font = '11px ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif'
           const candidates = []
           const seenLabels = new Set()
@@ -5022,7 +5091,11 @@ window.__ModuleLoader__.load({
             const raw = String(entry.node.label || entry.node.id || '')
             if (raw === '') continue
             const label = raw.length > 26 ? `${raw.slice(0, 25)}…` : raw
-            const textWidth = ctx.measureText(label).width
+            let textWidth = labelWidths.get(label)
+            if (textWidth === undefined) {
+              textWidth = ctx.measureText(label).width
+              labelWidths.set(label, textWidth)
+            }
             const x = Math.max(6, Math.min(width - textWidth - 20, entry.screenX + Math.max(8, entry.r * entry.screenF) + 6))
             const y = Math.max(6, Math.min(height - 30, entry.screenY - 10))
             const box = { x: x - 2, y: y - 2, w: textWidth + 18, h: 24 }
@@ -5045,6 +5118,48 @@ window.__ModuleLoader__.load({
           }
           ctx.globalAlpha = 1
           ctx.shadowBlur = 0
+          const tLabels = performance.now()
+          const frameMs = tLabels - frameStart
+          frameTimes.push(frameMs)
+          if (frameTimes.length > 120) frameTimes.shift()
+          phaseAvg.project = phaseAvg.project * 0.9 + (tProject - frameStart) * 0.1
+          phaseAvg.edges = phaseAvg.edges * 0.9 + (tEdges - tProject) * 0.1
+          phaseAvg.pulses = phaseAvg.pulses * 0.9 + (tPulses - tEdges) * 0.1
+          phaseAvg.nodes = phaseAvg.nodes * 0.9 + (tNodes - tPulses) * 0.1
+          phaseAvg.labels = phaseAvg.labels * 0.9 + (tLabels - tNodes) * 0.1
+          const frameCounts = opCounts ? { ...opCounts } : undefined
+          if (frameCount % 30 === 0 && typeof window !== 'undefined') {
+            const p50 = graphPercentile(frameTimes, 0.5)
+            const p95 = graphPercentile(frameTimes, 0.95)
+            const total = frameTimes.reduce((sum, value) => sum + value, 0)
+            let tier = 'high'
+            try { tier = localStorage.getItem('eng:graph-quality') || 'high' } catch { /* 隐私模式忽略 */ }
+            const sample = {
+              nodes: store.nodes.size,
+              edges: store.edges.size,
+              size: { width: Math.round(width), height: Math.round(height), dpr: Math.round(dpr * 100) / 100 },
+              fps: Math.round(1000 / Math.max(1, total / Math.max(1, frameTimes.length))),
+              p50: Math.round(p50 * 10) / 10,
+              p95: Math.round(p95 * 10) / 10,
+              frame: Math.round(frameMs * 10) / 10,
+              phases: {
+                project: Math.round(phaseAvg.project * 100) / 100,
+                edges: Math.round(phaseAvg.edges * 100) / 100,
+                pulses: Math.round(phaseAvg.pulses * 100) / 100,
+                nodes: Math.round(phaseAvg.nodes * 100) / 100,
+                labels: Math.round(phaseAvg.labels * 100) / 100,
+              },
+              counts: frameCounts,
+              tier,
+              at: Date.now(),
+            }
+            window.__engGraph = sample
+            if (perfOn && Date.now() - (store.perfPostAt || 0) > 5000) {
+              store.perfPostAt = Date.now()
+              try { request('/graph-perf', { method: 'POST', body: sample }).catch(() => {}) } catch { /* 统计失败不影响画面 */ }
+            }
+          }
+          if (opCounts) for (const key of Object.keys(opCounts)) delete opCounts[key]
           raf = requestAnimationFrame(draw)
         }
         raf = requestAnimationFrame(draw)
@@ -5064,7 +5179,7 @@ window.__ModuleLoader__.load({
           canvas.removeEventListener('touchend', onTouchEnd)
           canvas.removeEventListener('touchcancel', onTouchEnd)
         }
-      }, [viewData, settings.data, paused, isolate])
+      }, [viewData, settings.data, paused])
       const surfaceStyle = paletteNow === 'universe'
         ? { background: 'radial-gradient(circle at 50% 45%, #0a2a3d 0%, #04121d 52%, #010307 100%)' }
         : paletteNow === 'cosmos'
@@ -5258,6 +5373,25 @@ window.__ModuleLoader__.load({
             selection.kind === 'type' ? h('dt', null, '经验数') : null,
             selection.kind === 'type' ? h('dd', null, String(selection.count || 0)) : null,
             h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, String(selection.id || '').replace(/^(exp|skill|type|suite):/, '')))))
+    }
+
+    // 0.25.0 P0：影子判据只读卡片（数据来自 usage.shadow，不写盘、不改召回）。
+    function ShadowP0Card() {
+      const report = useLoad(useCallback(() => request('/shadow-report'), []))
+      if (report.error) return null
+      const d = report.data || {}
+      const pct = (value) => (typeof value === 'number' ? `${Math.round(value * 100)}%` : '—')
+      const coverage = d.coverage && typeof d.coverage === 'object' ? d.coverage : {}
+      return h('div', { className: 'eng-card eng-detail' },
+        h('h3', { className: 'eng-detail-title' }, '标签进查询 · P0 影子判据'),
+        h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, '只读：数据来自现有 usage.shadow，不改召回。判据：样本 ≥20 次且 ≥2 周、重合比例 ≥0.6、覆盖率 ≥80%。'),
+        h('dl', { className: 'eng-kv' },
+          h('dt', null, '样本'), h('dd', null, String(d.samples === undefined ? 0 : d.samples)),
+          h('dt', null, '重合（Top5）'), h('dd', null, `${d.overlapMedian === null || d.overlapMedian === undefined ? '—' : d.overlapMedian} 条 / ${pct(d.overlapRatio)}`),
+          h('dt', null, '标签命中率'), h('dd', null, pct(d.tagHitRate)),
+          h('dt', null, '标签可用率'), h('dd', null, pct(d.tagReadyRate)),
+          h('dt', null, '标签覆盖率'), h('dd', null, `${pct(coverage.ratio)}（${coverage.objectAction || 0}/${coverage.visible || 0}）`)),
+        d.storeError ? h('div', { className: 'eng-muted', style: { marginTop: 8 } }, `库读取失败：${d.storeError}`) : null)
     }
 
     function Settings(props) {
@@ -5809,7 +5943,8 @@ window.__ModuleLoader__.load({
           h('h3', { className: 'eng-detail-title' }, '内核参数'),
           h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '关系图主题/配色/旋转/泛光/浮尘都在「界面与关系图」里切换；内核算力参数保存后动态生效。'),
           h('div', { className: 'eng-form-grid' }, renderFields(spec.config, configDraft, setConfigDraft)),
-          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ config: configDraft }) }, '保存内核参数')))
+          h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ config: configDraft }) }, '保存内核参数'))),
+        h(ShadowP0Card)
         ] : null,
         section === 'maintenance' ? [
         h('div', { className: 'eng-card eng-detail' },
@@ -6221,6 +6356,7 @@ window.__ModuleLoader__.load({
       Cold,
       pickAccent,
       layoutGraph,
+      graphPercentile,
       GRAPH_SOLIDS,
       GRAPH_SOLID_FOR_KIND,
       GRAPH_SUN,
