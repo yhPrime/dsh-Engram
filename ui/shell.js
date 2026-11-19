@@ -11,6 +11,8 @@
  */
 
 import { createLiveSource, resolveLiveDataDir } from './live.js'
+import { readObjects } from '../kernel/objects.js'
+import { readFamilyRegistry, resolveFamilyRef } from '../kernel/family-registry.js'
 import { createMockSource } from './mock.js'
 import {
   FEEDBACK_ETA,
@@ -101,6 +103,7 @@ export const SETTINGS_SPEC = {
     { key: 'graphBloom', label: '泛光 bloom', type: 'boolean', tip: '给亮节点叠一层柔光，暗色主题下更明显；关掉更省绘制。' },
     { key: 'graphGlitch', label: '色散/毛刺', type: 'boolean', tip: '给高亮节点/连线加一点 RGB 分离的故障感；关掉更干净。' },
     { key: 'graphDust', label: '浮尘数量', type: 'number', hint: '0~240', tip: '背景里漂浮的尘埃粒子数量（0~240）；太吃性能就调低。' },
+    { key: 'graphObjects', label: '关系图对象层', type: 'boolean', default: false, hint: '默认关', tip: '打开后在图外圈画「对象 → 链 → 族」的只读图层。对象不参与召回，是过程记录；默认关闭，避免把两套语义混画。' },
   ],
   git: [
     { key: 'repoUrl', label: '远端仓库', type: 'string', hint: 'https://… 或 git@host:path 或本机绝对路径', tip: '经验库会以这个仓库为备份目标。https 推公开/私有仓库都行；地址里不要写账号密码，token 填在下面。' },
@@ -762,7 +765,7 @@ export const GRAPH_SUMMARY_LIMIT_MAX = 1200
 function graphOptionsOf(params) {
   const get = (key) => (params && typeof params.get === 'function' ? params.get(key) : null)
   const summary = String(get('scope') || '').trim().toLowerCase() === 'summary'
-  return { summary, limit: summary ? graphLimitOf(get('limit')) : Infinity }
+  return { summary, limit: summary ? graphLimitOf(get('limit')) : Infinity, objects: String(get('objects') || '') === '1' }
 }
 
 function graphLimitOf(raw) {
@@ -956,6 +959,34 @@ export function buildGraph(source, params) {
     if (linked.length === 0 && !String(id).includes('/') && !rootLinked.has(`skill:${id}`)) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
   }
   const suiteRoots = skillTree.filter((node) => node.kind === 'group' || node.skillCount > 1).length
+  // 对象层（默认关）：只读 objects.jsonl，画「对象 → 链 → 族」外圈；对象不参与召回。
+  let objectCount = 0
+  if (options.objects) {
+    const dataDir = String((read && read.dataDir) || '').trim()
+    if (dataDir !== '') {
+      try {
+        const list = readObjects(dataDir)
+        const registry = readFamilyRegistry(dataDir)
+        for (const obj of list) {
+          const objectId = `object:${String(obj.id || '')}`
+          if (String(obj.id || '') !== '') {
+            nodes.push({ id: objectId, kind: 'object', label: String(obj.object || '对象'), weight: 0.6, chains: Array.isArray(obj.chains) ? obj.chains.length : 0 })
+            objectCount += 1
+          }
+          ;(Array.isArray(obj.chains) ? obj.chains : []).forEach((chain, chainIndex) => {
+            const chainId = `chain:${String(obj.id || '')}#${chainIndex + 1}`
+            nodes.push({ id: chainId, kind: 'chain', label: `链 ${chainIndex + 1}`, weight: 0.35, parent: objectId })
+            edges.push({ source: objectId, target: chainId, kind: 'chain', strength: 0.7 })
+            for (const step of Array.isArray(chain.steps) ? chain.steps : []) {
+              const ref = resolveFamilyRef(registry, step && step.familyId)
+              if (ref === null || ref.name === '') continue
+              edges.push({ source: chainId, target: graphFamilyId(ref.name), kind: 'step', strength: 0.5 })
+            }
+          })
+        }
+      } catch { /* 对象库读坏不影响族图：对象层直接不出 */ }
+    }
+  }
   // degree 用一遍边表累加（O(N+E)）：前端画图不用再自己数邻居。
   const degree = new Map()
   for (const edge of edges) {
@@ -976,7 +1007,7 @@ export function buildGraph(source, params) {
     total: rows.length,
     truncated: keptRows.length < rows.length,
     byKind,
-    summary: { families: families.size, experiences: rows.length, skills: skills.length, suites: suiteRoots },
+    summary: { families: families.size, experiences: rows.length, skills: skills.length, suites: suiteRoots, objects: objectCount },
     updatedAt: String(read.updatedAt || ''),
   }
 }

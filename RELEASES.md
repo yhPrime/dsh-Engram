@@ -675,3 +675,9 @@ ormalizeStore 同口径
   - 补回归：分片 manifest 类型 id 重复 → snapshot corrupt + 指向 manifest.json；坏库 /state totals=0、types=[]；非字符串 id 不误报
   - 	est:ui / 
 pm test 在 release 分支全绿
+
+- **v0.36.6（P2 收尾：关系图对象层，默认关）**
+  - 设置页新增「关系图对象层」（ui.graphObjects，默认关）；打开后 /graph?objects=1 多画「对象 → 链 → 族」外圈（object/chain 节点与 chain/step 边），布局在 700+ 外圈，悬空族 id 不画边
+  - 对象层只读 objects.jsonl，读坏不影响族图；summary 增加 objects 计数；图筛选新增「对象」
+  - 回归：/graph?objects=1 默认关、对象/链节点与 step 边、悬空族不画边
+  - test:ui / npm test 在 release 分支全绿
