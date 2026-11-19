@@ -613,6 +613,7 @@ export function rebuildManifest(dataDir, options = {}) {
         const presentTypeIds = new Set(deduped.map((row) => String((row && row.typeId) || SYSTEM_TYPE.id)))
         presentTypeIds.add(SYSTEM_TYPE.id)
         for (const [id, name] of dirTypes) { presentTypeIds.add(id); if (name !== '' && !typeNames.has(id)) typeNames.set(id, name) }
+        const previousTypes = new Map((Array.isArray(options.types) ? options.types : []).filter((type) => type !== null && typeof type === 'object').map((type) => [String(type.id), type]))
         const previousTypeNames = new Map((Array.isArray(options.types) ? options.types : []).map((type) => [String(type && type.id), String(type && type.name || '')]))
         const rowTypeNames = new Map()
         for (const row of deduped) {
@@ -621,6 +622,7 @@ export function rebuildManifest(dataDir, options = {}) {
           if (id !== '' && name !== '' && !rowTypeNames.has(id)) rowTypeNames.set(id, name)
         }
         const restoredTypes = [...presentTypeIds].map((id) => ({
+          ...(previousTypes.get(id) || {}),
           id,
           name: id === SYSTEM_TYPE.id ? SYSTEM_TYPE.name : (typeNames.get(id) || previousTypeNames.get(id) || rowTypeNames.get(id) || id),
         }))

@@ -694,3 +694,10 @@ pm test 在 release 分支全绿
   - 对象层回归夹具补强：同链重复族、注册表有无经验族、别名族、缺 id 脏行；删 families.has / 去重 / 缺 id 守卫任一实现都会让用例变红
   - 客户端补布局族键源码断言（graphFamilyIdOf(node.family)），回退会变红
   - test:ui / npm test 在 release 分支全绿
+
+- **v0.36.9（P0 内核修复：flat 布局识别与定向写合并）**
+  - hasShardFiles 认 library 根层 *.jsonl；isFlatLayout 在 manifest 丢 layout 时按磁盘识别；resolveLayout/countFamily* 计入 flat 根 _index 与文件
+  - shardsMismatch 对「manifest 无 layout + 磁盘 flat」按族文件核对：0 桶 manifest 不再被当成一致而永远空库，读自愈恢复 family-flat
+  - writeTypeFamilyShards：flat 定向写前并回磁盘上未触及类型的行、按 rel 合并 touched 类型，修复同族跨类型互相覆盖丢行；manifest buckets 按 file 去重
+  - rebuildManifest 恢复类型时保留原类型对象的 description/source，不再只剩 id/name
+  - 回归：flat 同族跨类型写两条都在；空桶 manifest 自愈读回；外部追加行被吸收且布局保持 family-flat
