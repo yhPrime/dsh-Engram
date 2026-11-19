@@ -60,7 +60,7 @@ import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseRece
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
 import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
 import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
-import { manageFamilies } from './family-tools.js'
+import { manageFamilies, readCreatedFamilies, syncCreatedFamilies } from './family-tools.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
@@ -1682,8 +1682,16 @@ export function buildTools(defineTool, config = {}) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
         const store = readStore(dataDir)
-        const { result, changed } = manageFamilies(store, String(args.action || '').trim(), args)
+        const action = String(args.action || '').trim()
+        const { result, changed } = manageFamilies(store, action, args)
         if (changed) writeStore(dataDir, store)
+        syncCreatedFamilies(dataDir, action, args, result)
+        if (action === 'list' && Array.isArray(result.families)) {
+          for (const family of readCreatedFamilies(dataDir)) {
+            if (!result.families.some((item) => item.family === family)) result.families.push({ family, count: 0 })
+          }
+          result.families.sort((a, b) => (b.count - a.count) || (a.family < b.family ? -1 : 1))
+        }
         return result
       })
     },

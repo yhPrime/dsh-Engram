@@ -2,6 +2,8 @@
  * 0.28/0.29：标签分级与补族、族代表的纯函数。
  * 只读/纯计算，不写盘；写回由调用方（工具/API）走 store.writeStore 的单事务。
  */
+import fs from 'node:fs'
+import path from 'node:path'
 import { canonicalRegisteredName, facetOf, registrySnapshot } from './tag-registry.js'
 
 /** 动作面标签 → 父级（UI 分组用；不影响召回）。 */
@@ -226,4 +228,40 @@ export function manageFamilies(store, action, args = {}) {
     return { changed: false, result: { family, deleted: true, note: '空族无需落盘；未分族不可删除' } }
   }
   throw new Error('未知 action：' + action)
+}
+
+
+const CREATED_FAMILIES_FILE = '_created-families.json'
+
+/** 0.33：模型显式创建、尚无行的空族（可见但 0 条）。 */
+export function readCreatedFamilies(dataDir) {
+  const file = path.join(String(dataDir || ''), 'library', CREATED_FAMILIES_FILE)
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return Array.isArray(parsed.created) ? parsed.created.map(String).filter((name) => name.trim() !== '') : []
+  } catch { return [] }
+}
+
+export function writeCreatedFamilies(dataDir, names) {
+  const dir = path.join(String(dataDir || ''), 'library')
+  if (!fs.existsSync(dir)) return
+  const list = [...new Set((Array.isArray(names) ? names : []).map((name) => String(name).trim()).filter(Boolean))]
+  const file = path.join(dir, CREATED_FAMILIES_FILE)
+  if (list.length === 0) { try { fs.rmSync(file, { force: true }) } catch { /* ignore */ } return }
+  fs.writeFileSync(file, JSON.stringify({ created: list }, null, 2) + '\n', 'utf8')
+}
+
+/** create/rename/merge/delete 后同步空族登记表（只处理没有行的族）。 */
+export function syncCreatedFamilies(dataDir, action, args, result) {
+  const current = readCreatedFamilies(dataDir)
+  let next = current.slice()
+  const add = (name) => { if (name && !next.includes(name)) next.push(name) }
+  const drop = (name) => { next = next.filter((item) => item !== name) }
+  if (action === 'create') add(String(result.family || args.family || ''))
+  else if (action === 'rename') { drop(String(args.family || '')); add(String(result.target || args.newName || '')) }
+  else if (action === 'merge') { for (const name of Array.isArray(args.names) ? args.names : []) drop(String(name)); add(String(result.target || args.newName || '')) }
+  else if (action === 'delete') drop(String(args.family || result.family || ''))
+  else if (action === 'assign') add(String(result.target || args.family || ''))
+  writeCreatedFamilies(dataDir, next)
+  return next
 }

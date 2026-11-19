@@ -43,7 +43,7 @@ import { classifyExperienceWithSession, localClassifyExperience } from '../kerne
 import { shadowReport } from '../kernel/tag-rank.js'
 import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
 import { validateTagSet } from '../kernel/tag-registry.js'
-import { backfillFamilies, derivedFamilyOf, manageFamilies, representativesOf, tagTree, visibleRowsOf } from '../kernel/family-tools.js'
+import { backfillFamilies, derivedFamilyOf, manageFamilies, readCreatedFamilies, representativesOf, syncCreatedFamilies, tagTree, visibleRowsOf } from '../kernel/family-tools.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -1105,6 +1105,15 @@ export async function handleRequest(req, res, source, deps = {}) {
           if (entry.representative === null && item.representative !== null) entry.representative = item.representative
         }
       }
+      // 显式创建、尚无行的空族也要可见（0 条）。
+      try {
+        const dataDir = String((readOf(active) || {}).dataDir || '').trim()
+        if (dataDir !== '') {
+          for (const family of readCreatedFamilies(dataDir)) {
+            if (!flatFamilies.has(family)) flatFamilies.set(family, { family, count: 0, representative: null })
+          }
+        }
+      } catch { /* 空族登记读不到不影响 */ }
       const families = [...flatFamilies.values()].sort((left, right) => (right.count - left.count) || (left.family < right.family ? -1 : 1))
       return json(res, 200, { ok: true, data: { types: data, families, unfiled, unfiledRows } })
     }
@@ -1131,12 +1140,15 @@ export async function handleRequest(req, res, source, deps = {}) {
         return fail(res, 400, 'bad-request', '需要 action（list/create/rename/merge/assign/delete）')
       }
       const store = storeOf(active)
-      const outcome = manageFamilies(store, String(body.action || '').trim(), body)
+      const action = String(body.action || '').trim()
+      const outcome = manageFamilies(store, action, body)
       if (outcome.changed) {
         if (active.mode !== 'live') return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: true } })
         const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
         writeStore(dataDir, store)
       }
+      const dataDir = String((readOf(active) || {}).dataDir || '').trim()
+      if (dataDir !== '') syncCreatedFamilies(dataDir, action, body, outcome.result)
       return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: false } })
     }
     if (route === '/retrieval-policy') {
