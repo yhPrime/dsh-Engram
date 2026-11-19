@@ -293,6 +293,18 @@ export function canonicalRegisteredName(value) {
 }
 
 /** 标签的面；未登记（或 pending 未分组）返回 null。 */
+
+/**
+ * 猜测一个新词属于哪个面（写入即登记用）：只做粗判，判不出来归 topic。
+ * 依据：动作类多为动词/动宾（提交/推送/校验…），产物类多为名词（PPT/课件/插件…），其余当主题。
+ */
+export function inferTagFacet(value) {
+  const name = String(value || '').trim()
+  if (name === '') return 'topic'
+  if (/提交|推送|校验|验收|编写|注册|安装|分类|沉淀|恢复|还原|修复|生成|整理|回滚|删除|清理|导出|导入|合并|改名|查询|统计|对比|评测|部署|发布/u.test(name)) return 'action'
+  if (/PPT|Word|Excel|课件|插件|网页|页面|代码|脚本|文档|表格|任务卡|版式|插页|经验库|关系图|客户端|界面|图标/u.test(name)) return 'object'
+  return 'topic'
+}
 export function facetOf(value) {
   const target = aliasTarget(value)
   if (target === null) return null

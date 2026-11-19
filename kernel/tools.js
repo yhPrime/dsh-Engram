@@ -4,7 +4,9 @@
  * 同一份数据、同一套语义；写入只走 exp_record（Provider 的通用 remember 被禁用）。
  * SDK 由 index.js 注入，测试用桩。
  */
+import fs from 'node:fs'
 
+import path from 'node:path'
 import {
   FEEDBACK_ETA,
   REVIEW_ACTIONS,
@@ -56,7 +58,8 @@ import { AUTO_ROUTE_MIN_SCORE, ensureClusters, routeCluster } from './cluster.js
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
-import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, facetOf, groupByFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
+import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
+import { hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
@@ -92,6 +95,36 @@ function autoTypeFromTags(tags, types) {
  * 面内顺序按排序权重（动作 0.55 > 主题 0.30 > 对象 0.15 > 质量）：截到 8 个时先保动作/主题，
  * 否则「对象面词多」的意图会把动作信号整体挤掉。
  */
+/**
+ * 分类目录对账（0.27.0 分族布局）：exp_type 的 create/rename/delete/merge 之后调用。
+ * - 不在 store.types 里的目录删掉；在 types 里的同步 _type.json 名字；
+ * - 没有行的业务分类标 created:true（重建时保留），系统类型不建目录。
+ */
+function reconcileFamilyTypeDirs(dataDir, store) {
+  if (!hasFamilyLayout(dataDir)) return
+  const known = new Map((Array.isArray(store.types) ? store.types : []).map((type) => [String(type.id), String(type.name || '')]))
+  const root = path.join(String(dataDir), 'library')
+  let dirs = []
+  try { dirs = fs.readdirSync(root) } catch { dirs = [] }
+  for (const typeId of dirs) {
+    if (known.has(typeId)) continue
+    // R9 缺陷：只清「像分类目录」的项（有 _type/_index 或 ty_* 名）；用户自建目录/文件不删。
+    if (typeId.startsWith('.')) continue
+    let isClassDir = false
+    try { isClassDir = fs.statSync(path.join(root, typeId)).isDirectory() } catch { isClassDir = false }
+    if (!isClassDir) continue
+    let hasMeta = false
+    try { hasMeta = fs.existsSync(path.join(root, typeId, '_index.json')) || fs.existsSync(path.join(root, typeId, '_type.json')) } catch { hasMeta = false }
+    if (!hasMeta && !/^ty_/i.test(typeId)) continue
+    removeFamilyTypeDir(dataDir, typeId)
+  }
+  const withRows = new Set((Array.isArray(store.experiences) ? store.experiences : []).map((row) => String((row && row.typeId) || 'ty_other')))
+  for (const [typeId, name] of known) {
+    if (typeId === 'ty_other') continue
+    if (!withRows.has(typeId)) markFamilyTypeCreated(dataDir, typeId, name)
+    else syncFamilyTypeName(dataDir, typeId, name)
+  }
+}
 function flattenQueryTags(queryTags) {
   if (queryTags === null || typeof queryTags !== 'object') return []
   const out = []
@@ -297,6 +330,7 @@ export function buildTools(defineTool, config = {}) {
       labels: { type: 'array', description: '可选：次级分类标签（≤8），与 context 合并；优先用 exp_type action=labels 列出的已有标签，已有无法满足才新建。' },
       artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
       dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
+      family: { type: 'string', description: '可选：族键（动作族，如 推送/校验/编写）；不填则取 context/labels 里第一个动作面标签，再没有落未分族。' },
       // 时效治理（0.20 P0）：全部可选；不填就是旧行为（读时按 semi 解释）。
       volatility: { type: 'string', enum: ['stable', 'semi', 'perishable'], description: '可选：易腐层。stable=偏好/硬约束，semi=判断原则（默认），perishable=具体步骤/命令/API。只影响召回降权与复核，不改 G。' },
       appliesTo: { type: 'object', description: '可选：适用范围 { models?: string[], tools?: string[], environment?: string }；不声明=unscoped（不硬拦）。', properties: { models: { type: 'array', items: { type: 'string' } }, tools: { type: 'array', items: { type: 'string' } }, environment: { type: 'string' } }, additionalProperties: false },
@@ -335,6 +369,16 @@ export function buildTools(defineTool, config = {}) {
       const allTags = [...ctxCheck.tags, ...lblCheck.tags]
         .filter((name, index, list) => list.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
       const rejectedTags = [...ctxCheck.rejected, ...lblCheck.rejected]
+      // 0.26.0：写入即登记（计划书 §11.6）。以前 exp_record 只查形态不登记，历史库 213 个标签里 170 个未登记，
+      // 查询侧 extractQueryTags 抽不到，标签等于白写。未知词按粗判给一个面并登记，失败不阻断记录。
+      for (const name of allTags) {
+        if (facetOf(name) !== null) continue
+        try {
+          saveTagOverride(dataDir, { name, facet: inferTagFacet(name), description: '写入时自动登记（0.26.0）' })
+        } catch {
+          // 已登记/内建/词表写失败：记录照常落库，不因词表失败阻断。
+        }
+      }
       // 主分类由模型负责（0.21.3 计划书 §0.1 D1）：手动调用**不再自动归族**——没给就落「未分类」，
       // 回执里给 typeWarning 提示模型补；分不出来保持原样也允许（D2：不阻断保存）。
       // 只有自动记录（`args.origin==='auto'`，由 auto-record.js 传入）才用词面路由兜底，
@@ -429,6 +473,9 @@ export function buildTools(defineTool, config = {}) {
           ? (ctxCheck.tags.length === 0 && contextProvidedNonEmpty ? undefined : ctxCheck.tags)
           : undefined,
         labels: lblGiven ? lblCheck.tags : undefined,
+        // 0.27.0 族键：显式 family 优先，否则取第一个动作标签；没有动作标签 → 不写（落未分族）。
+        // 只传显式 family；自动推导放在 store 建行时做（R4 缺陷：就在更新时不能拿推导值覆盖用户显式族）。
+        family: (typeof args.family === 'string' && args.family.trim() !== '') ? args.family.trim() : undefined,
         skillId: args.skillId,
       }
       const upsertOptions = {
@@ -976,6 +1023,7 @@ export function buildTools(defineTool, config = {}) {
       let tagRankShadow = null
       // 声明放在块外：weak 清空判断在 if 块外读它（R3 缺陷：块内 const 在块外不可见，弱相关召回必崩）。
       let tagRankAppliedNow = false
+      let tagQuery = null
       if (tagRankMode !== 'off') {
         try {
           ensureTagOverrides(dataDir)
@@ -983,16 +1031,24 @@ export function buildTools(defineTool, config = {}) {
           // 词表覆盖读坏不拖垮召回：按内建词表抽词。
         }
         // 抽词只看前 12000 字：标签是短词，2MB 意图没必要整段扫描（超长文本会拖慢召回）。
-        const autoTags = flattenQueryTags(extractQueryTags(String(args.intent || '').slice(0, 12000)))
+        const queryFacets = extractQueryTags(String(args.intent || '').slice(0, 12000))
+        const autoTags = flattenQueryTags(queryFacets)
         // 显式优先：contextMatch 的分母是「查询标签数」，合并会稀释显式标签的命中（2/2 变 2/7），
         // 所以只要调用方给了 context（哪怕是空数组/全非法），就只用显式；完全没给才用自动抽的标签。
         const mergedTags = explicitProvided ? explicitTags : autoTags
-        tagRankAppliedNow = tagRankMode === 'on' && mergedTags.length > 0
-        // on 才改用 mergedTags；off/shadow 用同一个清洗后的显式值（影子必须与 off 完全一致）。
-        if (tagRankMode === 'on') rankContext = mergedTags
-        if (tagRankMode === 'shadow') tagRankShadow = { mode: 'shadow', queryTags: autoTags, explicit: explicitTags.length, merged: mergedTags.length }
+        // on：自动标签走「对象→动作 软优先」（tagScore 按 IDF 加权，只加分不筛池），不再占用 contextMatch；
+        // 显式 context 仍按老口径（调用方明确要情境优先，行为不变）。
+        if (tagRankMode === 'on' && !explicitProvided) {
+          tagQuery = { object: queryFacets.object.slice(), action: queryFacets.action.slice() }
+          tagRankAppliedNow = tagQuery.object.length + tagQuery.action.length > 0
+          rankContext = []
+        } else {
+          tagRankAppliedNow = tagRankMode === 'on' && mergedTags.length > 0
+          if (tagRankMode === 'on') rankContext = mergedTags
+        }
+        if (tagRankMode === 'shadow') tagRankShadow = { mode: 'shadow', queryTags: autoTags, object: queryFacets.object.length, action: queryFacets.action.length, explicit: explicitTags.length, merged: mergedTags.length }
       }
-      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: rankContext, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
+      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: rankContext, tagBonusOnly: tagRankAppliedNow && tagQuery !== null, tagQuery, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
       if (Array.isArray(recentRows)) rankOptions.recentRows = recentRows
       const result = rankExperiences(store, String(args.intent || ''), recallLimit, rankOptions)
       // 类型路由影子（P1）：只在显式 tagShadow / config.tagShadow 时计算；只读、不碰 candidates。
@@ -1557,6 +1613,8 @@ export function buildTools(defineTool, config = {}) {
             rowsByType: { [type.id]: [] },
           })
           catalogTypes = typeStore.types
+          // 空分类需要落一个带 created:true 的目录，重建时才能保留（R3 缺陷）。
+          if (hasFamilyLayout(dataDir)) markFamilyTypeCreated(dataDir, type.id, type.name)
           result = { action, created: type.name, typeId: type.id }
         }
       }
@@ -1590,6 +1648,7 @@ export function buildTools(defineTool, config = {}) {
         throw new Error(`不支持的类型动作：${action}`)
       }
       writeStore(dataDir, store)
+      reconcileFamilyTypeDirs(dataDir, store)
       logUsage(dataDir, {
         tool: 'exp_type',
         op: action,

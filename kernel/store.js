@@ -49,6 +49,7 @@ import {
   TAG_MAX_COUNT,
   TAG_REQUIRED_FACETS,
   canonicalRegisteredName,
+  facetOf,
   coreTagsOf,
   describeTag,
   ensureTagOverrides,
@@ -78,6 +79,21 @@ import {
   taskKeyHash,
   writeManifest,
   writeShards,
+  FAMILY_LAYOUT,
+  FAMILY_SCHEMA,
+  familyDirOf,
+  contentHash,
+  hasFamilyLayout,
+  scanFamilyTypeDirs,
+  scanColdNormalized,
+  assertFamilyIndexesIntact,
+  resolveLayout,
+  normalizeCold,
+  assertFamilyBucketsIntact,
+  readFamilyRecords,
+  readFamilyTypeNames,
+  scanFamilyShards,
+  writeFamilyShards,
 } from './shard-store.js'
 
 /** 只有系统兜底类型；业务类型不再预设，由模型在记录时按需创建（带防膨胀限制）。 */
@@ -377,9 +393,10 @@ function normalizeStore(raw) {
     const log = trimFeedbackLog(item.feedback_log)
     const signalCount = log.filter((event) => event && FEEDBACK_RESULTS[event.result] !== 0).length
     if (signalCount > 0) {
-      // 有信号事件：基准由 outcome 决定，G 由日志重放（单一真相）。
+      // 有信号事件：G 由日志重放（单一真相）；基准优先保留已浓缩的历史 GOutcome（R11 缺陷：不能每次读都重置）。
       item.feedback_log = log
-      item.GOutcome = round4(scoreOf(item.outcome))
+      const keptBase = item.GOutcome !== undefined && item.GOutcome !== null && Number.isFinite(Number(item.GOutcome)) ? round4(Number(item.GOutcome)) : round4(scoreOf(item.outcome))
+      item.GOutcome = keptBase
       item.G = replayFeedback(item.GOutcome, log)
       item.GSource = 'feedback'
       const counts = { helped: 0, hurt: 0, neutral: 0 }
@@ -437,6 +454,193 @@ function typesFromRecords(records, fallbackTypes) {
 export function rebuildManifest(dataDir, options = {}) {
   // D3（2026-11-12）：旧 manifest 可解析时先核对它的声明——声明 count>0 的分片被清空/截断，
   // 重建会把「少了几行」当成事实写进新 manifest，等于把事故抹平。宁可报错，不许静默丢行。
+  // 0.27.0：分族布局从 library/ 重建；旧布局仍按 buckets/ 重建。
+  // R2 修复：布局由 resolveLayout 判定（manifest.layout 优先；manifest 不可用时两套都在一律走旧 buckets）。
+  let rawManifest = null
+  try { rawManifest = readManifestFile(dataDir) } catch { rawManifest = null }
+  if (resolveLayout(dataDir, rawManifest) === 'family' && hasShardFiles(dataDir)) {
+    // R6 缺陷：library 根被替换成普通文件（ENOTDIR）时必须报结构损坏，不能静默按 0 行重建。
+    try {
+      const libraryStat = fs.statSync(path.join(dataDir, 'library'))
+      if (!libraryStat.isDirectory()) throw new Error('经验库结构损坏：library 不是目录')
+    } catch (error) {
+      if (error && /结构损坏/u.test(String(error.message || ''))) throw error
+    }
+    // R4 严重缺陷：扫描 + 去重 + 重写必须在**同一把锁**内完成，否则读自愈会用旧快照覆盖并发写入。
+    // 锁忙（只是读路径）时不写盘、返回 null，调用方降级读旧快照。
+    try {
+      return withStoreLock(dataDir, () => {
+        // R5 缺陷：写进程在「族文件/_index 已改、manifest 未写」之间崩溃时，旧 manifest 计数会永远卡住重建。
+        // 规则：manifest 声明与实际不符时，只要 _index 与磁盘一致，就按磁盘（已提交的缩族/增长）重建；否则报错。
+        if (Array.isArray(options.buckets) && options.buckets.length > 0) {
+          try {
+            assertFamilyBucketsIntact(dataDir, options.buckets)
+          } catch (manifestError) {
+            // 只容忍「写进程在族文件/_index 之后、manifest 之前崩溃」这一类陈旧计数：
+            // 越界路径、文件缺失（_index 也不认识该文件）一律按损坏拒绝，不能自愈成少读。
+            if (/越界/u.test(String(manifestError && manifestError.message || ''))) throw manifestError
+            const missing = options.buckets.filter((bucket) => {
+              const rel = String(bucket && bucket.file || '')
+              if (rel === '') return false
+              try { return !fs.existsSync(path.join(dataDir, rel)) } catch { return true }
+            })
+            const declaredByIndex = (rel) => {
+              const typeId = path.dirname(rel).split(path.sep).pop()
+              try {
+                const parsed = JSON.parse(fs.readFileSync(path.join(familyDirOf(dataDir, typeId), '_index.json'), 'utf8'))
+                return (Array.isArray(parsed.families) ? parsed.families : []).some((item) => path.basename(String(item.file || '')) === path.basename(rel))
+              } catch { return false }
+            }
+            // R7 缺陷：_index 已提交、manifest 未写的「合法缩族」（某族被整体搬空）不能当数据丢失。
+            // 只有「_index 仍声明该文件」或「该分类没有可核对的 _index」才拒绝。
+            const typeIndexUsable = (rel) => {
+              const typeId = path.basename(path.dirname(rel))
+              return fs.existsSync(path.join(dataDir, 'library', typeId, '_index.json'))
+            }
+            const uncommitted = missing.filter((bucket) => {
+              const rel = String(bucket.file || '')
+              if (declaredByIndex(rel)) return true
+              return !typeIndexUsable(rel)
+            })
+            if (uncommitted.length > 0) throw manifestError
+            // R11 缺陷：_index 缺失/未声明该文件时，截断（少行）与同 count 替换（hash 不符）必须拒绝，不能静默写回。
+            if (/hash\s*不符/u.test(String(manifestError.message || ''))) {
+              // R12 缺陷：只看「实际 hash 与 manifest 不符」的桶；无关分类缺 _index 不能连坐。
+              const offenders = options.buckets.filter((bucket) => {
+                const rel = String(bucket && bucket.file || '')
+                if (rel === '') return false
+                try {
+                  const text = fs.readFileSync(path.join(dataDir, rel), 'utf8')
+                  if (String(bucket.hash || '') === '') return true
+                  const declared = Number(bucket.count) || 0
+                  const lines = text.split('\n').filter((line) => line.trim() !== '')
+                  // R14 缺陷：合法增长（前缀 hash 一致）不是冲突桶，不能因缺索引连坐整库。
+                  const prefixText = lines.slice(0, declared).map((line) => `${line}\n`).join('')
+                  return contentHash(prefixText) !== String(bucket.hash)
+                } catch { return true }
+              })
+              const offenderTypes = new Set()
+              for (const bucket of offenders) {
+                const rel = String(bucket.file || '')
+                const typeId = path.basename(path.dirname(rel))
+                offenderTypes.add(typeId)
+                // C2：冲突桶必须被该分类 _index 明确声明（否则没有「已提交」证据，按篡改拒绝）；
+                // hash 的逐项一致由随后的 assertFamilyIndexesIntact(仅冲突分类) 校验。
+                let declared = false
+                try {
+                  const parsed = JSON.parse(fs.readFileSync(path.join(dataDir, 'library', typeId, '_index.json'), 'utf8'))
+                  const item = (Array.isArray(parsed.families) ? parsed.families : []).find((entry) => path.basename(String(entry.file || '')) === path.basename(rel))
+                  declared = item !== undefined && typeof item.hash === 'string' && item.hash !== ''
+                } catch { declared = false }
+                if (!declared) throw manifestError
+              }
+              try {
+                assertFamilyIndexesIntact(dataDir, offenderTypes)
+              } catch {
+                throw manifestError
+              }
+            }
+            const shrinkUncommitted = options.buckets.filter((bucket) => {
+              const rel = String(bucket && bucket.file || '')
+              if (rel === '') return false
+              let actual = 0
+              try {
+                const text = fs.readFileSync(path.join(dataDir, rel), 'utf8')
+                actual = text.split('\n').filter((line) => line.trim() !== '').length
+              } catch { return false }
+              const declared = Number(bucket.count) || 0
+              if (actual >= declared) return false
+              const fullPath = path.join(dataDir, rel)
+              if (fs.existsSync(fullPath)) {
+                // 崩溃窗口：文件已缩、_index 已提交（count/hash 与磁盘一致）→ 允许；否则拒绝。
+                let committed = false
+                try {
+                  const text = fs.readFileSync(fullPath, 'utf8')
+                  const typeId = path.basename(path.dirname(rel))
+                  const parsed = JSON.parse(fs.readFileSync(path.join(dataDir, 'library', typeId, '_index.json'), 'utf8'))
+                  const item = (Array.isArray(parsed.families) ? parsed.families : []).find((entry) => path.basename(String(entry.file || '')) === path.basename(rel))
+                  committed = item !== undefined && Number(item.count) === actual && (typeof item.hash !== 'string' || item.hash === '' || item.hash === contentHash(text))
+                } catch { committed = false }
+                return !committed
+              }
+              // 文件整体消失：_index 存在且不再声明它 → 视为已提交的缩族（R7-S01）。
+              return !(typeIndexUsable(rel) && !declaredByIndex(rel))
+            })
+            if (shrinkUncommitted.length > 0) throw manifestError
+            // R13 缺陷：混合冲突不能依赖「先抛哪个错」；对每个「等长但 hash 不符」的桶独立核对已提交证据。
+            const tamperTypes = new Set()
+            for (const bucket of options.buckets) {
+              const rel = String(bucket && bucket.file || '')
+              if (rel === '') continue
+              let text = null
+              try { text = fs.readFileSync(path.join(dataDir, rel), 'utf8') } catch { continue }
+              const actual = text.split('\n').filter((line) => line.trim() !== '').length
+              const declared = Number(bucket.count) || 0
+              if (actual !== declared) continue
+              if (typeof bucket.hash !== 'string' || bucket.hash === '' || contentHash(text) === bucket.hash) continue
+              const typeId = path.basename(path.dirname(rel))
+              tamperTypes.add(typeId)
+              let committed = false
+              try {
+                const parsed = JSON.parse(fs.readFileSync(path.join(dataDir, 'library', typeId, '_index.json'), 'utf8'))
+                const item = (Array.isArray(parsed.families) ? parsed.families : []).find((entry) => path.basename(String(entry.file || '')) === path.basename(rel))
+                committed = item !== undefined && typeof item.hash === 'string' && item.hash === contentHash(text)
+              } catch { committed = false }
+              if (!committed) throw manifestError
+            }
+            if (tamperTypes.size > 0) {
+              try { assertFamilyIndexesIntact(dataDir, tamperTypes) } catch { throw manifestError }
+            }
+            try {
+              assertFamilyIndexesIntact(dataDir)
+            } catch {
+              throw manifestError
+            }
+          }
+        } else {
+          assertFamilyIndexesIntact(dataDir)
+        }
+        const scanFamily = readFamilyRecords(dataDir)
+        const deduped = dedupeRecordsById(scanFamily.records)
+        const duplicates = scanFamily.records.length - deduped.length
+        const typeNames = readFamilyTypeNames(dataDir)
+        const dirTypes = scanFamilyTypeDirs(dataDir)
+        const presentTypeIds = new Set(deduped.map((row) => String((row && row.typeId) || SYSTEM_TYPE.id)))
+        presentTypeIds.add(SYSTEM_TYPE.id)
+        for (const [id, name] of dirTypes) { presentTypeIds.add(id); if (name !== '' && !typeNames.has(id)) typeNames.set(id, name) }
+        const previousTypeNames = new Map((Array.isArray(options.types) ? options.types : []).map((type) => [String(type && type.id), String(type && type.name || '')]))
+        const rowTypeNames = new Map()
+        for (const row of deduped) {
+          const id = String((row && row.typeId) || '')
+          const name = String((row && row.typeName) || '')
+          if (id !== '' && name !== '' && !rowTypeNames.has(id)) rowTypeNames.set(id, name)
+        }
+        const restoredTypes = [...presentTypeIds].map((id) => ({
+          id,
+          name: id === SYSTEM_TYPE.id ? SYSTEM_TYPE.name : (typeNames.get(id) || previousTypeNames.get(id) || rowTypeNames.get(id) || id),
+        }))
+        const storeFamily = normalizeStore({ version: Number(options.version) || 1, types: restoredTypes, experiences: deduped })
+        ensureClusters(storeFamily)
+        const coldFromDisk = scanColdNormalized(dataDir)
+        const manifestFamily = writeFamilyShards(dataDir, storeFamily, { cold: coldFromDisk }, duplicates > 0 ? { duplicates } : {})
+        clearHintCache(dataDir)
+        return manifestFamily
+      }, { waitMs: 0 })
+    } catch (error) {
+      if (lockBusyError(error)) return null
+      throw error
+    }
+  }
+  // R5 缺陷：旧布局重建也要持锁（与分族分支一致）；锁忙时返回 null，由调用方降级读旧快照。
+  try {
+    return withStoreLock(dataDir, () => rebuildLegacyManifestUnlocked(dataDir, options), { waitMs: 0 })
+  } catch (error) {
+    if (lockBusyError(error)) return null
+    throw error
+  }
+}
+
+function rebuildLegacyManifestUnlocked(dataDir, options) {
   assertDeclaredBucketsIntact(dataDir, options.buckets, options.cold)
   const scan = scanShards(dataDir)
   // D5：旧 manifest 登记的冷档文件缺失时，保留这份登记（不要把 cold 清空）——
@@ -490,13 +694,22 @@ export function readManifest(dataDir) {
   if (manifest === null && !sharded) return null
   if (!sharded && fs.existsSync(storeFile(dataDir))) return null
   // 事实源在分片里：重建缓存。类型元数据只在 manifest 里有，能救就救。
-  return rebuildManifest(dataDir, {
+  const rebuiltManifest = rebuildManifest(dataDir, {
     version: manifest === null ? 1 : manifest.version,
     types: manifest === null ? undefined : manifest.types,
     buckets: manifest === null ? undefined : manifest.buckets,
     cold: manifest === null ? undefined : manifest.cold,
     migratedFrom: manifest === null ? '' : (manifest.migratedFrom || ''),
   })
+  // 锁被占用时重建被跳过（返回 null）：有旧 manifest 就降级读旧缓存；连 manifest 都没有则明确报锁忙，
+  // 不能返回 null 让调用方把库读成空（R5 缺陷）。
+  if (rebuiltManifest !== null) return rebuiltManifest
+  if (manifest === null) {
+    // 有旧单文件库时仍可降级读（零写盘）；连旧库都没有才报锁忙。
+    if (fs.existsSync(storeFile(dataDir))) return null
+    throw new Error('经验库正被另一个进程写入（manifest 缺失且自愈被跳过），稍后重试')
+  }
+  return manifest
 }
 
 /**
@@ -520,16 +733,47 @@ export function readStore(dataDir, options = {}) {
 }
 
 function readStoreUncached(dataDir) {
+  // R8 缺陷：写者持锁期间先等它释放（最多 3s）再读，避免读到「manifest 已换、族文件正重写」的中间态。
+  // 锁一直不释放就照旧降级读（只读、零写盘），由调用方重试。
+  const waitLock = `${storeFile(dataDir)}.lock`
+  let waitDeadline = Date.now() + 3000
+  while (fs.existsSync(waitLock) && Date.now() < waitDeadline) {
+    // 同进程已持锁时立即返回（withStoreLock 可重入；写路径内部会调用 readStore）。
+    try { if (Number(fs.readFileSync(path.join(waitLock, 'pid'), 'utf8')) === process.pid) break } catch { /* 无 pid 文件 */ }
+    sleepSync(20)
+  }
   const manifest = readManifest(dataDir)
   let store
   if (manifest !== null) {
-    const records = readShardRecords(dataDir, manifest)
+    // R5 缺陷：并发写盘（尤其是 2 MiB 级族文件重写）期间读会撞到短暂不一致。
+    // 读侧在「写锁存在」时等锁释放再重试，最多约 3 秒；锁不在或仍失败才抛。
+    const lockDir = `${storeFile(dataDir)}.lock`
+    const retryDeadline = Date.now() + 10000
+    let records
+    let attempt = 0
+    for (;;) {
+      try {
+        records = readShardRecords(dataDir, manifest)
+        break
+      } catch (error) {
+        const retryable = /分片|族文件/.test(String(error && error.message || ''))
+        // R6 缺陷：永久性损坏（如 manifest 重复登记、count 冲突）不能当并发写一直重试；
+        // 只在写锁存在或前 3 次尝试内重试。
+        const lockPresent = fs.existsSync(lockDir)
+        if (!retryable || (!lockPresent && attempt >= 3)) throw error
+        attempt += 1
+        // 写锁在就等它释放（最多 10s），释放后再重读；锁不在时短暂退避再试。
+        while (fs.existsSync(lockDir) && Date.now() < retryDeadline) sleepSync(20)
+        if (Date.now() > retryDeadline) throw error
+        sleepSync(20)
+      }
+    }
     store = normalizeStore({ version: manifest.version, types: manifest.types, experiences: records })
     const declared = manifest.buckets.reduce((sum, bucket) => sum + (Number(bucket.count) || 0), 0)
     if (declared !== records.length) {
       // 条数与分片不符（并发合并 / 半写）：缓存自愈；已读到的记录照常返回，不丢数据。
       try {
-        rebuildManifest(dataDir, { version: manifest.version, types: manifest.types, migratedFrom: manifest.migratedFrom || '' })
+        rebuildManifest(dataDir, { version: manifest.version, types: manifest.types, buckets: manifest.buckets, cold: manifest.cold, migratedFrom: manifest.migratedFrom || '' })
       } catch {
         // 重建失败不影响本次读；下次写盘会覆盖 manifest。
       }
@@ -810,6 +1054,10 @@ function removeLockDir(lockDir) {
   }
 }
 
+function lockBusyError(error) {
+  return Boolean(error) && /正被另一个进程写入/.test(String(error.message || ''))
+}
+
 export function withStoreLock(dataDir, fn, options = {}) {
   const key = path.resolve(String(dataDir || ''))
   if (heldLocks.has(key)) return fn()
@@ -819,16 +1067,22 @@ export function withStoreLock(dataDir, fn, options = {}) {
   const waitMs = Number.isFinite(Number(options.waitMs)) && Number(options.waitMs) >= 0 ? Number(options.waitMs) : LOCK_WAIT_MS
   const deadline = Date.now() + waitMs
   let acquired = false
+  let reclaims = 0
   while (!acquired) {
     try {
       fs.mkdirSync(lockDir)
       acquired = true
       break
     } catch (error) {
-      if (error && error.code !== 'EEXIST') throw error
+      // Windows 并发时锁目录处于删除/创建中间态会返回 EPERM/EACCES（R2 缺陷）：按竞争重试。
+      const retryable = error && (error.code === 'EEXIST' || error.code === 'EPERM' || error.code === 'EACCES')
+      if (!retryable) throw error
     }
-    if (lockIsStale(lockDir)) {
+    // R4 缺陷：waitMs=0 时先把明显陈旧的锁回收一次（最多 3 次），再判超时——
+    // 否则会因毫秒边界随机抛「正被另一个进程写入」。3 次上限保证持续 EPERM/EACCES 不会死循环。
+    if (reclaims < 3 && lockIsStale(lockDir)) {
       removeLockDir(lockDir)
+      reclaims += 1
       continue
     }
     if (Date.now() > deadline) throw new Error(`经验库正被另一个进程写入（锁 ${lockDir}），稍后重试`)
@@ -925,11 +1179,15 @@ export function writeStore(dataDir, store, options = {}) {
   // clusters 只落 manifest 当缓存；返回值保持旧形状（调用方零改动）。
   const shardInput = { version: payload.version, types: payload.types, experiences: payload.experiences }
   ensureClusters(shardInput)
-  let next = writeShards(dataDir, shardInput, manifest)
+  // 0.27.0：布局由 manifest.layout 决定；首次迁移由 options.layout='family' 显式指定。
+  // R2 缺陷：manifest 丢失/损坏时布局判定不能只看 options；已有 library/ 目录就沿用分族布局（空库也一样）。
+  const layoutFamily = (manifest !== null && manifest.layout === FAMILY_LAYOUT) || options.layout === FAMILY_LAYOUT || (manifest === null && resolveLayout(dataDir, null) === 'family')
+  let next = layoutFamily ? writeFamilyShards(dataDir, shardInput, manifest) : writeShards(dataDir, shardInput, manifest)
   // P2 容量治理（§4.4 / D4；§7.10 安全阀）：单桶 > 2 MiB、热档总字节 > 32 MiB、可见条数 > N_MAX 时，
   // 压缩当前最大的分片。压缩只动分片与冷档，manifest 在这里统一写一次（先数据后索引）。
   const compactOptions = options.compact !== null && typeof options.compact === 'object' ? options.compact : {}
-  const compacted = compactStore(dataDir, next, compactOptions)
+  // 分族布局暂不做压缩下沉（族文件单文件 2 MiB 上限已保证拆片；冷档逻辑留待后续版本）。
+  const compacted = layoutFamily ? { compacted: [], removedIds: [], manifest: next } : compactStore(dataDir, next, compactOptions)
   if (compacted.compacted.length > 0) {
     // 下沉/清掉的记录要从内存视图里剔除，否则 manifest.stats/recent 会把它们还当热档算。
     const removed = new Set(compacted.removedIds.map(String))
@@ -1541,7 +1799,7 @@ export function upsertExperience(store, input, options = {}) {
   const applyExpectation = (row) => {
     const expected = expectedG !== null
       ? expectedG
-      : (Number.isFinite(Number(row.expectedG)) ? Number(row.expectedG) : null)
+      : (row.expectedG !== undefined && row.expectedG !== null && Number.isFinite(Number(row.expectedG)) ? Number(row.expectedG) : null)
     if (expected === null) {
       row.expectedG = null
       row.predictionError = null
@@ -1584,7 +1842,8 @@ export function upsertExperience(store, input, options = {}) {
   const signOf = (value) => (Number(value) > 0 ? 1 : (Number(value) < 0 ? -1 : 0))
   // 分支判符号用**基准回报**（outcome 的符号），不用含反馈的 G：
   // 否则「成功但被 hurt 两次」的行会被当成负样本，重记失败原地合并、重记成功反而分裂（2026-11-07 验收实测）。
-  const outcomeSignOf = (item) => signOf(item.GOutcome !== undefined && item.GOutcome !== null ? item.GOutcome : scoreOf(item.outcome))
+  // R13 缺陷：分支极性必须用 outcome 的符号；折叠后的 GOutcome 可能跨零，不能带偏分支。
+  const outcomeSignOf = (item) => signOf(scoreOf(item.outcome))
   const duplicate = active.find((item) => sameTask(item, { crossType: allowRetype })
     && actionKeyOf(item.action) === actionKeyOf(action)
     && (hasOutcome ? (item.verdict === 'pending' || outcomeSignOf(item) === signOf(reward)) : true)
@@ -1614,12 +1873,16 @@ export function upsertExperience(store, input, options = {}) {
     if (hasOutcome) {
       duplicate.outcome = outcome
       duplicate.step_rewards = stepRewardsInput !== null ? stepRewardsInput : [reward]
+      // R13 缺陷：先按旧基准折叠超窗事件，再换新基准（否则旧事件被叠加到新基准上）。
+      foldExpiredFeedback(duplicate, nowMs, decayDays)
       duplicate.GOutcome = computedG
       duplicate.verdict = 'decided'
       duplicate.verdictAt = now
       duplicate.decidedBy = 'model'
       applyExpectation(duplicate)
     }
+    // R4 缺陷：重记时显式 family 必须生效（允许把已有经验重新归档）。
+    if (typeof input.family === 'string' && input.family.trim() !== '') duplicate.family = input.family.trim().slice(0, 200)
     if (input.context !== undefined) duplicate.context = context
     if (labels.length > 0) duplicate.context = normalizeContext([...(Array.isArray(duplicate.context) ? duplicate.context : []), ...labels])
     if (dimensions !== null) duplicate.dimensions = dimensions
@@ -1657,9 +1920,13 @@ export function upsertExperience(store, input, options = {}) {
     revivable.lastSeenAt = now
     revivable.outcome = outcome
     revivable.step_rewards = stepRewardsInput !== null ? stepRewardsInput : [reward]
+    foldExpiredFeedback(revivable, nowMs, decayDays)
     revivable.GOutcome = computedG
+    if (typeof input.family === 'string' && input.family.trim() !== '') revivable.family = input.family.trim().slice(0, 200)
     if (input.context !== undefined) revivable.context = context
     if (labels.length > 0) revivable.context = normalizeContext([...(Array.isArray(revivable.context) ? revivable.context : []), ...labels])
+    if (dimensions !== null) revivable.dimensions = dimensions
+    if (artifacts !== null) revivable.artifacts = artifacts
     applyLifecycleTo(revivable)
     applyExpectation(revivable)
     foldExpiredFeedback(revivable, nowMs, decayDays)
@@ -1727,6 +1994,13 @@ export function upsertExperience(store, input, options = {}) {
     expectedG: expectedG,
     predictionError: expectedG === null ? null : round4(computedG - expectedG),
     context: normalizeContext([...context, ...labels]),
+    // 族键：显式 family 优先；否则取 context 里第一个动作面标签（与 exp_record 口径一致）。
+    // 不在这里截断族名（文件名侧有 40 码点 + 哈希尾缀，R4 缺陷：60 字截断会把两个长族名合并）。
+    ...(() => {
+      const explicitFamily = typeof input.family === 'string' && input.family.trim() !== '' ? input.family.trim() : ''
+      const derivedFamily = explicitFamily !== '' ? explicitFamily : (normalizeContext([...context, ...labels]).find((tag) => facetOf(tag) === 'action') || '')
+      return derivedFamily === '' ? {} : { family: derivedFamily.slice(0, 200) }
+    })(),
     ...(typeof input.skillId === 'string' && input.skillId.trim() !== '' ? { skillId: input.skillId.trim() } : {}),
     outcome,
     note: cleanNote.text,
@@ -1955,7 +2229,8 @@ function syncDerivedFeedback(row) {
   const base = Number.isFinite(Number(row.GOutcome)) ? Number(row.GOutcome) : scoreOf(row.outcome)
   row.GOutcome = round4(base)
   const log = trimFeedbackLog(row.feedback_log)
-  row.feedback_log = log
+  // R13 缺陷：从未反馈过的行不写 feedback_log: []（字段污染）。
+  if (log.length > 0 || Object.hasOwn(row, 'feedback_log')) row.feedback_log = log
   const signalCount = log.filter((event) => event && FEEDBACK_RESULTS[event.result] !== 0).length
   row.G = signalCount > 0 ? replayFeedback(row.GOutcome, log) : row.GOutcome
   row.GSource = signalCount > 0 ? 'feedback' : 'outcome'
@@ -1966,9 +2241,10 @@ function syncDerivedFeedback(row) {
   const previous = row.feedback !== null && typeof row.feedback === 'object' ? row.feedback : null
   const last = log[log.length - 1]
   // 计数是「一生」的，日志是最近 20 条：两者分工不同，不互相推导。
-  row.feedback = previous !== null
-    ? { ...previous, ...(last !== undefined ? { lastAt: last.at, lastResult: last.result } : {}) }
-    : { ...counts, ...(last !== undefined ? { lastAt: last.at, lastResult: last.result } : {}) }
+  // R9 缺陷：从未反馈过时不要凭空造零计数 feedback 对象（证据不应多出字段）。
+  if (previous !== null) row.feedback = { ...previous, ...(last !== undefined ? { lastAt: last.at, lastResult: last.result } : {}) }
+  else if (last !== undefined) row.feedback = { ...counts, lastAt: last.at, lastResult: last.result }
+  else if (Object.hasOwn(row, 'feedback')) delete row.feedback
   return row
 }
 
@@ -2001,6 +2277,14 @@ export function applyFeedback(store, id, input = {}, options = {}) {
     : new Date(Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now())
   const now = nowDate.toISOString()
   const nowMs = nowDate.getTime()
+  // R12 缺陷：折叠前先把终身计数从完整日志初始化（折叠只移除事件，计数不能丢也不能重复加）。
+  if (experience.feedback === undefined || experience.feedback === null || typeof experience.feedback !== 'object') {
+    const counts = { helped: 0, hurt: 0, neutral: 0 }
+    for (const event of Array.isArray(experience.feedback_log) ? experience.feedback_log : []) {
+      if (counts[event.result] !== undefined) counts[event.result] += 1
+    }
+    experience.feedback = counts
+  }
   // 写入时衰减：超窗事件折叠进 GOutcome（读时不折叠，避免 G 随日历漂移）。
   foldExpiredFeedback(experience, nowMs, options.decayDays === undefined ? DEFAULT_FEEDBACK_DECAY_DAYS : options.decayDays)
   const result = String(input.result || '').trim().toLowerCase()
@@ -2390,6 +2674,8 @@ export function resolveVerdicts(store, list = [], options = {}) {
     }
     const before = row.outcome
     row.outcome = outcome
+    // R14 缺陷：verdict 回填换基准前也必须先折叠超窗反馈（与 upsert 同口径）。
+    foldExpiredFeedback(row, Date.parse(now), options.decayDays === undefined ? DEFAULT_FEEDBACK_DECAY_DAYS : options.decayDays)
     row.GOutcome = round4(scoreOf(outcome))
     row.step_rewards = [row.GOutcome]
     syncDerivedFeedback(row)
@@ -2566,6 +2852,29 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     }
   })
 
+  // P1（0.26.0）：标签软优先——对象/动作标签按 IDF 加权后只做加分，不筛候选池。
+  // tagScore = Σ idf(object 命中) + Σ idf(action 命中)，idf = ln(可见行数 / 含该标签的可见行数)。
+  const tagBonusOnly = options.tagBonusOnly === true
+  if (tagBonusOnly && options.tagQuery !== null && typeof options.tagQuery === 'object') {
+    const wanted = [...(Array.isArray(options.tagQuery.object) ? options.tagQuery.object : []), ...(Array.isArray(options.tagQuery.action) ? options.tagQuery.action : [])]
+    if (wanted.length > 0) {
+      const df = new Map()
+      for (const row of experiences) for (const tag of normalizeContext(row.context)) df.set(tag, (df.get(tag) || 0) + 1)
+      const total = experiences.length
+      const idf = (tag) => { const count = Number(df.get(tag)) || 0; return count > 0 ? Math.log(total / count) : 0 }
+      const weightOf = new Map(wanted.map((tag) => [tag, idf(tag)]))
+      for (const item of candidates) {
+        const row = byId.get((item.evidence[0] || {}).id)
+        const rowTags = row === undefined || row === null ? [] : normalizeContext(row.context)
+        let score = 0
+        for (const tag of rowTags) {
+          const weight = weightOf.get(tag)
+          if (weight !== undefined) score += weight
+        }
+        item.tagScore = round4(score)
+      }
+    }
+  }
   // 适用性不匹配：默认不返回（计划书 §5.3）；调用方显式 includeMismatched=true 才带出来。
   const applicabilityFiltered = candidates.filter((item) => item.applicability === 'mismatch').length
   if (options.includeMismatched !== true) candidates = candidates.filter((item) => item.applicability !== 'mismatch')
@@ -2592,7 +2901,8 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     for (const item of candidates) item.rank_score = item.evidence_strength
   }
   // 编码特异性：查询给了情境线索时，情境命中的候选优先（不改 Â，只做线索优先）。
-  if (queryContext.length > 0) {
+  // 标签软优先（tagBonusOnly）不抢排序第一键：只在下面的混排里加分（0.26.0 §13）。
+  if (queryContext.length > 0 && !tagBonusOnly) {
     const weighted = (item) => (degenerate ? item.evidence_strength : item.rank_score) * lifecycleWeightOf(item) * (1 + 0.5 * (Number(item.contextMatch) || 0))
     candidates.sort((left, right) => (
       (Number(right.contextMatch) || 0) - (Number(left.contextMatch) || 0)
@@ -2605,11 +2915,13 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 相关性与优势混排（0.13.0，行为模拟发现）：只按 Â 排会被成熟条占满，新记的条永远排不上来；
   // 改为 `0.6×相似度 + 0.4×rank_score`，让「像不像当前任务」成为主序，Â 做次序。必须排在截断之前。
   // 给了情境线索时不混排：情境优先是另一条独立的排序（见上），混排会把它的优先权盖掉。
-  if (options.rankBlend !== false && !degenerate && queryContext.length === 0) {
+  if (options.rankBlend !== false && !degenerate && (queryContext.length === 0 || tagBonusOnly)) {
     // 时效权重：rank = base × (0.70 + 0.30 × freshness) × lifecycleWeight（stale ×0.55 / partial ×0.85）。
+    // tagBonusOnly：再乘 (1 + 0.5 × tagScore)，tagScore 已按 IDF 加权（稀有标签分高），只影响加分不筛池。
     const blend = (item) => (0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0))
       * (FRESHNESS_RANK_FLOOR + FRESHNESS_RANK_SPAN * (Number.isFinite(Number(item.freshness)) ? Number(item.freshness) : 1))
       * lifecycleWeightOf(item)
+      * (tagBonusOnly ? (1 + 0.5 * (Number(item.tagScore) || 0)) : 1)
     candidates.sort((left, right) => (
       blend(right) - blend(left)
       || right.support - left.support
@@ -3038,4 +3350,3 @@ export function renderHintFull(config = {}, maxCharacters = 900) {
   if (text.length > maxCharacters) text = `${text.slice(0, Math.max(0, maxCharacters - 1))}…`
   return text
 }
-
