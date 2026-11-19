@@ -328,7 +328,8 @@ function totalsOfManifest(manifest, types, skills) {
 /** 概览（`/state` 的 data）：有 manifest.stats 时只读 manifest（P3-A），否则退回全量行。 */
 export function buildState(source) {
   const read = readOf(source)
-  const manifest = read.manifest !== null && typeof read.manifest === 'object' ? read.manifest : null
+  const degraded = read.error !== undefined && read.error !== null
+  const manifest = !degraded && read.manifest !== null && typeof read.manifest === 'object' ? read.manifest : null
   const storage = read.storage !== null && typeof read.storage === 'object' ? read.storage : null
   const skills = safeSkills(source)
   const bytes = Number(read.bytes) || (storage === null ? 0 : Number(storage.totalBytes) || 0)

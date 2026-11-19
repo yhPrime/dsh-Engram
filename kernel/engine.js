@@ -290,7 +290,8 @@ export function createEngine(options = {}) {
         const seenIds = new Set()
         let dupId = ''
         for (const type of Array.isArray(manifest.types) ? manifest.types : []) {
-          const id = type !== null && typeof type === 'object' ? String(type.id || '') : ''
+          if (type === null || typeof type !== 'object' || typeof type.id !== 'string') continue
+          const id = type.id.trim()
           if (id === '') continue
           if (seenIds.has(id)) { dupId = id; break }
           seenIds.add(id)

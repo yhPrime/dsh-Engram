@@ -667,3 +667,11 @@ pm test 在 release 分支全绿
   - 补三条回归：坏库 /state 带 storeError、/experiences?query= 200+storeError、xp-lib.json=null 时 migrateStore 抛错且不写 manifest；utoTagsOf 全部用例改用隔离 dataDir（不再依赖真实词表）
   - 	est:ui / 
 pm test 在 release 分支全绿
+
+- **v0.36.5（四轮第 9 轮收口：坏库态与缓存一致）**
+  - 坏库（storeError 非空）时 /state 不再按 manifest 缓存报 totals/types：概览数字归零，与「已按空库显示」和 /experiences 一致
+  - manifest 类型判重只认非空字符串 id（非字符串 id 不参与，避免假报坏库），与读路径 
+ormalizeStore 同口径
+  - 补回归：分片 manifest 类型 id 重复 → snapshot corrupt + 指向 manifest.json；坏库 /state totals=0、types=[]；非字符串 id 不误报
+  - 	est:ui / 
+pm test 在 release 分支全绿
