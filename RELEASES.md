@@ -35,6 +35,10 @@
 
 ## 当前发布
 
+- **v0.35.1（修 exp_object 参数 schema：宿主激活校验）**
+  - `exp_object` 的 `chain` / `steps` 参数 items 补 `additionalProperties: true`——0.35.0 漏了它，DSH 激活时报 `JsonSchemaError: parameters.chain.items.additionalProperties must be explicitly true or false`，整个 engram 入口不激活
+  - 守卫加强：`tools/tests/tool-schema.test.mjs` 从「带 properties 的 object」扩到**所有** `type:'object'`，这类漏写以后在测试里就红
+
 - **v0.35.0（对象链：对象名 + 动作族执行顺序；族稳定 id）**
   - 新增 `exp_object` 工具（create / append / branch / show / list / delete）：一件具体工作记成「对象 → 1..n 条链 → 每步一个动作族」；某步失败可在该步下挂分支换一组动作（多条、保序、嵌套上限 3、`when` 必填且拒空话）；同一条分支在最近 5 条链里出现 ≥3 次时提示并进主干（只提示、不改历史）
   - 新增 `<dataDir>/objects.jsonl`（不参与召回排序，不存在即没有对象）和 `<dataDir>/families.json`（族稳定 id：rename 保 id、merge 记别名）；`exp_family delete` 会拒绝删除仍被对象链引用的族

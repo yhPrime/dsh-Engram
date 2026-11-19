@@ -1799,8 +1799,8 @@ export function buildTools(defineTool, config = {}) {
     parameters: {
       action: { type: 'string', enum: ['create', 'append', 'branch', 'show', 'list', 'delete'], required: true, description: '要执行的动作。' },
       object: { type: 'string', description: 'create 的对象名（1–40 字）；其余动作传对象名或 ob_ id。' },
-      chain: { type: 'array', items: { type: 'object' }, description: 'create/append 的步骤数组：[{ family: "跑 npm 测试", note: "可选", outcome: "failed" }]；family 必填，note 可选。' },
-      steps: { type: 'array', items: { type: 'object' }, description: 'branch 的动作组，与 chain 同形状。' },
+      chain: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'create/append 的步骤数组：[{ family: "跑 npm 测试", note: "可选", outcome: "failed" }]；family 必填，note 可选。' },
+      steps: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'branch 的动作组，与 chain 同形状。' },
       chainIndex: { type: 'number', description: '从 1 起。append 指向已有链；branch 必填（要用作补步时对象+链一次写）。' },
       stepPath: { type: 'array', items: { type: 'number' }, description: '从 1 起：[步骤] 定位主干步骤；[步骤, 分支, 步骤] 定位分支里的步骤。branch 必填；append 补进分支时给偶数路径 [步骤, 分支]。' },
       when: { type: 'string', description: 'branch 必填：撞上什么具体意外（报错信息 / 环境不对），不要只写「失败」。' },
