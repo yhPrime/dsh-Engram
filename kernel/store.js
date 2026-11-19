@@ -56,6 +56,7 @@ import {
   isStorableTag,
   registrySnapshot,
 } from './tag-registry.js'
+import { derivedFamilyOf, representativesOf } from './family-tools.js'
 import {
   AVG_RECORD_BYTES,
   CACHE_MAX_BYTES,
@@ -2553,16 +2554,21 @@ export function tagCatalog(store, options = {}) {
  */
 export function tagRegistryView(store, options = {}) {
   const catalog = tagCatalog(store, { ...options, limit: Math.max(1, Math.min(200, Math.trunc(Number(options.limit) || 200))) })
-  const groups = { object: [], action: [], topic: [], quality: [], other: [] }
+  // 0.32：对象面退出标签体系；API 也不再返回对象分组（对象另有他用，不在这里展示）。
+  const groups = { action: [], topic: [], quality: [], other: [] }
   for (const item of catalog) {
+    if (item.facet === 'object') continue
     const bucket = item.facet !== null && TAG_FACETS.includes(item.facet) ? item.facet : 'other'
     groups[bucket].push(item)
   }
   const snapshot = registrySnapshot()
+  const visibleFacets = snapshot.facets.filter((facet) => facet !== 'object')
+  const visibleLabels = Object.fromEntries(Object.entries(TAG_FACET_LABELS).filter(([facet]) => facet !== 'object'))
+  const visibleHints = Object.fromEntries(Object.entries(TAG_FACET_HINTS).filter(([facet]) => facet !== 'object'))
   return {
-    facets: snapshot.facets,
-    labels: TAG_FACET_LABELS,
-    hints: TAG_FACET_HINTS,
+    facets: visibleFacets,
+    labels: visibleLabels,
+    hints: visibleHints,
     required: TAG_REQUIRED_FACETS,
     emptyFacets: TAG_REQUIRED_FACETS.filter((facet) => groups[facet].length === 0),
     groups,

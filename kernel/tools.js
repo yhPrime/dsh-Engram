@@ -58,7 +58,7 @@ import { AUTO_ROUTE_MIN_SCORE, ensureClusters, routeCluster } from './cluster.js
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
-import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
+import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
 import { hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
@@ -366,6 +366,10 @@ export function buildTools(defineTool, config = {}) {
         : (typeof args.context === 'string' && args.context.trim() !== '')
       const ctxCheck = validateTagSet(args.context)
       const lblCheck = validateTagSet(args.labels)
+      // 0.32：对象面标签不再参与标签体系（用户拍板）；写入时静默丢弃，只保留动作/主题/质量。
+      const dropObjectTags = (names) => (Array.isArray(names) ? names : []).filter((name) => facetOf(name) !== 'object')
+      ctxCheck.tags = dropObjectTags(ctxCheck.tags)
+      lblCheck.tags = dropObjectTags(lblCheck.tags)
       const allTags = [...ctxCheck.tags, ...lblCheck.tags]
         .filter((name, index, list) => list.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
       const rejectedTags = [...ctxCheck.rejected, ...lblCheck.rejected]
@@ -680,7 +684,7 @@ export function buildTools(defineTool, config = {}) {
       // 不能把调用方传的 9 个原样报成成功。
       const savedTags = normalizeContext(result.experience.context)
       const savedFacets = groupByFacet(savedTags)
-      const savedMissingFacets = ['object', 'action'].filter((facet) => savedFacets[facet].length === 0)
+      const savedMissingFacets = TAG_REQUIRED_FACETS.filter((facet) => savedFacets[facet].length === 0)
       const overflowTags = allTags.filter((tag) => !savedTags.some((saved) => saved.toLowerCase() === tag.toLowerCase()))
       const finalTagWarning = (ctxGiven || lblGiven)
         ? [

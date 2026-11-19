@@ -15,7 +15,8 @@ import { canonicalTag, readStore, readUsage, visibleExperiences } from './store.
 import { ensureTagOverrides, extractQueryTags, facetOf, TAG_FACETS } from './tag-registry.js'
 
 /** 面权重（总和 1）：动作 > 主题 > 对象。 */
-export const TAG_FACET_WEIGHTS = Object.freeze({ action: 0.55, topic: 0.30, object: 0.15 })
+// 0.32：对象面退出检索排序（用户拍板：对象另有他用，不参与标签/排序）。
+export const TAG_FACET_WEIGHTS = Object.freeze({ action: 0.55, topic: 0.30, object: 0 })
 /** 质量分在总分里的占比：score = coverage × (0.70 + 0.30 × quality)。 */
 export const TAG_QUALITY_FLOOR = 0.70
 export const TAG_QUALITY_SPAN = 0.30

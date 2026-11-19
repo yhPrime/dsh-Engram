@@ -51,6 +51,8 @@ export function tagTree(rows) {
   const groups = snapshot && snapshot.groups ? snapshot.groups : snapshot
   const facets = {}
   for (const [facet, entries] of Object.entries(groups)) {
+    // 0.32：对象面退出标签体系，树里也不再给 object 分区。
+    if (facet === 'object') continue
     const parents = new Map()
     const add = (name) => {
       const parent = parentOfTag(name)

@@ -42,7 +42,8 @@ export const TAG_FACET_HINTS = {
 }
 
 /** 面 → 是否必填。对象与动作必填，主题与质量可选。 */
-export const TAG_REQUIRED_FACETS = ['object', 'action']
+// 0.32：对象面退出标签体系（用户拍板），只要求动作面。
+export const TAG_REQUIRED_FACETS = ['action']
 
 /**
  * 种子词表。
