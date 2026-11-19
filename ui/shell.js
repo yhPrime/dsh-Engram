@@ -805,44 +805,79 @@ function sanitizeGraphPerf(body) {
   }
 }
 
-/** 关系图数据：根 → 类型 → 经验 → 技能（derivedFrom）。 */
+const UNFILED_FAMILY = '未分族'
+
+/** 族名 → 图节点 id：只转义会与 `exp:`/`skill:` 前缀撞车的字符。 */
+export function graphFamilyId(name) {
+  return `family:${String(name || '')
+    .replace(/%/g, '%25')
+    .replace(/:/g, '%3A')
+    .replace(/\//g, '%2F')}`
+}
+
+/** 关系图数据：根 → 族 → 经验；技能树与 derivedFrom 单独一环。 */
 export function buildGraph(source, params) {
   const read = readOf(source)
   const storeRead = storeReadOf(source)
   const store = storeRead.store
   const rows = visibleOf(store).map(rowOf)
   const options = graphOptionsOf(params)
-  // summary 只裁经验：root/type/skill/suite 全留，保证图骨架不塌。
+  // summary 只裁经验：root/族/技能/套件全留，保证图骨架不塌。
   const keptRows = options.summary ? rankGraphExperiences(rows).slice(0, options.limit).map((entry) => entry.row) : rows
-  const types = typesOf(store)
   const skills = source && typeof source.skills === 'function' ? (source.skills() || []) : []
   const nodes = [{ id: 'root', kind: 'root', label: '经验库' }]
   const edges = []
-  const knownTypes = new Set()
-  for (const type of types) {
-    nodes.push({ id: `type:${type.id}`, kind: 'type', label: type.name, count: type.count || 0, weight: Math.min(1, 0.35 + (type.count || 0) / 12), system: type.system === true })
-    edges.push({ source: 'root', target: `type:${type.id}`, kind: 'root', strength: 0.3 + Math.min(0.4, (type.count || 0) / 30) })
-    knownTypes.add(type.id)
+  const families = new Map()
+  const familyNameOf = (row) => {
+    const name = String(derivedFamilyOf(row) || '').trim()
+    return name === '' ? UNFILED_FAMILY : name
+  }
+  const ensureFamily = (name) => {
+    const id = graphFamilyId(name)
+    let node = families.get(id)
+    if (node === undefined) {
+      node = { id, kind: 'family', label: name, count: 0, weight: 0.35, system: name === UNFILED_FAMILY }
+      nodes.push(node)
+      families.set(id, node)
+    }
+    return node
+  }
+  // 族骨架按全量行建：summary 只裁经验，族节点与它的计数不裁。
+  for (const row of rows) ensureFamily(familyNameOf(row)).count += 1
+  for (const node of families.values()) {
+    node.weight = Math.min(1, 0.35 + node.count / 12)
+    edges.push({ source: 'root', target: node.id, kind: 'root', strength: 0.3 + Math.min(0.4, node.count / 30) })
   }
   const expIds = new Set()
   for (const row of keptRows) {
-    const typeId = row.typeId || 'ty_other'
-    if (!knownTypes.has(typeId)) {
-      nodes.push({ id: `type:${typeId}`, kind: 'type', label: row.typeName || '未分类', count: 0 })
-      edges.push({ source: 'root', target: `type:${typeId}`, kind: 'root' })
-      knownTypes.add(typeId)
-    }
+    const family = familyNameOf(row)
+    const familyNode = families.get(graphFamilyId(family))
     const lastSeen = Date.parse(String(row.lastSeenAt || row.ts || '')) || 0
-    nodes.push({ id: `exp:${row.id}`, kind: 'experience', label: row.intent || row.action || row.id, action: row.action || '', outcome: row.outcome, G: row.G, typeId, lastSeenAt: row.lastSeenAt || row.ts || '', weight: Math.min(1, 0.3 + Math.abs(Number(row.G) || 0) * 0.35), recent: lastSeen > 0 && Date.now() - lastSeen < 7 * 24 * 3600 * 1000 })
-    edges.push({ source: `type:${typeId}`, target: `exp:${row.id}`, kind: 'type', strength: 0.25 + Math.min(0.5, Math.abs(Number(row.G) || 0) * 0.25) })
+    nodes.push({
+      id: `exp:${row.id}`,
+      kind: 'experience',
+      label: row.intent || row.action || row.id,
+      action: row.action || '',
+      outcome: row.outcome,
+      G: row.G,
+      family,
+      typeId: row.typeId || '',
+      typeName: row.typeName || '',
+      lastSeenAt: row.lastSeenAt || row.ts || '',
+      weight: Math.min(1, 0.3 + Math.abs(Number(row.G) || 0) * 0.35),
+      recent: lastSeen > 0 && Date.now() - lastSeen < 7 * 24 * 3600 * 1000,
+    })
+    edges.push({ source: familyNode.id, target: `exp:${row.id}`, kind: 'family', strength: 0.25 + Math.min(0.5, Math.abs(Number(row.G) || 0) * 0.25) })
     expIds.add(row.id)
   }
   // 次级分类关系：同标签的经验连一条虚线，不新增节点；标签复用后图上能看出它们的关系。
+  // 与族同名的标签跳过——族边已经表达这层关系，再画就是双重语义。
   const labelMembers = new Map()
   for (const row of keptRows) {
+    const familyKey = familyNameOf(row).toLowerCase()
     for (const tag of Array.isArray(row.context) ? row.context : []) {
       const name = String(tag || '').trim()
-      if (name === '') continue
+      if (name === '' || name.toLowerCase() === familyKey) continue
       const list = labelMembers.get(name) || []
       list.push(row.id)
       labelMembers.set(name, list)
@@ -932,7 +967,7 @@ export function buildGraph(source, params) {
     total: rows.length,
     truncated: keptRows.length < rows.length,
     byKind,
-    summary: { types: types.length, experiences: rows.length, skills: skills.length, suites: suiteRoots },
+    summary: { families: families.size, experiences: rows.length, skills: skills.length, suites: suiteRoots },
     updatedAt: String(read.updatedAt || ''),
   }
 }
@@ -1116,6 +1151,38 @@ export async function handleRequest(req, res, source, deps = {}) {
       } catch { /* 空族登记读不到不影响 */ }
       const families = [...flatFamilies.values()].sort((left, right) => (right.count - left.count) || (left.family < right.family ? -1 : 1))
       return json(res, 200, { ok: true, data: { types: data, families, unfiled, unfiledRows } })
+    }
+    if (route === '/objects') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      // 对象链（0.35）：只读视图。写入口仍是 exp_object 工具，控制台不做第二套写路径。
+      const read = readOf(active)
+      const dataDir = String(read.dataDir || '').trim()
+      if (active.mode !== 'live' || dataDir === '') {
+        return json(res, 200, { ok: true, data: { available: false, total: 0, objects: [] } })
+      }
+      try {
+        const objectsModule = await import('../kernel/objects.js')
+        const registryModule = await import('../kernel/family-registry.js')
+        const list = objectsModule.readObjects(dataDir)
+        const registry = registryModule.readFamilyRegistry(dataDir)
+        return json(res, 200, {
+          ok: true,
+          data: {
+            available: true,
+            total: list.length,
+            objects: list.map((obj) => ({
+              ...objectsModule.objectView(obj, registry),
+              hints: objectsModule.promotionHints(obj),
+            })),
+          },
+        })
+      } catch (error) {
+        // 0.35 内核未就位时不要把整页打崩：给空视图 + 原因。
+        return json(res, 200, {
+          ok: true,
+          data: { available: false, total: 0, objects: [], error: String((error && error.message) || error) },
+        })
+      }
     }
     if (route === '/families/backfill') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')

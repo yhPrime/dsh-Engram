@@ -35,6 +35,13 @@
 
 ## 当前发布
 
+- **v0.35.0（对象链：对象名 + 动作族执行顺序；族稳定 id）**
+  - 新增 `exp_object` 工具（create / append / branch / show / list / delete）：一件具体工作记成「对象 → 1..n 条链 → 每步一个动作族」；某步失败可在该步下挂分支换一组动作（多条、保序、嵌套上限 3、`when` 必填且拒空话）；同一条分支在最近 5 条链里出现 ≥3 次时提示并进主干（只提示、不改历史）
+  - 新增 `<dataDir>/objects.jsonl`（不参与召回排序，不存在即没有对象）和 `<dataDir>/families.json`（族稳定 id：rename 保 id、merge 记别名）；`exp_family delete` 会拒绝删除仍被对象链引用的族
+  - 控制台新增只读 `GET /objects` 与对象页（清单 / 链树 / 分支缩进 / 常用分支提示），字段契约见 `ui/API.md`
+  - 本版同时带上 0.36 第一批 UI：类型退场（导航 / 概览族分布 / 列表详情 / 记录族字段）、关系图骨架改「root→族→经验」、族主星 2D 化
+  - 测试：四轮迭代两轮 33/33；补测跨进程并发写 5/5、`GET /objects` 契约 5/5；`object-chain` 11/11。已知未验：沙箱内 git 相关用例（`spawnSync git EPERM`）、0.36 侧 4 条过期 UI 断言（已交接给 0.36 会话）
+
 - **v0.25.0（标签进查询 + 影子判据报表）**
   - `exp_recall` 新增 `tagRank` 三档：`shadow`（默认）从意图用已登记词表抽标签，只写 `usage.shadow.tagRankApplied`，**召回结果与 off 完全一致**；`on` 把标签交给既有 `contextMatch` 加分（复用同一套排序，没新增打分代码/权重参数）；`off` 不抽
   - 显式 `context` 优先：先滤空值再截 8 个，给了就只用显式（不合并自动标签，避免 `contextMatch` 分母被稀释）；`on` 且标签非空时才跳过「weak 且相似度 <0.2 清空候选」，自动标签不会把正常召回打成 0 条

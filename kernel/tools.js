@@ -62,6 +62,30 @@ import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUI
 import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
 import { manageFamilies, readCreatedFamilies, syncCreatedFamilies } from './family-tools.js'
 import { GENERIC_FAMILY_NAMES, normalizeFamilyName } from './family-name.js'
+import {
+  dropFamilyEntry,
+  ensureFamilyEntry,
+  familyIdByName,
+  familyIdSetOf,
+  mergeFamilyEntries,
+  readFamilyRegistry,
+  renameFamilyEntry,
+  resolveFamilyRef,
+  writeFamilyRegistry,
+} from './family-registry.js'
+import {
+  addBranch,
+  appendChain,
+  appendToObject,
+  buildSteps,
+  chainReferences,
+  createObject,
+  findObject,
+  objectView,
+  promotionHints,
+  readObjects,
+  writeObjects,
+} from './objects.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
@@ -1718,17 +1742,160 @@ export function buildTools(defineTool, config = {}) {
     execute(args = {}) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
-        const store = readStore(dataDir)
         const action = String(args.action || '').trim()
+        const registry = readFamilyRegistry(dataDir)
+        // 0.35：删族前先看对象链是否还引用它（定稿 §10-3：拒删）。
+        if (action === 'delete') {
+          const name = normalizeFamilyName(args.family)
+          const refs = chainReferences(readObjects(dataDir), familyIdSetOf(registry, name))
+          if (refs.length > 0) {
+            const first = refs[0]
+            throw new Error(`族「${name}」还被 ${refs.length} 处对象链引用（如对象「${first.object}」第 ${first.chainIndex} 条链），先把链里的引用改掉再删`)
+          }
+        }
+        const store = readStore(dataDir)
         const { result, changed } = manageFamilies(store, action, args)
         if (changed) writeStore(dataDir, store)
         syncCreatedFamilies(dataDir, action, args, result)
+        // 族稳定 id 跟着 rename/merge 走：rename 只改 name，merge 把来源 id 记进目标别名。
+        const beforeRegistry = JSON.stringify(registry)
+        try {
+          if (action === 'create') {
+            const name = result.family || args.family || ''
+            if (normalizeFamilyName(name) !== '') ensureFamilyEntry(registry, name)
+          } else if (action === 'rename') {
+            renameFamilyEntry(registry, args.family, result.target || args.newName || '')
+          } else if (action === 'merge') {
+            mergeFamilyEntries(registry, args.names, result.target || args.newName || '')
+          } else if (action === 'delete') {
+            dropFamilyEntry(registry, result.family || args.family || '')
+          } else if (action === 'assign') {
+            const name = result.target || args.family || ''
+            if (normalizeFamilyName(name) !== '') ensureFamilyEntry(registry, name)
+          }
+        } catch (error) {
+          // id 注册表同步失败要当场报出来：静默失败会让链里的族 id 变成悬空引用。
+          throw new Error(`族 id 注册表同步失败：${error && error.message ? error.message : error}`)
+        }
+        if (JSON.stringify(registry) !== beforeRegistry) writeFamilyRegistry(dataDir, registry)
         if (action === 'list' && Array.isArray(result.families)) {
           for (const family of readCreatedFamilies(dataDir)) {
             if (!result.families.some((item) => item.family === family)) result.families.push({ family, count: 0 })
           }
           result.families.sort((a, b) => (b.count - a.count) || (a.family < b.family ? -1 : 1))
+          for (const item of result.families) {
+            const id = familyIdByName(registry, item.family)
+            if (id !== '') item.id = id
+          }
         }
+        return result
+      })
+    },
+  })
+
+  const objectTool = defineTool({
+    name: 'exp_object',
+    description: '对象链（0.35）：记录「这一件具体工作按什么顺序做完」。对象名 + 1..n 条链（每条 1..n 步，每步一个动作族）；某步失败可在该步下挂分支换一组动作。create 建对象+首条链 / append 追一条新链或补一步 / branch 给 failed 步骤挂分支 / show 读对象（族 id 解析成当前名）/ list 清单 / delete 删对象。不参与召回与排序；具体做法仍记 exp_record。',
+    parameters: {
+      action: { type: 'string', enum: ['create', 'append', 'branch', 'show', 'list', 'delete'], required: true, description: '要执行的动作。' },
+      object: { type: 'string', description: 'create 的对象名（1–40 字）；其余动作传对象名或 ob_ id。' },
+      chain: { type: 'array', items: { type: 'object' }, description: 'create/append 的步骤数组：[{ family: "跑 npm 测试", note: "可选", outcome: "failed" }]；family 必填，note 可选。' },
+      steps: { type: 'array', items: { type: 'object' }, description: 'branch 的动作组，与 chain 同形状。' },
+      chainIndex: { type: 'number', description: '从 1 起。append 指向已有链；branch 必填（要用作补步时对象+链一次写）。' },
+      stepPath: { type: 'array', items: { type: 'number' }, description: '从 1 起：[步骤] 定位主干步骤；[步骤, 分支, 步骤] 定位分支里的步骤。branch 必填；append 补进分支时给偶数路径 [步骤, 分支]。' },
+      when: { type: 'string', description: 'branch 必填：撞上什么具体意外（报错信息 / 环境不对），不要只写「失败」。' },
+      result: { type: 'string', enum: ['recovered', 'aborted'], description: 'branch 可选：默认 recovered（分支走完接回主干）；aborted 表示这条分支放弃收工。' },
+      note: { type: 'string', description: 'create/append 的链说明。' },
+    },
+    output: { schema: OUTPUT_SCHEMA, render: renderJson },
+    execute(args = {}) {
+      const dataDir = dataDirOf()
+      const action = String(args.action || '').trim().toLowerCase()
+      if (!['create', 'append', 'branch', 'show', 'list', 'delete'].includes(action)) {
+        throw new Error(`action 只能是 create / append / branch / show / list / delete，收到：${action || '(空)'}`)
+      }
+      return withStoreLock(dataDir, () => {
+        const registry = readFamilyRegistry(dataDir)
+        let registryDirty = false
+        const resolveFamily = (name) => {
+          const id = familyIdByName(registry, name)
+          if (id !== '') return id
+          registryDirty = true
+          return ensureFamilyEntry(registry, name)
+        }
+        const hintViews = (obj) => promotionHints(obj).map((hint) => ({
+          ...hint,
+          steps: (hint.steps || []).map((id) => {
+            const ref = resolveFamilyRef(registry, id)
+            return ref === null ? '(族已删除)' : ref.name
+          }),
+        }))
+        const objects = readObjects(dataDir)
+        const requireObject = (key) => {
+          const found = findObject(objects, key)
+          if (found === null) throw new Error(`没有这个对象：${String(key || '').trim() || '(空)'}；先 create`)
+          return found
+        }
+        let result = null
+        if (action === 'list') {
+          result = {
+            action,
+            count: objects.length,
+            objects: objects.map((obj) => {
+              const hints = hintViews(obj)
+              const families = new Set()
+              const walk = (steps) => {
+                for (const step of Array.isArray(steps) ? steps : []) {
+                  const ref = resolveFamilyRef(registry, step && step.familyId)
+                  if (ref !== null) families.add(ref.name)
+                  for (const branch of Array.isArray(step && step.branches) ? step.branches : []) walk(branch.steps)
+                }
+              }
+              for (const chain of Array.isArray(obj.chains) ? obj.chains : []) walk(chain.steps)
+              const item = {
+                id: obj.id,
+                object: obj.object,
+                chains: obj.chains.length,
+                families: [...families],
+                lastAt: obj.chains.length > 0 ? obj.chains[obj.chains.length - 1].at : '',
+              }
+              if (hints.length > 0) item.hints = hints
+              return item
+            }),
+          }
+        } else if (action === 'show') {
+          const obj = requireObject(args.object)
+          result = { action, ...objectView(obj, registry), hints: hintViews(obj) }
+        } else if (action === 'delete') {
+          const obj = requireObject(args.object)
+          objects.splice(objects.indexOf(obj), 1)
+          writeObjects(dataDir, objects)
+          result = { action, deleted: obj.object, id: obj.id, remaining: objects.length }
+        } else if (action === 'create') {
+          const steps = buildSteps(args.chain, resolveFamily)
+          const obj = createObject(objects, args.object, steps, { note: args.note })
+          writeObjects(dataDir, objects)
+          result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, steps: steps.length }
+        } else if (action === 'append') {
+          const obj = requireObject(args.object)
+          const steps = buildSteps(args.chain, resolveFamily)
+          let at = null
+          if (args.chainIndex === undefined || args.chainIndex === null || String(args.chainIndex).trim() === '') {
+            at = appendChain(obj, steps, { note: args.note })
+          } else {
+            for (const step of steps) at = appendToObject(obj, { chainIndex: args.chainIndex, stepPath: args.stepPath, step, note: args.note })
+          }
+          writeObjects(dataDir, objects)
+          result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, at }
+        } else if (action === 'branch') {
+          const obj = requireObject(args.object)
+          const steps = buildSteps(args.steps, resolveFamily)
+          const added = addBranch(obj, { chainIndex: args.chainIndex, stepPath: args.stepPath, when: args.when, steps, result: args.result })
+          writeObjects(dataDir, objects)
+          result = { action, id: obj.id, object: obj.object, ...added }
+        }
+        if (registryDirty) writeFamilyRegistry(dataDir, registry)
+        logUsage(dataDir, { tool: 'exp_object', op: action, target: String(args.object || '') }, usageOptions)
         return result
       })
     },
@@ -1876,7 +2043,7 @@ export function buildTools(defineTool, config = {}) {
   // 成功行由各工具自己写（带业务字段）；这里只兜异常。
   // 注意：必须把宿主执行上下文 exec 原样透传（tool.execute(args, exec)），
   // 否则 exp_record/exp_recall 拿不到 agent.session.header.cwd 与 agent.id（B7）。
-  const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool, familyTool, reviewTool].map((tool) => ({
+  const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool, familyTool, objectTool, reviewTool].map((tool) => ({
     ...tool,
     execute(args = {}, exec) {
       try {

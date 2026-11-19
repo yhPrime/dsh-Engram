@@ -1010,7 +1010,7 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'eng-muted' }, `没有到期待复核的${props.kind || '记录'}`)
           : h('div', { className: 'eng-stack' }, rows.map((row) => {
             const id = idOf(row)
-            const sub = [props.kind, row.typeName, row.reviewAfter ? `建议复核 ${fmtTime(row.reviewAfter)}` : '', lifecycleStateOf(row) === 'stale' ? '待复核' : '']
+            const sub = [props.kind, row.family || '未分族', row.reviewAfter ? `建议复核 ${fmtTime(row.reviewAfter)}` : '', lifecycleStateOf(row) === 'stale' ? '待复核' : '']
               .filter((part) => part !== '' && part !== undefined).join(' · ')
             return h('div', { key: id, className: 'eng-pending-row' },
               h('input', { type: 'checkbox', className: 'eng-pending-pick', checked: picked.includes(id), onChange: () => toggle(id), 'aria-label': `选择 ${id}` }),
@@ -1184,6 +1184,7 @@ window.__ModuleLoader__.load({
         expand: 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4',
         collapse: 'M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4',
         folder: 'M2 3.5h4l1.2 1.5H14V13H2V3.5Z',
+        chain: 'M6.2 9.8a3 3 0 0 1 0-4.2l1.4-1.4M9.8 6.2a3 3 0 0 1 0 4.2l-1.4 1.4M6.6 9.4l2.8-2.8',
         layers: 'M8 2 2 5l6 3 6-3-6-3ZM2 8l6 3 6-3M2 11l6 3 6-3',
       }
       return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { flex: '0 0 auto', opacity: .9 } },
@@ -1371,10 +1372,11 @@ window.__ModuleLoader__.load({
       const pending = useLoad(useCallback(() => request('/pending'), []))
       // 0.22.0 P2：自动记录被关掉时要在概览看得见，否则会以为钩子坏了。
       const settings = useLoad(useCallback(() => request('/settings'), []))
+      const families = useLoad(useCallback(() => request('/families'), []))
       const autoRecordState = (props.seedSettings && props.seedSettings.config && typeof props.seedSettings.config === 'object')
         ? props.seedSettings.config.autoRecord
         : (settings.data && settings.data.config ? settings.data.config.autoRecord : undefined)
-      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload(); settings.reload() }, [recent.reload, pending.reload, settings.reload]))
+      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload(); settings.reload(); families.reload() }, [recent.reload, pending.reload, settings.reload, families.reload]))
       const [coldOpen, setColdOpen] = useState(Boolean(props.state && props.state.cold && Number(props.state.cold.total) > 0))
       const [notice, setNotice] = useState('')
       const state = props.state || {}
@@ -1385,9 +1387,9 @@ window.__ModuleLoader__.load({
       const cold = state.cold !== null && typeof state.cold === 'object' ? state.cold : { years: [], total: 0, samples: [] }
       const legacy = storage !== null && storage.legacy !== null && typeof storage.legacy === 'object' ? storage.legacy : { exists: false, bytes: 0 }
       const byDay = Array.isArray(usage.byDay) ? usage.byDay : []
-      const byCategory = state.stats && typeof state.stats === 'object' && state.stats.byCategory && typeof state.stats.byCategory === 'object' ? state.stats.byCategory : {}
-      const typeRows = Object.entries(byCategory).sort((left, right) => (Number(right[1]) || 0) - (Number(left[1]) || 0)).slice(0, 6)
-      const typeMax = Math.max(1, ...typeRows.map(([, value]) => Number(value) || 0))
+      const familyList = families.data && Array.isArray(families.data.families) ? families.data.families : []
+      const familyRows = familyList.slice(0, 6).map((item) => [item.family, Number(item.count) || 0])
+      const familyMax = Math.max(1, ...familyRows.map(([, value]) => value))
       const pendingRows = Array.isArray(pending.data) ? pending.data : []
       const kpis = [
         ['可见经验', totals.visible, '条'],
@@ -1425,11 +1427,11 @@ window.__ModuleLoader__.load({
                 ? h(Empty, null, '暂无调用记录')
                 : h(Sparkline, { points: byDay, label: '最近 7 天调用次数' })),
             h('div', { className: 'eng-card eng-section-card' },
-              h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '类型分布')),
-              typeRows.length === 0 ? h(Empty, null, '还没有类型数据') : h('div', { className: 'eng-dist' },
-                typeRows.map(([name, value]) => h('div', { key: name, className: 'eng-dist-row' },
+              h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '族分布'), h('span', { className: 'eng-muted' }, `共 ${familyList.length} 族`)),
+              familyRows.length === 0 ? h(Empty, null, '还没有族数据') : h('div', { className: 'eng-dist' },
+                familyRows.map(([name, value]) => h('div', { key: name, className: 'eng-dist-row' },
                   h('span', { className: 'eng-row-intent', title: name }, name),
-                  h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round(((Number(value) || 0) / typeMax) * 100)}%` } })),
+                  h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round((value / familyMax) * 100)}%` } })),
                   h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(value))))))),
           notice ? h(Banner, { bad: true }, notice) : null,
           autoRecordState === false
@@ -1468,7 +1470,7 @@ window.__ModuleLoader__.load({
                       (cold.samples || []).slice(0, 50).map((row) => h('div', { key: row.id, className: 'eng-cold-row' },
                         h('span', { className: 'eng-mono' }, row.id),
                         h('span', { className: 'eng-row-main' }, row.intent || '（无意图）'),
-                        h('span', { className: 'eng-muted' }, `${row.typeName || '未分类'} · ${fmtTime(row.lastSeenAt)}`))))
+                        h('span', { className: 'eng-muted' }, `${row.family || '未分族'} · ${fmtTime(row.lastSeenAt)}`))))
                     : null)),
           h('div', { className: 'eng-cols eng-section' },
             h('div', { className: 'eng-card' },
@@ -1481,7 +1483,7 @@ window.__ModuleLoader__.load({
                   const [label, tone] = outcomeOf(row.outcome)
                   return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', style: { gridTemplateColumns: '60px minmax(0,1fr) 70px' }, onClick: () => props.onOpen(row.id) },
                     h(Badge, { tone }, label),
-                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${sourceOf(row).label} · ${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${sourceOf(row).label} · ${row.family || '未分族'} · ${row.action || '—'}`)),
                     h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, `G ${fmtNumber(row.G)}`))
                 }))
                 : (recent.loading ? h(Skeleton, { rows: 4 }) : h(Empty, null, '还没有经验：去「记录」写第一条。'))),
@@ -1506,7 +1508,7 @@ window.__ModuleLoader__.load({
                   const [label, tone] = skillStateOf(key)
                   return h(Badge, { key, tone }, `${label} ${summary[key] || 0}`)
                 })),
-                h('div', { className: 'eng-muted eng-section-note' }, state.notice || `共 ${totals.types || 0} 个类型`)))))
+                h('div', { className: 'eng-muted eng-section-note' }, state.notice || `共 ${familyList.length} 个族`)))))
     }
 
     function Experiences(props) {
@@ -1697,7 +1699,7 @@ window.__ModuleLoader__.load({
                 h(Badge, { tone }, label),
                 h(LifecycleBadge, { state: lifecycleStateOf(row) }),
                 h(VolatilityBadge, { volatility: row.volatility }),
-                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${sourceOf(row).label} · ${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${sourceOf(row).label} · ${row.family || '未分族'} · ${row.action || '—'}`)),
                 h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt || row.ts)))
             })),
@@ -1879,7 +1881,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'eng-card', style: { padding: 10, marginBottom: 10 } },
           h('div', { className: 'eng-actions', style: { marginBottom: 6, flexWrap: 'wrap' } },
             h('span', { className: 'eng-label' }, '分类'),
-            h(Badge, { tone: 'muted' }, row.typeName || '未分类')),
+            h(Badge, { tone: 'muted' }, row.family || '未分族')),
           h('div', { className: 'eng-actions', style: { flexWrap: 'wrap' } },
             h('span', { className: 'eng-label' }, '标签'),
             rowTagGroups.length === 0
@@ -2097,7 +2099,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'eng-muted', style: { marginTop: 4 } }, item.action || '—')))))))
     }
 
-    const EMPTY_RECORD = { intent: '', action: '', outcome: 'success', type: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', stepRewards: '', expectedG: '', expectedOutcome: '', skillId: '', blockedBy: '' }
+    const EMPTY_RECORD = { intent: '', action: '', outcome: 'success', family: '', context: '', note: '', taskId: '', kind: 'task', stepIndex: '', stepTotal: '', stepRewards: '', expectedG: '', expectedOutcome: '', skillId: '', blockedBy: '' }
 
     function Record() {
       const [form, setForm] = useState(() => {
@@ -2139,7 +2141,7 @@ window.__ModuleLoader__.load({
         setBusy(true); setError(''); setReceipt(null)
         try {
           const body = {
-            intent: form.intent, action: form.action, outcome: form.outcome, type: form.type,
+            intent: form.intent, action: form.action, outcome: form.outcome, family: form.family,
             context: form.context.trim() === '' ? [] : form.context.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
             note: form.note,
           }
@@ -2183,11 +2185,11 @@ window.__ModuleLoader__.load({
             lastStep === null ? null : h('div', { className: 'eng-muted' }, `分步最低 ${fmtNumber(lastStep)}（整条 G 取最弱一步）`),
             receipt.signWarning ? h('div', { className: 'eng-warn-text' }, receipt.signWarning) : null,
             h('div', { className: 'eng-actions' }, h(Button, { small: true, onClick: reset }, '再记一条'))) : null,
-          group('必填（意图 / 做法 / 结果 / 类型）', [
+          group('必填（意图 / 做法 / 结果 / 族）', [
             h(Field, { key: 'intent', label: '意图（做什么）', wide: true }, h('input', { className: 'eng-input', value: form.intent, onChange: update('intent'), placeholder: '例如：给研学课 PPT 插一页过渡页' })),
             h(Field, { key: 'action', label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
             h(Field, { key: 'outcome', label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
-            h(Field, { key: 'type', label: '类型' }, h('input', { className: 'eng-input', value: form.type, onChange: update('type'), placeholder: 'PPT / 课件' })),
+            h(Field, { key: 'family', label: '族（可选，留空落未分族）' }, h('input', { className: 'eng-input', value: form.family, onChange: update('family'), placeholder: '写课件' })),
             h(Field, { key: 'context', label: `标签（至少 1 个对象 + 1 个动作，≤${TAG_LIMIT} 个）`, wide: true, hint: '标签只写类型不写实例名：写 DSH插件，不写 DSH-Engram；项目名放 intent/artifacts' },
               h(TagPicker, {
                 view: registry.data || null,
@@ -3271,75 +3273,6 @@ window.__ModuleLoader__.load({
         ['action', 'topic', 'quality'].map(facetOf))
     }
 
-    function Types(props) {
-      const types = useLoad(useCallback(() => request('/types'), []))
-      useRefreshEvent(types.reload)
-      const [name, setName] = useState('')
-      const [description, setDescription] = useState('')
-      const [notice, setNotice] = useState('')
-      const [selected, setSelected] = useState('')
-      const [newName, setNewName] = useState('')
-      const [mergeInto, setMergeInto] = useState('')
-      const rows = types.data ? types.data.types || [] : []
-      const current = rows.find((row) => row.id === selected) || null
-      const closeManagement = () => { setSelected(''); setNewName(''); setMergeInto('') }
-      const mergeTarget = mergeInto === '' ? null : rows.find((row) => row.name === mergeInto) || null
-      const totalCount = rows.reduce((sum, row) => sum + (Number(row.count) || 0), 0)
-      const distRows = rows.filter((row) => !row.system && (Number(row.count) || 0) > 0).sort((left, right) => (Number(right.count) || 0) - (Number(left.count) || 0)).slice(0, 8)
-      const distMax = Math.max(1, ...distRows.map((row) => Number(row.count) || 0))
-      const op = async (body) => {
-        try {
-          const out = await request('/type', { method: 'POST', body })
-          setNotice(`已执行：${out.action || '类型操作'}`)
-          await types.reload()
-          props.onChanged()
-        } catch (caught) {
-          setNotice(caught.message || String(caught))
-        }
-      }
-      return h('div', { className: 'eng-fill' },
-        types.error ? h(Banner, { bad: true }, types.error) : null,
-        notice ? h(Banner, null, notice) : null,
-        // 文案口径（计划书 §10.3）：类型只做归档/筛选/统计，召回由标签承担。
-        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '分类只用于归档、筛选和统计，不参与召回排序；族与标签见「分类·族」「标签分级」。'),
-        h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14 } },
-          h('div', { className: 'eng-form-grid' },
-            h(Field, { label: '新类型名称' }, h('input', { className: 'eng-input', value: name, onChange: (event) => setName(event.target.value) })),
-            h(Field, { label: '描述（可选）' }, h('input', { className: 'eng-input', value: description, onChange: (event) => setDescription(event.target.value) }))),
-          h(Button, { kind: 'primary', disabled: name.trim() === '', onClick: () => op({ action: 'create', name: name.trim(), description: description.trim() }) }, '新建类型')),
-        h('div', { className: 'eng-card eng-section-card', style: { marginBottom: 14 } },
-          h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '类型分布（只归档，不参与排序）'), h('span', { className: 'eng-muted' }, `${totalCount} 条可见经验`)),
-          distRows.length === 0 ? h(Empty, null, '还没有类型数据') : h('div', { className: 'eng-dist' }, distRows.map((row) => h('div', { key: row.id, className: 'eng-dist-row' },
-            h('span', { className: 'eng-row-intent', title: row.name }, row.name),
-            h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round(((Number(row.count) || 0) / distMax) * 100)}%` } })),
-            h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(row.count || 0)))))),
-        h('div', { className: 'eng-card eng-scroll' },
-          rows.length === 0
-            ? (types.loading ? h(Skeleton, { rows: 5 }) : types.error ? h(ErrorState, { message: types.error, onRetry: types.reload }) : h(Empty, null, '还没有类型'))
-            : h('table', { className: 'eng-table' },
-            h('thead', null, h('tr', null, h('th', null, '名称'), h('th', null, 'id'), h('th', null, '条数'), h('th', null, '类型'))),
-            h('tbody', null, rows.map((row) => h('tr', { key: row.id, tabIndex: row.system ? -1 : 0, style: { cursor: row.system ? 'default' : 'pointer' }, onClick: () => { if (!row.system) { if (selected === row.id) closeManagement(); else { setSelected(row.id); setNewName(row.name); setMergeInto('') } } }, onKeyDown: (event) => { if (row.system) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (selected === row.id) closeManagement(); else { setSelected(row.id); setNewName(row.name); setMergeInto('') } } } },
-              h('td', null, row.name),
-              h('td', { className: 'eng-mono' }, row.id),
-              h('td', null, String(row.count || 0)),
-              h('td', null, row.system ? h('span', { className: 'eng-muted' }, '系统') : (selected === row.id ? h(Badge, { tone: 'brand' }, '管理中') : h('span', { className: 'eng-muted' }, '点击管理')))))))),
-        current === null ? null : h('div', { className: 'eng-card eng-detail', style: { marginTop: 14 } },
-          h('h3', { className: 'eng-detail-title' }, `管理：${current.name}`),
-          h('div', { className: 'eng-muted', style: { marginBottom: 8 } }, '单条经验改挂类型：到「经验」页 → 详情 → 改挂类型（类型页没有经验列表，不在这里重选）。'),
-          mergeTarget === null ? null : h('div', { className: 'eng-muted', style: { marginBottom: 8 } },
-            `合并后：${current.name}（${current.count || 0} 条）+ ${mergeTarget.name}（${mergeTarget.count || 0} 条）→ ${mergeInto}（${(Number(current.count) || 0) + (Number(mergeTarget.count) || 0)} 条）；源类型「${current.name}」会删除。`),
-          h('div', { className: 'eng-form-grid' },
-            h(Field, { label: '新名称' }, h('input', { className: 'eng-input', value: newName, onChange: (event) => setNewName(event.target.value) })),
-            h(Field, { label: '合并到' }, h('select', { className: 'eng-select', value: mergeInto, onChange: (event) => setMergeInto(event.target.value) },
-              h('option', { value: '' }, '选择目标类型'),
-              rows.filter((row) => row.id !== current.id && !row.system).map((row) => h('option', { key: row.id, value: row.name }, row.name))))),
-          h('div', { className: 'eng-actions' },
-            h(Button, { small: true, disabled: newName.trim() === '', onClick: () => op({ action: 'rename', name: current.name, newName: newName.trim() }) }, '改名'),
-            h(Button, { small: true, disabled: mergeInto === '', onClick: () => op({ action: 'merge', names: [current.name, mergeInto], newName: mergeInto }) }, '合并'),
-            h(Button, { small: true, kind: 'danger', onClick: () => op({ action: 'delete', name: current.name }) }, '删除'),
-            h(Button, { small: true, onClick: closeManagement }, '收起管理'))))
-    }
-
     function Usage() {
       const usage = useLoad(useCallback(() => request('/usage?limit=200'), []))
       const pending = useLoad(useCallback(() => request('/pending'), []))
@@ -3498,7 +3431,7 @@ window.__ModuleLoader__.load({
               const [label, tone] = outcomeOf(row.outcome)
               return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', 'data-on': selected === row.id ? 'true' : 'false', onClick: () => setSelected(row.id) },
                 h(Badge, { tone }, label),
-                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.typeName || '未分类'} · ${row.action || '—'}`)),
+                h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${row.family || '未分族'} · ${row.action || '—'}`)),
                 h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`),
                 h('span', { className: 'eng-muted' }, fmtTime(row.lastSeenAt)))
             })),
@@ -3512,7 +3445,7 @@ window.__ModuleLoader__.load({
               h('h3', { className: 'eng-detail-title' }, current.intent || '（无意图）'),
               h('dl', { className: 'eng-kv' },
                 h('dt', null, '做法'), h('dd', null, current.action || '—'),
-                h('dt', null, '类型'), h('dd', null, current.typeName || '—'),
+                h('dt', null, '族'), h('dd', null, current.family || '未分族'),
                 h('dt', null, '结果'), h('dd', null, outcomeOf(current.outcome)[0]),
                 h('dt', null, '最后使用'), h('dd', null, fmtTime(current.lastSeenAt)),
                 h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, current.id)),
@@ -3816,7 +3749,7 @@ window.__ModuleLoader__.load({
       return { tetra, cube, octa, dodeca, icosa }
     }
     const GRAPH_SOLIDS = buildGraphSolids()
-    const GRAPH_SOLID_FOR_KIND = { root: 'icosa', type: 'dodeca', suite: 'cube', skill: 'tetra' }
+    const GRAPH_SOLID_FOR_KIND = { root: 'icosa', family: 'dodeca', suite: 'cube', skill: 'tetra' }
     const GRAPH_SUN_DEFAULT = { hot: '#ffffff', glow: '#ffffff', ray: '#ffffff', core: '#ffffff' }
     const GRAPH_SUN_UNIVERSE = { hot: '#dbe7ff', glow: '#7a6bff', ray: '#eaf1ff', core: '#ffffff' }
     const GRAPH_SUN_COSMOS = { hot: '#e6f0ff', glow: '#5d8dff', ray: '#eef6ff', core: '#ffffff' }
@@ -3898,8 +3831,8 @@ window.__ModuleLoader__.load({
     function drawGraphShape(ctx, radius, kind = 'experience') {
       if (radius <= 0.2) return
       ctx.beginPath()
-      if (kind === 'type') {
-        // 类型是“主星”：六边形，和经验的圆点一眼分得开。
+      if (kind === 'family') {
+        // 族是“主星”：六边形，和经验的圆点一眼分得开。
         for (let index = 0; index < 6; index += 1) {
           const angle = (Math.PI / 3) * index - Math.PI / 6
           const x = Math.cos(angle) * radius * 1.04
@@ -4226,7 +4159,7 @@ window.__ModuleLoader__.load({
       }
       const rand = (text) => (hash(text) % 100000) / 100000
       const nodeById = new Map(nodes.map((node) => [node.id, node]))
-      const types = nodes.filter((node) => node.kind === 'type')
+      const families = nodes.filter((node) => node.kind === 'family')
       const experiences = nodes.filter((node) => node.kind === 'experience')
       const hierarchy = nodes.filter((node) => node.kind === 'skill' || node.kind === 'suite')
       const parentOf = new Map()
@@ -4245,8 +4178,8 @@ window.__ModuleLoader__.load({
         }
       }
       const centers = new Map()
-      const total = Math.max(1, types.length)
-      types.forEach((node, index) => {
+      const total = Math.max(1, families.length)
+      families.forEach((node, index) => {
         const y = total === 1 ? 0 : 0.88 - (index / (total - 1)) * 1.76
         const ring = Math.sqrt(Math.max(0, 1 - y * y))
         const phi = index * Math.PI * (3 - Math.sqrt(5)) + rand(node.id) * 0.5
@@ -4254,15 +4187,15 @@ window.__ModuleLoader__.load({
         centers.set(node.id, { x: Math.cos(phi) * ring * radius, y: y * radius * 0.78, z: Math.sin(phi) * ring * radius })
       })
       const positions = new Map()
-      for (const node of types) positions.set(node.id, centers.get(node.id))
-      const expByType = new Map()
+      for (const node of families) positions.set(node.id, centers.get(node.id))
+      const expByFamily = new Map()
       for (const node of experiences) {
-        const key = `type:${node.typeId}`
-        const list = expByType.get(key) || []
+        const key = `family:${node.family}`
+        const list = expByFamily.get(key) || []
         list.push(node)
-        expByType.set(key, list)
+        expByFamily.set(key, list)
       }
-      for (const [key, list] of expByType) {
+      for (const [key, list] of expByFamily) {
         const center = centers.get(key) || { x: 0, y: 0, z: 0 }
         // 同类型经验用黄金角均匀铺在球壳上，只按权重调半径，不再随机堆成团。
         list.sort((left, right) => (Number(right.weight) || 0) - (Number(left.weight) || 0))
@@ -4381,7 +4314,7 @@ window.__ModuleLoader__.load({
       const [recentOnly, setRecentOnly] = useState(false)
       // 「加载全部」：临时跳过 1,200 上限；「图例点击」：只看某一类（不覆盖 kindFilter）。
       const [allowAll, setAllowAll] = useState(false)
-      const [focusedType, setFocusedType] = useState(null)
+      const [focusedFamily, setFocusedFamily] = useState(null)
       const [isolate, setIsolate] = useState(false)
       const isolateRef = useRef(isolate)
       isolateRef.current = isolate
@@ -4424,9 +4357,9 @@ window.__ModuleLoader__.load({
             total: allNodes.length,
           }
         }
-        if (focusedType !== null) {
-          const nodes = (data.nodes || []).filter((node) => node.id === focusedType
-            || (node.kind === 'experience' && `type:${node.typeId}` === focusedType))
+        if (focusedFamily !== null) {
+          const nodes = (data.nodes || []).filter((node) => node.id === focusedFamily
+            || (node.kind === 'experience' && `family:${node.family}` === focusedFamily))
           const ids = new Set(nodes.map((node) => node.id))
           data = { ...data, nodes, edges: (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target)) }
         }
@@ -4454,7 +4387,7 @@ window.__ModuleLoader__.load({
         const ids = new Set(nodes.map((node) => node.id))
         const edges = (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target))
         return { ...data, nodes, edges }
-      }, [graph.data, allowAll, focusedType, simple, hideTagEdges, kindFilter, resultFilter, recentOnly])
+      }, [graph.data, allowAll, focusedFamily, simple, hideTagEdges, kindFilter, resultFilter, recentOnly])
       const searchHits = useMemo(() => {
         const term = query.trim().toLowerCase()
         if (term === '') return []
@@ -4616,7 +4549,7 @@ window.__ModuleLoader__.load({
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
           if (node.kind === 'root') return 9 + Math.pow(w, 0.85) * 3
-          if (node.kind === 'type') return 4 + Math.pow(w, 0.85) * 7
+          if (node.kind === 'family') return 4 + Math.pow(w, 0.85) * 7
           if (node.kind === 'suite') return 6 + Math.pow(w, 0.85) * 6
           if (node.kind === 'skill') return 4.5 + Math.pow(w, 0.9) * 5.5
           return 1.1 + Math.pow(w, 0.9) * 3.2
@@ -4642,7 +4575,7 @@ window.__ModuleLoader__.load({
           const positions = layoutGraph(data)
           const parentMap = new Map()
           for (const edge of data.edges || []) {
-            if (edge.kind === 'type') parentMap.set(edge.target, edge.source)
+            if (edge.kind === 'family') parentMap.set(edge.target, edge.source)
             else if (edge.kind === 'suite') parentMap.set(edge.target, edge.source)
           }
           const seen = new Set()
@@ -4664,7 +4597,7 @@ window.__ModuleLoader__.load({
               existing.targetAlpha = 1
               existing.parentId = parentMap.get(node.id) || null
               existing.orbitSpeed = node.kind === 'experience' ? 0.16 + 0.30 * Math.pow(Math.max(0.06, Math.min(1, Number(node.weight) || 0.3)), 1.8) : 0
-              existing.spinSpeed = node.kind === 'type' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08
+              existing.spinSpeed = node.kind === 'family' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08
             } else {
               store.nodes.set(node.id, {
                 node, x: shape.x, y: shape.y, z: shape.z,
@@ -4672,7 +4605,7 @@ window.__ModuleLoader__.load({
                 targetX: shape.x, targetY: shape.y, targetZ: shape.z,
                 parentId: parentMap.get(node.id) || null,
                 orbitSpeed: node.kind === 'experience' ? 0.16 + 0.30 * Math.pow(Math.max(0.06, Math.min(1, Number(node.weight) || 0.3)), 1.8) : 0,
-                spinSpeed: node.kind === 'type' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08,
+                spinSpeed: node.kind === 'family' ? 0.10 : node.kind === 'suite' ? 0.12 : node.kind === 'skill' ? 0.14 : node.kind === 'root' ? 0.06 : 0.08,
                 spinAngle: 0,
                 r: 0, alpha: 0, targetAlpha: 1,
                 currentWeight: 0.08, targetWeight: Number(node.weight) || 0.3,
@@ -4966,7 +4899,7 @@ window.__ModuleLoader__.load({
           // 分类主星本身用更慢的角速度绕根漂移；经验云跟着主星当前位置走，
           // 这样主星、经验云、技能带不是同一块板在转。
           for (const entry of store.nodes.values()) {
-            if (entry.node.kind !== 'type') continue
+            if (entry.node.kind !== 'family') continue
             const angle = store.t * 0.018 + (entry.phase || 0)
             entry.x = entry.baseX * Math.cos(angle) - entry.baseZ * Math.sin(angle)
             entry.y = entry.baseY
@@ -4974,7 +4907,7 @@ window.__ModuleLoader__.load({
           }
           for (const entry of store.nodes.values()) {
             const parent = entry.parentId ? store.nodes.get(entry.parentId) : null
-            if (entry.node.kind === 'type') {
+            if (entry.node.kind === 'family') {
               // 上面第一遍已经算过主星漂移。
             } else if (parent && parent !== entry) {
               // 小经验像小星星一样绕分类节点公转；技能仍随套件的自旋走。
@@ -4983,8 +4916,8 @@ window.__ModuleLoader__.load({
                 : (parent.spinAngle || 0)
               const dx = entry.baseX - parent.baseX
               const dz = entry.baseZ - parent.baseZ
-              const pivotX = parent.node.kind === 'type' ? parent.x : parent.baseX
-              const pivotZ = parent.node.kind === 'type' ? parent.z : parent.baseZ
+              const pivotX = parent.node.kind === 'family' ? parent.x : parent.baseX
+              const pivotZ = parent.node.kind === 'family' ? parent.z : parent.baseZ
               entry.x = pivotX + dx * Math.cos(angle) - dz * Math.sin(angle)
               entry.z = pivotZ + dx * Math.sin(angle) + dz * Math.cos(angle)
               entry.y = entry.baseY
@@ -5116,7 +5049,7 @@ window.__ModuleLoader__.load({
             const isSelected = store.selected !== null && store.selected === node.id
             // 三类节点分开取色：经验=主色、类型=第二停靠点、技能=高亮色。
             // 这样主题渐变（多停靠点）才看得出来，不然图上一片单色。
-            const color = node.kind === 'skill' ? (palette.highlight || palette.node) : node.kind === 'suite' ? (palette.node2 || palette.node) : node.kind === 'type' ? (palette.node2 || palette.node) : palette.node
+            const color = node.kind === 'skill' ? (palette.highlight || palette.node) : node.kind === 'suite' ? (palette.node2 || palette.node) : node.kind === 'family' ? (palette.node2 || palette.node) : palette.node
             const breathing = node.recent ? 1 + Math.sin(store.t * 1.8 + entry.phase) * 0.09 : 1 + Math.sin(store.t * 0.9 + entry.phase) * 0.02
             const nearFactor = Math.min(1.6, Math.max(0.35, entry.screenF))
             let energy = 1
@@ -5153,7 +5086,7 @@ window.__ModuleLoader__.load({
               const sun = node.kind === 'root' ? (paletteKey === 'universe' ? GRAPH_SUN_UNIVERSE : paletteKey === 'cosmos' ? GRAPH_SUN_COSMOS : GRAPH_SUN_DEFAULT) : null
               const haloColor = sun ? sun.glow : glowColor
               const haloRadius = screenRadius * 2
-              if (screenRadius > 2.2) {
+              if (screenRadius > 2.6) {
                 // 光晕和星芒用叠加混合：亮处更亮（星星是发光体），
                 // 浅色主题上也不会叠出一片脏兮兮的暗晕。
                 ctx.save()
@@ -5169,7 +5102,7 @@ window.__ModuleLoader__.load({
                 ctx.arc(0, 0, haloRadius, 0, Math.PI * 2)
                 ctx.fill()
                 // 小星点只给光晕，大一点的才加星芒，免得缩远后一片刺
-                if (screenRadius > 3.2) drawStarFlare(ctx, screenRadius * 2.6, haloColor, 0.26)
+                if (screenRadius > 3.8) drawStarFlare(ctx, screenRadius * 2.6, haloColor, 0.26)
                 ctx.restore()
               }
               // 中心主星：外面一层日冕 + 8 条缓慢旋转的恒星芒，里面保留二十面体晶壳。
@@ -5193,11 +5126,14 @@ window.__ModuleLoader__.load({
               // 正多面体：发光线框 + 半透明面；技能/经验缩小后仍退回 2D 轮廓。
               const solid = graphSolidForNode(node)
               const polyMinRadius = node.kind === 'skill' ? 1.8 : 2.8
-              const poly = solid && screenRadius > polyMinRadius && (node.kind === 'type' || node.kind === 'suite' || node.kind === 'root' || isSelected || node.kind === 'skill') && (isSelected || polyBudget > 0)
+              // 族主星 2D 化：47 个族全画正多面体会把预算顶到 76/80，画面也失去主次。
+              // 只有「条数 ≥8 的大族 / 选中 / 悬停」保留多面体，其余走六边形 + 光晕。
+              const familyPoly = isSelected || store.hovered === node.id || (Number(node.count) || 0) >= 8
+              const poly = solid && screenRadius > polyMinRadius && (node.kind === 'family' ? familyPoly : (node.kind === 'suite' || node.kind === 'root' || isSelected || node.kind === 'skill')) && (isSelected || polyBudget > 0)
               if (poly) {
                 polyBudget -= 1
                 drawPolyhedron(ctx, screenRadius * 1.55, color, solid, entry.spinAngle, {
-                  faceAlpha: node.kind === 'root' ? 0.20 : node.kind === 'type' ? 0.38 : node.kind === 'skill' ? 0.42 : 0.42,
+                  faceAlpha: node.kind === 'root' ? 0.20 : node.kind === 'family' ? 0.38 : node.kind === 'skill' ? 0.42 : 0.42,
                   edgeAlpha: 0.95,
                   glow: true,
                 })
@@ -5291,7 +5227,7 @@ window.__ModuleLoader__.load({
           addLabel(store.selected === null ? null : store.nodes.get(store.selected), 0)
           addLabel(store.hovered === null ? null : store.nodes.get(store.hovered), 0)
           for (const entry of store.nodes.values()) {
-            if (entry.node.kind === 'type') addLabel(entry, 1)
+            if (entry.node.kind === 'family') addLabel(entry, 1)
             else if (entry.node.kind === 'suite') addLabel(entry, 2)
             else if (entry.node.kind === 'experience' && entry.screenF > 1.05 && entry.currentWeight >= 0.5) addLabel(entry, 3)
           }
@@ -5402,8 +5338,8 @@ window.__ModuleLoader__.load({
           : surfaceNow === 'dark'
             ? { background: '#0b1020' }
             : surfaceNow === 'light' ? { background: '#f6f8fc' } : undefined
-      const typeNodes = graph.data && Array.isArray(graph.data.nodes) ? graph.data.nodes.filter((node) => node.kind === 'type') : []
-      const focusedTypeNode = focusedType === null ? null : (typeNodes.find((node) => node.id === focusedType) || null)
+      const familyNodes = graph.data && Array.isArray(graph.data.nodes) ? graph.data.nodes.filter((node) => node.kind === 'family') : []
+      const focusedFamilyNode = focusedFamily === null ? null : (familyNodes.find((node) => node.id === focusedFamily) || null)
       const graphSummary = graph.data && graph.data.summary ? graph.data.summary : null
       const zoomBy = (factor) => { if (zoomRef.current) zoomRef.current(factor) }
       const cycleNode = (direction) => {
@@ -5489,8 +5425,8 @@ window.__ModuleLoader__.load({
                   onClick: () => { selectNode(node); setQuery('') },
                 }, `${node.label || node.id} · ${node.kind}`))) : null),
           h('div', { className: 'eng-graph-drawer-label' }, '筛选'),
-          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图类型筛选' },
-            [['all', '全部'], ['experience', '经验'], ['skill', '技能'], ['type', '类型'], ['suite', '套件']].map(([key, label]) => h('button', {
+          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图节点筛选' },
+            [['all', '全部'], ['family', '族'], ['experience', '经验'], ['skill', '技能'], ['suite', '套件']].map(([key, label]) => h('button', {
               key,
               type: 'button',
               'data-active': kindFilter === key ? 'true' : 'false',
@@ -5517,15 +5453,15 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', 'data-active': hideTagEdges ? 'true' : 'false', 'aria-pressed': hideTagEdges ? 'true' : 'false', title: '隐藏/显示共同标签的小经验之间的虚线', onClick: toggleTagEdges }, hideTagEdges ? '显示同标签连线' : '隐藏同标签连线'),
             selection === null ? null : h('button', { type: 'button', 'data-active': isolate ? 'true' : 'false', 'aria-pressed': isolate ? 'true' : 'false', onClick: () => setIsolate((value) => !value) }, isolate ? '显示全部' : '只看邻居')),
           h('div', { className: 'eng-graph-drawer-label' }, '图例'),
-          graphSummary ? h('div', { className: 'eng-muted' }, `${graphSummary.types} 类 · ${graphSummary.experiences} 条经验 · ${graphSummary.skills} 个技能 · ${graphSummary.suites} 个套件`) : null,
-          h('div', { className: 'eng-graph-legend-inline' }, typeNodes.slice(0, 10).map((node) => h('button', {
+          graphSummary ? h('div', { className: 'eng-muted' }, `${graphSummary.families} 族 · ${graphSummary.experiences} 条经验 · ${graphSummary.skills} 个技能 · ${graphSummary.suites} 个套件`) : null,
+          h('div', { className: 'eng-graph-legend-inline' }, familyNodes.slice(0, 10).map((node) => h('button', {
             key: node.id,
             type: 'button',
             className: 'eng-graph-legend-btn',
-            'data-active': focusedType === node.id ? 'true' : 'false',
-            'aria-pressed': focusedType === node.id ? 'true' : 'false',
+            'data-active': focusedFamily === node.id ? 'true' : 'false',
+            'aria-pressed': focusedFamily === node.id ? 'true' : 'false',
             title: `只看「${node.label || node.id}」：本类节点 + 本类经验 + 相关边（再点一次恢复）`,
-            onClick: () => setFocusedType((current) => (current === node.id ? null : node.id)),
+            onClick: () => setFocusedFamily((current) => (current === node.id ? null : node.id)),
           },
           h('span', { className: 'eng-legend-dot' }),
           h('span', { className: 'eng-row-intent', title: node.label }, node.label || node.id),
@@ -5550,14 +5486,14 @@ window.__ModuleLoader__.load({
             .filter((node) => node.kind !== 'root')
             .slice(0, 300)
             .map((node) => h('li', { key: node.id },
-              h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${({ type: '类型', suite: '套件', skill: '技能', experience: '经验' })[node.kind] || node.kind}）`)))),
+              h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${({ family: '族', suite: '套件', skill: '技能', experience: '经验' })[node.kind] || node.kind}）`)))),
         (graph.error || (graph.data && graph.data.storeError))
           ? h('div', { style: { position: 'absolute', left: 14, top: 14, right: 14, zIndex: 3 } },
             h(Banner, { bad: true }, graph.error || `经验数据读取失败：${graph.data.storeError.message}${graph.data.storeError.file ? `（${graph.data.storeError.file}）` : ''}`))
           : null,
         (graph.data && (graph.data.nodes.length > viewData.nodes.length || viewData.truncated || allowAll))
           ? h('div', { className: 'eng-graph-note' },
-            h('span', null, `${focusedTypeNode ? `只看「${focusedTypeNode.label || focusedTypeNode.id}」 · ` : ''}${allowAll && !viewData.truncated && viewData.nodes.length === graph.data.nodes.length
+            h('span', null, `${focusedFamilyNode ? `只看「${focusedFamilyNode.label || focusedFamilyNode.id}」 · ` : ''}${allowAll && !viewData.truncated && viewData.nodes.length === graph.data.nodes.length
               ? `已显示全部 ${viewData.nodes.length} 个节点`
               : `已显示 ${viewData.nodes.length} / ${graph.data.nodes.length}${viewData.truncated ? `（上限 ${GRAPH_NODE_CAP}）` : ''}`}`),
             (viewData.truncated || allowAll)
@@ -5572,7 +5508,7 @@ window.__ModuleLoader__.load({
               : null)
           : null,
         selection === null ? null : h('div', { className: 'eng-graph-detail' },
-          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'type' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'type' ? '类型' : selection.kind === 'suite' ? '套件' : selection.kind === 'skill' ? '技能' : '经验')),
+          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'family' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'family' ? '族' : selection.kind === 'suite' ? '套件' : selection.kind === 'skill' ? '技能' : '经验')),
           h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
           h('dl', { className: 'eng-kv' },
             selection.kind === 'experience' ? h('dt', null, '结果') : null,
@@ -5583,9 +5519,9 @@ window.__ModuleLoader__.load({
             selection.kind === 'skill' && (selection.childCount || 0) > 0 ? h('dd', null, String(selection.childCount)) : null,
             selection.kind === 'suite' ? h('dt', null, '子技能数') : null,
             selection.kind === 'suite' ? h('dd', null, String(selection.count || 0)) : null,
-            selection.kind === 'type' ? h('dt', null, '经验数') : null,
-            selection.kind === 'type' ? h('dd', null, String(selection.count || 0)) : null,
-            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, String(selection.id || '').replace(/^(exp|skill|type|suite):/, '')))))
+            selection.kind === 'family' ? h('dt', null, '经验数') : null,
+            selection.kind === 'family' ? h('dd', null, String(selection.count || 0)) : null,
+            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, String(selection.id || '').replace(/^(exp|skill|family|suite):/, '')))))
     }
 
     // 0.25.0 P0：影子判据只读卡片（数据来自 usage.shadow，不写盘、不改召回）。
@@ -6176,11 +6112,84 @@ window.__ModuleLoader__.load({
         ] : null))
     }
 
+    /** 对象页（0.35 对象链的 UI 适配）：只读；写入口仍是 exp_object 工具。 */
+    function Objects() {
+      const load = useLoad(useCallback(() => request('/objects'), []))
+      useRefreshEvent(useCallback(() => load.reload(), [load.reload]))
+      const [selectedId, setSelectedId] = useState(null)
+      if (load.loading && !load.data) return h(Skeleton, { rows: 6 })
+      if (load.error) return h(ErrorState, { message: load.error, onRetry: load.reload })
+      const data = load.data || { available: false, total: 0, objects: [] }
+      const objects = Array.isArray(data.objects) ? data.objects : []
+      if (data.available === false) {
+        return h('div', { className: 'eng-card' },
+          h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '对象链')),
+          h(Empty, null, data.error
+            ? `对象数据读不到：${data.error}`
+            : '还没有对象链。对象链由 exp_object 工具写入，记录一件事按什么顺序做完；控制台只读。'))
+      }
+      if (objects.length === 0) {
+        return h('div', { className: 'eng-card' },
+          h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '对象链')),
+          h(Empty, null, '还没有对象链。对象链由 exp_object 工具写入，记录一件事按什么顺序做完；控制台只读。'))
+      }
+      const current = objects.find((item) => item.id === selectedId) || objects[0]
+      const stepNode = (step, depth, key) => {
+        const failed = step.outcome === 'failed'
+        const branches = Array.isArray(step.branches) ? step.branches : []
+        return h('div', { key, style: { marginLeft: depth * 18 } },
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', padding: '3px 0' } },
+            h('span', { className: 'eng-mono eng-muted', style: { flex: '0 0 auto' } }, depth === 0 ? `${key.split('-').pop()}` : '·'),
+            h('span', { className: 'eng-row-intent' }, step.family || '未命名族'),
+            failed ? h(Badge, { tone: 'bad' }, '失败') : null,
+            step.aliasOf ? h('span', { className: 'eng-muted' }, `原族 ${step.aliasOf}，已并入`) : null,
+            step.note ? h('span', { className: 'eng-muted' }, step.note) : null),
+          branches.map((branch, branchIndex) => h('div', {
+            key: `${key}-b${branchIndex}`,
+            style: { marginLeft: 22, paddingLeft: 10, borderLeft: '1px solid var(--eng-line, rgba(127,127,127,0.35))' },
+          },
+            h('div', { className: 'eng-muted', style: { padding: '2px 0' } },
+              `分支 · ${branch.when || '（未写原因）'}${branch.result === 'aborted' ? ' · 放弃收工' : ''}`),
+            (Array.isArray(branch.steps) ? branch.steps : []).map((child, childIndex) => stepNode(child, depth + 1, `${key}-b${branchIndex}-${childIndex + 1}`)))))
+      }
+      const chainBlocks = (Array.isArray(current.chains) ? current.chains : []).map((chain, chainIndex) => h('div', { key: `c${chainIndex}`, className: 'eng-card', style: { marginBottom: 10 } },
+        h('div', { className: 'eng-section-head' },
+          h('h3', { className: 'eng-section-title' }, `链 ${chainIndex + 1}`),
+          h('span', { className: 'eng-muted' }, fmtTime(chain.at))),
+        chain.note ? h('div', { className: 'eng-muted', style: { marginBottom: 6 } }, chain.note) : null,
+        (Array.isArray(chain.steps) ? chain.steps : []).map((step, stepIndex) => stepNode(step, 0, `c${chainIndex}-s${stepIndex + 1}`))))
+      return h('div', { className: 'eng-split' },
+        h('div', { className: 'eng-card eng-scroll' },
+          h('div', { className: 'eng-section-head' },
+            h('h3', { className: 'eng-section-title' }, '对象'),
+            h('span', { className: 'eng-muted' }, `${objects.length} 个`)),
+          objects.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            className: 'eng-row',
+            'data-active': current.id === item.id ? 'true' : 'false',
+            onClick: () => setSelectedId(item.id),
+            style: { display: 'flex', gap: 8, alignItems: 'center', width: '100%', textAlign: 'left' },
+          },
+            h('span', { className: 'eng-row-intent' }, item.object),
+            h('span', { className: 'eng-muted' }, `${Array.isArray(item.chains) ? item.chains.length : 0} 条链`),
+            Array.isArray(item.hints) && item.hints.length > 0 ? h(Badge, { tone: 'warn' }, `常用分支 ${item.hints.length}`) : null))),
+        h('div', { className: 'eng-scroll' },
+          h('div', { className: 'eng-card', style: { marginBottom: 10 } },
+            h('div', { className: 'eng-section-head' },
+              h('h3', { className: 'eng-section-title' }, current.object),
+              h('span', { className: 'eng-muted' }, `${Array.isArray(current.chains) ? current.chains.length : 0} 条链 · ${fmtTime(current.at)}`)),
+            (Array.isArray(current.hints) ? current.hints : []).map((hint, index) => h('div', { key: `h${index}`, className: 'eng-warn-text' },
+              `常用分支：「${hint.when || '（未写原因）'}」在最近 ${hint.window} 条链里出现 ${hint.count} 次，建议并进主干`))),
+          chainBlocks))
+    }
+
     const NAV = [
       ['overview', '概览', 'overview'],
       ['graph', '关系图', 'graph'],
       ['experiences', '经验', 'book'],
       ['families', '分类·族', 'folder'],
+      ['objects', '对象', 'chain'],
       ['tags', '标签分级', 'layers'],
       ['recall', '检索', 'search'],
       ['record', '记录', 'plus'],
@@ -6192,7 +6201,7 @@ window.__ModuleLoader__.load({
 
     const NAV_GROUPS = [
       ['总览', ['overview', 'graph']],
-      ['数据', ['experiences', 'families', 'tags', 'types', 'cold']],
+      ['数据', ['experiences', 'families', 'objects', 'tags', 'cold']],
       ['动作', ['recall', 'record', 'skills']],
       ['系统', ['usage', 'settings']],
     ]
@@ -6419,7 +6428,6 @@ window.__ModuleLoader__.load({
       const counts = {
         experiences: state ? state.totals.visible : null,
         skills: state ? state.totals.skills : null,
-        types: state ? state.totals.types : null,
         cold: state && state.cold ? Number(state.cold.total) || null : null,
         usage: state && state.usage ? state.usage.total : null,
       }
@@ -6443,8 +6451,8 @@ window.__ModuleLoader__.load({
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
         if (tab === 'families') return h(Families, { onChanged: loadState, onOpenFamily: (typeId, family) => { setExpFilters({ typeId: typeId || '', family: family || '' }); setTab('experiences') } })
+        if (tab === 'objects') return h(Objects)
         if (tab === 'tags') return h(Tags, { onChanged: loadState })
-        if (tab === 'types') return h(Types, { onChanged: loadState })
         if (tab === 'cold') return h(Cold)
         if (tab === 'usage') return h(Usage)
         return h(Settings, { onChanged: loadState })
@@ -6602,7 +6610,6 @@ window.__ModuleLoader__.load({
       Skills,
       Recall,
       Record,
-      Types,
       Usage,
       Cold,
       pickAccent,

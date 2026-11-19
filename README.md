@@ -31,7 +31,7 @@
   <img src="docs/images/loop.svg" alt="经验闭环：记录、召回、反馈、沉淀" width="100%">
 </div>
 
-四个动作驱动整条闭环，配套七个内核工具，都挂在同一个插件的工具面上：
+四个动作驱动整条闭环，配套九个内核工具，都挂在同一个插件的工具面上：
 
 | 工具 | 干什么 | 关键点 |
 |---|---|---|
@@ -41,6 +41,8 @@
 | `exp_consolidate` | 同族经验沉淀成技能 | 同族 ≥3 条且正负都有才允许，生成 `SKILL.md` + `skill.json` 账本 |
 | `exp_skill_attach` | 给已有技能补正文 / 挂脚本 | 脚本进 `scripts/`，并在 `SKILL.md` 维护「## 脚本」清单 |
 | `exp_type` | 管理主分类与标签词表 | list / create / rename / merge / delete / assign / labels |
+| `exp_family` | 管理动作族 | list / create / rename / merge / assign / delete；族名 `<动词><对象>`，1–12 字 |
+| `exp_object` | 记一件具体工作按什么顺序做完 | 对象名 + 1..n 条链（每条 1..n 步）；某步失败可挂分支换动作，同一步可挂多条；不参与召回排序 |
 | `exp_review` | 复核经验时效 | due 到期清单、verify、stale、retire、revive |
 
 ---

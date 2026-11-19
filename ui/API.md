@@ -256,6 +256,65 @@
 - `other`：词表里没有面的历史一次性标签（旧数据兼容，读得到但不算「对象/动作」）。
 - 别名归一在服务端完成：`DSH-Engram` 读成 `DSH插件`，`EigenFlux` 读成 `智能体平台`（都只作隐藏别名，不再作为规范标签出现在词表里）。
 
+### `GET /objects`
+
+对象链只读视图（0.35）：`<dataDir>/objects.jsonl` 里的每一行 = 一件具体工作的实际过程。写入口只有工具 `exp_object`，控制台不做第二套写路径。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "available": true,
+    "total": 1,
+    "objects": [
+      {
+        "id": "ob_1a2b3c4d",
+        "object": "改标签系统",
+        "at": "2026-11-19T09:00:00.000Z",
+        "chains": [
+          {
+            "at": "2026-11-19T09:00:00.000Z",
+            "note": "可选",
+            "steps": [
+              { "family": "改标签页", "note": "可选" },
+              {
+                "family": "跑 npm 测试",
+                "outcome": "failed",
+                "branches": [
+                  {
+                    "when": "Node 版本不对，报 ERR_UNKNOWN_FILE_EXTENSION",
+                    "steps": [ { "family": "安装依赖" }, { "family": "跑 npm 测试" } ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "hints": [
+          { "reason": "steps", "when": "Node 版本不对", "steps": ["fm_ab12cd34"], "count": 3, "window": 5,
+            "places": [ { "chainIndex": 1, "stepPath": [2] } ] }
+        ]
+      }
+    ]
+  }
+}
+```
+
+字段口径：
+
+| 字段 | 含义 |
+|---|---|
+| `available` | live 且数据目录可读为 `true`；mock / 未配置 / 读失败为 `false`（附 `error`），此时 `total=0`、`objects=[]` |
+| `chains` | 1..n 条链（同一对象的多件工作）；每条链 `steps` 1..n 步，按发生顺序 |
+| `steps[].family` | 当前族名；该族被合并时另带 `aliasOf`（旧族 id），族已删且无别名时 `family="(族已删除)"` 并带 `familyId` |
+| `steps[].outcome` | 只有 `failed` / `skipped` 会写；缺省＝`ok` |
+| `steps[].branches` | 只挂在 `failed` 步上；0..n 条，可嵌套（深度上限 3）；`when` 为当时撞上的具体意外 |
+| `steps[].branches[].result` | 只有 `aborted` 会写（放弃收工）；缺省＝`recovered`（接回主干） |
+| `hints` | 常用分支提示：「最近 5 条链里同一分支出现 ≥3 次，建议并进主干」。**只提示、不改历史** |
+| `hints[].steps` | **族 id 列表**（不是名字）；渲染时按 `familyId → 当前名` 解析，与 `steps[].family` 同一套 |
+
+不参与召回与排序；文件不存在时 `available=false` 或 `total=0`，不建文件。
+
 ### `GET /skills`
 
 固化技能列表。来源是 exp-lib 的 `exp_consolidate` 写出的 `.exp/skills/<slug>/`（`SKILL.md` + `skill.json`）；mock 模式给 5 条示例技能。
