@@ -681,3 +681,10 @@ pm test 在 release 分支全绿
   - 对象层只读 objects.jsonl，读坏不影响族图；summary 增加 objects 计数；图筛选新增「对象」
   - 回归：/graph?objects=1 默认关、对象/链节点与 step 边、悬空族不画边
   - test:ui / npm test 在 release 分支全绿
+
+- **v0.36.7（四轮第 10 轮收口：对象层拼边与文案）**
+  - step 边只连「图上真的存在的族节点」：无可见经验的族、已退休族不再产生悬空边；同一条链重复同一族只画一条
+  - objects.jsonl 脏行缺 id 时整条对象不画（不再出现 object:/chain:# 悬空）
+  - 关系图新增 kind 文案：详情徽标/搜索命中/读屏列表补「对象」「链」；对象 tone=brand、链 tone=muted
+  - 布局经验云的分组键改用转义后的族 id（带 : / % 的族名不再把经验摆到太阳附近）
+  - 回归：/graph?objects=1 同链重复族只一条 step 边；test:ui / npm test 全绿

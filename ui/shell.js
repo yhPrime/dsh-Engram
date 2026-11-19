@@ -968,19 +968,24 @@ export function buildGraph(source, params) {
         const list = readObjects(dataDir)
         const registry = readFamilyRegistry(dataDir)
         for (const obj of list) {
-          const objectId = `object:${String(obj.id || '')}`
-          if (String(obj.id || '') !== '') {
-            nodes.push({ id: objectId, kind: 'object', label: String(obj.object || '对象'), weight: 0.6, chains: Array.isArray(obj.chains) ? obj.chains.length : 0 })
-            objectCount += 1
-          }
+          const objectKey = String(obj.id || '')
+          if (objectKey === '') continue // 脏行缺 id：整条对象不画，避免 object:/chain:# 悬空
+          const objectId = `object:${objectKey}`
+          nodes.push({ id: objectId, kind: 'object', label: String(obj.object || '对象'), weight: 0.6, chains: Array.isArray(obj.chains) ? obj.chains.length : 0 })
+          objectCount += 1
           ;(Array.isArray(obj.chains) ? obj.chains : []).forEach((chain, chainIndex) => {
-            const chainId = `chain:${String(obj.id || '')}#${chainIndex + 1}`
+            const chainId = `chain:${objectKey}#${chainIndex + 1}`
             nodes.push({ id: chainId, kind: 'chain', label: `链 ${chainIndex + 1}`, weight: 0.35, parent: objectId })
             edges.push({ source: objectId, target: chainId, kind: 'chain', strength: 0.7 })
+            const linked = new Set()
             for (const step of Array.isArray(chain.steps) ? chain.steps : []) {
               const ref = resolveFamilyRef(registry, step && step.familyId)
               if (ref === null || ref.name === '') continue
-              edges.push({ source: chainId, target: graphFamilyId(ref.name), kind: 'step', strength: 0.5 })
+              const targetId = graphFamilyId(ref.name)
+              // 只连图上真的有的族节点；同一条链重复同一族只画一条边。
+              if (!families.has(targetId) || linked.has(targetId)) continue
+              linked.add(targetId)
+              edges.push({ source: chainId, target: targetId, kind: 'step', strength: 0.5 })
             }
           })
         }

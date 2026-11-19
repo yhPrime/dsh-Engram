@@ -4202,7 +4202,7 @@ window.__ModuleLoader__.load({
       for (const node of families) positions.set(node.id, centers.get(node.id))
       const expByFamily = new Map()
       for (const node of experiences) {
-        const key = `family:${node.family}`
+        const key = graphFamilyIdOf(node.family)
         const list = expByFamily.get(key) || []
         list.push(node)
         expByFamily.set(key, list)
@@ -4319,6 +4319,7 @@ window.__ModuleLoader__.load({
     // 族 id 转义与服务端 graphFamilyId 同口径：过滤「只看此族」时必须用同一条规则比较，否则带 : / % 的族会把经验全滤掉。
     const graphFamilyIdOf = (name) => `family:${String(name || '').replace(/%/g, '%25').replace(/:/g, '%3A').replace(/\//g, '%2F')}`
     const graphFamilyNameOf = (id) => String(id || '').replace(/^family:/, '').replace(/%3A/g, ':').replace(/%2F/g, '/').replace(/%25/g, '%')
+    const GRAPH_KIND_LABELS = { root: '根', family: '族', experience: '经验', skill: '技能', suite: '套件', object: '对象', chain: '链' }
     function Graph() {
       // 对象层默认关：设置里打开后才请求 /graph?objects=1（多画对象/链节点）。
       const settings = useLoad(useCallback(() => request('/settings'), []))
@@ -5459,7 +5460,7 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   className: 'eng-graph-search-hit',
                   onClick: () => { selectNode(node); setQuery('') },
-                }, `${node.label || node.id} · ${node.kind}`))) : null),
+                }, `${node.label || node.id} · ${GRAPH_KIND_LABELS[node.kind] || node.kind}`))) : null),
           h('div', { className: 'eng-graph-drawer-label' }, '筛选'),
           h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图节点筛选' },
             [['all', '全部'], ['family', '族'], ['experience', '经验'], ['skill', '技能'], ['suite', '套件'], ['object', '对象']].map(([key, label]) => h('button', {
@@ -5522,7 +5523,7 @@ window.__ModuleLoader__.load({
             .filter((node) => node.kind !== 'root')
             .slice(0, 300)
             .map((node) => h('li', { key: node.id },
-              h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${({ family: '族', suite: '套件', skill: '技能', experience: '经验' })[node.kind] || node.kind}）`)))),
+              h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${GRAPH_KIND_LABELS[node.kind] || node.kind}）`)))),
         (graph.error || (graph.data && graph.data.storeError))
           ? h('div', { style: { position: 'absolute', left: 14, top: 14, right: 14, zIndex: 3 } },
             h(Banner, { bad: true }, graph.error || `经验数据读取失败：${graph.data.storeError.message}${graph.data.storeError.file ? `（${graph.data.storeError.file}）` : ''}`))
@@ -5544,7 +5545,7 @@ window.__ModuleLoader__.load({
               : null)
           : null,
         selection === null ? null : h('div', { className: 'eng-graph-detail' },
-          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'family' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'family' ? '族' : selection.kind === 'suite' ? '套件' : selection.kind === 'skill' ? '技能' : '经验')),
+          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'family' || selection.kind === 'object' ? 'brand' : selection.kind === 'chain' ? 'muted' : outcomeOf(selection.outcome)[1] }, GRAPH_KIND_LABELS[selection.kind] || '经验')),
           h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
           h('dl', { className: 'eng-kv' },
             selection.kind === 'experience' ? h('dt', null, '结果') : null,
