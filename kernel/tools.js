@@ -61,6 +61,7 @@ import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseRece
 import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
 import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
 import { manageFamilies, readCreatedFamilies, syncCreatedFamilies } from './family-tools.js'
+import { GENERIC_FAMILY_NAMES, normalizeFamilyName } from './family-name.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
@@ -331,7 +332,8 @@ export function buildTools(defineTool, config = {}) {
       labels: { type: 'array', description: '可选：次级分类标签（≤8），与 context 合并；优先用 exp_type action=labels 列出的已有标签，已有无法满足才新建。' },
       artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
       dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
-      family: { type: 'string', description: '可选：族键（动作族，如 推送/校验/编写）；不填则取 context/labels 里第一个动作面标签，再没有落未分族。' },
+      family: { type: 'string', description: '可选：具体动作族（如 git 推送/跑 npm 测试/改 React 页面）；不填则落未分族。裸泛词（执行/其它动作/校验）会被拒。' },
+      force: { type: 'boolean', description: '可选：强制记录（覆盖记录门槛）。只在你确认这条经验重学成本高、但门槛误判时用。' },
       // 时效治理（0.20 P0）：全部可选；不填就是旧行为（读时按 semi 解释）。
       volatility: { type: 'string', enum: ['stable', 'semi', 'perishable'], description: '可选：易腐层。stable=偏好/硬约束，semi=判断原则（默认），perishable=具体步骤/命令/API。只影响召回降权与复核，不改 G。' },
       appliesTo: { type: 'object', description: '可选：适用范围 { models?: string[], tools?: string[], environment?: string }；不声明=unscoped（不硬拦）。', properties: { models: { type: 'array', items: { type: 'string' } }, tools: { type: 'array', items: { type: 'string' } }, environment: { type: 'string' } }, additionalProperties: false },
@@ -374,6 +376,41 @@ export function buildTools(defineTool, config = {}) {
       const allTags = [...ctxCheck.tags, ...lblCheck.tags]
         .filter((name, index, list) => list.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
       const rejectedTags = [...ctxCheck.rejected, ...lblCheck.rejected]
+      // 0.34 记录门槛（平衡：严谨四条 + 复用）：通用单步成功、纯任务过程不记。
+      // 放行：负面结果、多步（≥3 步或 ≥2 个命令分隔）、用户口径、force；拒记返回
+      // { skipped, reason, suggestion }，不静默丢（计划书 §1）。
+      const gateText = String(args.action || '')
+      const gateOutcome = String(args.outcome || '').toLowerCase()
+      const gateNegative = ['failed', 'corrected', 'partial', 'aborted'].includes(gateOutcome) || /(失败|报错|错误|被拒|不通过|不可用|error|failed|exception|超时|中断)/iu.test(String(args.note || ''))
+      const gateSteps = gateText.split(/\s*(?:→|->|=>|；|;|\n|然后|接着)\s*/u).filter((part) => part.trim() !== '')
+      const gateSeparatorCount = (gateText.match(/→|->|=>|；|;|\n|然后|接着/gu) || []).length
+      const gateMulti = gateSteps.length >= 3 || gateSeparatorCount >= 2
+      const gateUser = /(用户|口径|以后都|约定|偏好|不要|必须)/u.test(String(args.intent || '') + String(args.note || ''))
+      // 通用单步：整条动作都是「查/看/装/切目录」这类命令（允许「跑/执行/运行/调用」前缀），
+      // 且不是多步。多步命令链（git add; commit; push）按 §1.3 放行，别把真实交付当通用单步拒掉。
+      const gateGenericStep = /^(?:跑|执行|运行|调用|打开)?\s*(?:git\s+(?:status|add|diff|log|show|pull|fetch|rev-parse|branch|remote)|npm\s+(?:install|i|test)|pnpm\s+(?:install|test|add)|yarn\s+install|pwd|ls|dir|cd|cat|get-content|get-childitem|open|echo|test-path|where|which|set-location)\b/iu
+      const gateGeneric = !gateMulti && gateSteps.length > 0 && gateSteps.every((step) => gateGenericStep.test(step))
+      const rawFamily = typeof args.family === 'string' ? args.family.trim() : ''
+      const normalizedFamily = rawFamily === '' ? '' : normalizeFamilyName(rawFamily)
+      const familyGeneric = normalizedFamily !== '' && GENERIC_FAMILY_NAMES.includes(normalizedFamily)
+      // 空动作没有可记录内容（store 也会拒），force 也不放行；其余门槛 force 可覆盖。
+      if (gateText.trim() === '') {
+        return {
+          skipped: true,
+          reason: '没有可执行动作信息',
+          suggestion: '补一句「动词+对象」的具体动作再记；动作写不出就说明这条还不值得记',
+        }
+      }
+      if (args.force !== true && !gateNegative && !gateUser && (gateGeneric || familyGeneric)) {
+        return {
+          skipped: true,
+          reason: familyGeneric
+            ? '族名太泛，不能单独成为动作族'
+            : '通用单步操作，模型本来就会，重学成本低',
+          suggestion: familyGeneric ? '改用「动词+对象」，例如 git 推送 / 跑 npm 测试 / 改 React 页面' : '只记失败、非显然、多步或用户口径；确需记录可传 force:true',
+        }
+      }
+
       // 0.26.0：写入即登记（计划书 §11.6）。以前 exp_record 只查形态不登记，历史库 213 个标签里 170 个未登记，
       // 查询侧 extractQueryTags 抽不到，标签等于白写。未知词按粗判给一个面并登记，失败不阻断记录。
       for (const name of allTags) {
@@ -480,7 +517,7 @@ export function buildTools(defineTool, config = {}) {
         labels: lblGiven ? lblCheck.tags : undefined,
         // 0.27.0 族键：显式 family 优先，否则取第一个动作标签；没有动作标签 → 不写（落未分族）。
         // 只传显式 family；自动推导放在 store 建行时做（R4 缺陷：就在更新时不能拿推导值覆盖用户显式族）。
-        family: (typeof args.family === 'string' && args.family.trim() !== '') ? args.family.trim() : undefined,
+        family: (typeof args.family === 'string' && args.family.trim() !== '') ? (normalizeFamilyName(args.family) || args.family.trim()) : undefined,
         skillId: args.skillId,
       }
       const upsertOptions = {

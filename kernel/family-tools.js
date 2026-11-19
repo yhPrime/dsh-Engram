@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { canonicalRegisteredName, facetOf, registrySnapshot } from './tag-registry.js'
+import { FAMILY_NAME_MAX_CHARS, isGenericFamilyName, normalizeFamilyName } from './family-name.js'
 
 /** 动作面标签 → 父级（UI 分组用；不影响召回）。 */
 export const TAG_PARENT_MAP = Object.freeze({
@@ -166,14 +167,20 @@ export function representativesOf(store) {
  */
 export function manageFamilies(store, action, args = {}) {
   const rows = Array.isArray(store && store.experiences) ? store.experiences : []
+  // 族键一律按规范化后的形态比较：旧行里可能留着 `GIT PUSH` / `git  push`，
+  // 不归一就会和「git 推送」并存成两个只差大小写/空格的活跃族（0.34 唯一性拍板）。
   const familyOfRow = (row) => {
-    const raw = row !== null && typeof row === 'object' && typeof row.family === 'string' ? row.family.trim() : ''
-    return raw === '' ? '未分族' : raw
+    const raw = row !== null && typeof row === 'object' && typeof row.family === 'string' ? row.family : ''
+    return normalizeFamilyName(raw) || '未分族'
   }
   const checkName = (raw) => {
-    const name = String(raw === undefined || raw === null ? '' : raw).trim()
+    const name = normalizeFamilyName(raw)
     if (name === '') throw new Error('族名不能为空')
-    if ([...name].length > 12) throw new Error('族名最多 12 字')
+    if (name === '未分族') throw new Error('「未分族」是保留族名，不能创建/改名/指派')
+    if (isGenericFamilyName(name)) {
+      throw new Error('族名太泛，请用「动词+对象」，例如 git 推送 / 跑 npm 测试')
+    }
+    if ([...name].length > FAMILY_NAME_MAX_CHARS) throw new Error(`族名最多 ${FAMILY_NAME_MAX_CHARS} 字`)
     if (facetOf(name) === 'object') throw new Error('对象面标签不能当族名（对象不参与标签/分族）')
     if (/[\\/:*?"<>|]/.test(name) || /^\d+\.\d+/.test(name)) throw new Error('族名不能是路径/版本号')
     return name
@@ -198,14 +205,24 @@ export function manageFamilies(store, action, args = {}) {
   if (action === 'rename' || action === 'merge') {
     const target = checkName(action === 'rename' ? args.newName : (args.newName || args.family))
     const sources = action === 'rename'
-      ? [String(args.family || '').trim()]
-      : (Array.isArray(args.names) ? args.names.map((name) => String(name).trim()) : [])
+      ? [normalizeFamilyName(args.family)]
+      : (Array.isArray(args.names) ? args.names.map((name) => normalizeFamilyName(name)) : [])
     if (sources.length === 0 || sources.some((name) => name === '')) throw new Error('需要来源族名')
+    // 改名到同一个规范化键 = 空操作：不写盘、不改行（否则每次都会「改」一遍）。
+    if (action === 'rename' && sources.length === 1 && sources[0] === target) {
+      return {
+        changed: false,
+        result: { action, target, sources, changed: 0, merged: false, note: '新旧族名规范化后相同，无需改名' },
+      }
+    }
+    const sourceSet = new Set(sources.filter((name) => name !== target))
+    // 撞名（目标族已有行）时不算错：按拍板语义自动合并，并在回执里显式标明 merged。
+    const targetExisted = rows.some((row) => familyOfRow(row) === target && !sourceSet.has(familyOfRow(row)))
     let changed = 0
     for (const row of rows) {
-      if (sources.includes(familyOfRow(row))) { row.family = target; row.actionFamily = target; changed += 1 }
+      if (sourceSet.has(familyOfRow(row))) { row.family = target; row.actionFamily = target; changed += 1 }
     }
-    return { changed: changed > 0, result: { action, target, sources, changed } }
+    return { changed: changed > 0, result: { action, target, sources, changed, merged: targetExisted } }
   }
   if (action === 'assign') {
     const target = checkName(args.family)
@@ -223,7 +240,11 @@ export function manageFamilies(store, action, args = {}) {
     return { changed: true, result: { action, target, changed } }
   }
   if (action === 'delete') {
-    const family = checkName(args.family)
+    // 删除是「清理旧宽族」的合法出口：来源族名允许是泛词（推送/校验…），只做空名与保留名校验；
+    // 目标语义才是「必须具体」，所以 create/rename/assign 走 checkName。
+    const family = normalizeFamilyName(args.family)
+    if (family === '') throw new Error('族名不能为空')
+    if (family === '未分族') throw new Error('「未分族」是保留族名，不能删除')
     if (rowsOf(family).length > 0) throw new Error('族里还有经验，先 exp_family assign 再删除')
     return { changed: false, result: { family, deleted: true, note: '空族无需落盘；未分族不可删除' } }
   }
@@ -233,35 +254,69 @@ export function manageFamilies(store, action, args = {}) {
 
 const CREATED_FAMILIES_FILE = '_created-families.json'
 
-/** 0.33：模型显式创建、尚无行的空族（可见但 0 条）。 */
+/** 0.33：模型显式创建、尚无行的空族（可见但 0 条）。读时同样做族键归一 + 去重。 */
 export function readCreatedFamilies(dataDir) {
   const file = path.join(String(dataDir || ''), 'library', CREATED_FAMILIES_FILE)
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
-    return Array.isArray(parsed.created) ? parsed.created.map(String).filter((name) => name.trim() !== '') : []
+    if (!Array.isArray(parsed.created)) return []
+    const out = []
+    for (const item of parsed.created) {
+      const name = normalizeFamilyName(item)
+      if (name === '' || out.includes(name)) continue
+      out.push(name)
+    }
+    return out
   } catch { return [] }
 }
 
 export function writeCreatedFamilies(dataDir, names) {
   const dir = path.join(String(dataDir || ''), 'library')
   if (!fs.existsSync(dir)) return
-  const list = [...new Set((Array.isArray(names) ? names : []).map((name) => String(name).trim()).filter(Boolean))]
+  const list = []
+  for (const item of Array.isArray(names) ? names : []) {
+    const name = normalizeFamilyName(item)
+    if (name === '' || list.includes(name)) continue
+    list.push(name)
+  }
   const file = path.join(dir, CREATED_FAMILIES_FILE)
   if (list.length === 0) { try { fs.rmSync(file, { force: true }) } catch { /* ignore */ } return }
   fs.writeFileSync(file, JSON.stringify({ created: list }, null, 2) + '\n', 'utf8')
 }
 
-/** create/rename/merge/delete 后同步空族登记表（只处理没有行的族）。 */
+/**
+ * create/rename/merge/delete/assign 后同步空族登记表（只处理没有行的族）。
+ *
+ * create 的「已存在」判定要连空族登记一起看：manageFamilies 是纯函数、看不到登记表，
+ * 这里补上最后一环——第二次 create 同一个（规范化后的）空族返回 created:false，不重复登记。
+ */
 export function syncCreatedFamilies(dataDir, action, args, result) {
   const current = readCreatedFamilies(dataDir)
   let next = current.slice()
   const add = (name) => { if (name && !next.includes(name)) next.push(name) }
   const drop = (name) => { next = next.filter((item) => item !== name) }
-  if (action === 'create') add(String(result.family || args.family || ''))
-  else if (action === 'rename') { drop(String(args.family || '')); add(String(result.target || args.newName || '')) }
-  else if (action === 'merge') { for (const name of Array.isArray(args.names) ? args.names : []) drop(String(name)); add(String(result.target || args.newName || '')) }
-  else if (action === 'delete') drop(String(args.family || result.family || ''))
-  else if (action === 'assign') add(String(result.target || args.family || ''))
+  if (action === 'create') {
+    const family = normalizeFamilyName(result.family || args.family || '')
+    if (family !== '' && current.includes(family)) {
+      result.created = false
+      result.note = '族已存在（空族已登记）'
+    } else if (result.created !== false) {
+      // 已有行的族不是「空族」：不写登记表（删光后再 create 才需要）。
+      add(family)
+    }
+  } else if (action === 'rename') {
+    drop(normalizeFamilyName(args.family))
+    const target = normalizeFamilyName(result.target || args.newName || '')
+    if (current.includes(target) && normalizeFamilyName(args.family) !== target) result.merged = true
+    add(target)
+  } else if (action === 'merge') {
+    for (const name of Array.isArray(args.names) ? args.names : []) drop(normalizeFamilyName(name))
+    add(normalizeFamilyName(result.target || args.newName || ''))
+  } else if (action === 'delete') {
+    drop(normalizeFamilyName(args.family || result.family || ''))
+  } else if (action === 'assign') {
+    add(normalizeFamilyName(result.target || args.family || ''))
+  }
   writeCreatedFamilies(dataDir, next)
   return next
 }

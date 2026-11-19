@@ -817,3 +817,34 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 - `GET /families`：新增扁平 `families: [{family,count,representative}]`；`types` 保留一版兼容。
 - `GET /state.storage`：单层族布局为 `layout: 'family-flat'`，`typeDirs: 0`；族文件直接在 `library/*.jsonl`，索引为 `library/_index.json`。
 - 族由模型显式创建（`exp_record.family`）；未给族落「未分族」；族管理走 `exp_family`。
+
+## 0.34 增量（记录门槛 + 具体族名）
+
+> 兼容承诺：既有回执字段与控制台约定不变；但「记录可能被门槛拦下」是 0.34 的**行为变化**——被拦时**不落库**，`data` 换成下面的拒记回执。入参新增 `family` / `force`。
+
+### `POST /record`（门槛拒记回执）
+
+门槛拦下时仍是 HTTP 200 + `{ ok: true }`，但 `data` 不是经验行，而是拒记回执：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `skipped` | `true` | 出现即表示**没有落库**（不产生 id / hits / verdict / typeName，也不改既有行） |
+| `reason` | string | 拒记原因：`通用单步操作，模型本来就会，重学成本低` / `没有可执行动作信息` / `族名太泛，不能单独成为动作族` |
+| `suggestion` | string | 给模型/用户的改法，例如 `只记失败、非显然、多步或用户口径；确需记录可传 force:true`（族名问题会给「动词+对象」示例） |
+
+- 控制台应把 `reason` / `suggestion` 当成**提示**展示（`ok:true`），不要当写入失败弹错。
+- 入参新增 `force: true`：模型确认「这条重学成本高、门槛误判」时覆盖门槛重试。
+- 放行口径不变：失败 / 纠正 / 部分失败 / 中止（或 note 含失败报错）、多步（action 拆分 ≥3 步）、用户口径（intent/note 写明约定或纠正）；同族同做法重复写入仍走既有 upsert，只加 `hits`、不新增行。
+
+### `POST /record` 的 `family` 与具体族名规则
+
+- 入参新增 `family`（具体动作族）；不传由内核落「未分族」。
+- 命名：`<动词><对象/工具>` 或 `<工具><动作>`，最长 12 字，例如 `git 推送`、`跑 npm 测试`、`改 React 页面`、`定位 asar 报错`。
+- 归一：NFKC、trim、折叠空白、拉丁字母小写；`Git Push` 与 `git  push` 视为**同一个族键**，不允许两个活跃族只差大小写/空格。
+- 拒绝：裸泛词（执行 / 操作 / 处理 / 其它动作 / 校验 / 验收 …）、对象面标签（代码 / PPT / DSH插件 …）、路径与版本号形态、保留名「未分族」。
+- 唯一性由 `exp_family` 收口：`create` 遇已存在族键返回 `created:false`（不新建）；`rename` 撞名自动合并并在回执标 `merged:true`；语义相近（如 `git 推送` 与 `推送发布`）只给候选，最终由模型 `exp_family merge` 拍板。
+
+### 迁移后 `GET /families` 的口径
+
+- 宽族拆分是离线工具（`node tools/refine-families.mjs --data-dir <dir> [--dry-run|--apply]`），不是 HTTP 接口；`--apply` 前整库备份，只删「完全无动作信息」的行，其余按 action 重拆成具体族。
+- 迁移完成后 `GET /families` 的 `families[].family` 只会出现具体族与「未分族」，不再出现 `执行` / `其它动作`。
