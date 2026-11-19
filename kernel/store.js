@@ -2933,6 +2933,34 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   candidates = [...candidates.filter((item) => item.lifecycle !== 'stale'), ...candidates.filter((item) => item.lifecycle === 'stale')]
 
   // mode / spread 必须按全部候选算完再截输出，否则 limit=1 时 verified<2 会被误判成 evidence。
+  // 0.29：族代表标记（同族 G 最高）；同族代表优先由 UI/API 排序使用，这里只标注、不重排召回。
+  try {
+    const reps = representativesOf(store)
+    const familyOf = (candidate) => {
+      for (const evidence of Array.isArray(candidate.evidence) ? candidate.evidence : []) {
+        const row = byId.get(evidence.id)
+        if (row !== undefined) {
+          const family = derivedFamilyOf(row)
+          if (family !== '') return family
+        }
+      }
+      return ''
+    }
+    for (const candidate of candidates) {
+      const family = familyOf(candidate)
+      candidate.family = family
+      const firstRow = byId.get(((candidate.evidence || [])[0] || {}).id) || null
+      const typeId = firstRow === null ? 'ty_other' : String(firstRow.typeId || 'ty_other')
+      const rep = family === '' ? undefined : reps.get(`${typeId}\u0000${family}`)
+      candidate.isFamilyRepresentative = rep !== undefined && firstRow !== null && rep.id === String(firstRow.id)
+      for (const evidence of Array.isArray(candidate.evidence) ? candidate.evidence : []) {
+        const row = byId.get(evidence.id)
+        if (row === undefined) continue
+        const evidenceFamily = derivedFamilyOf(row)
+        if (evidenceFamily !== '') evidence.family = evidenceFamily
+      }
+    }
+  } catch { /* 代表标记是附加信息，失败不拖垮召回 */ }
   const truncated = candidates.slice(0, effectiveK)
   // 失败步骤必须留一席：若输出里全是正回报，模型就永远看不到「上次错在哪」（2026-11-07 多步验收实测）。  // 补位取「最相似的负样本」；limit=1 时不动：调用方明确只要一条，不能为了留负样本把 top1 换掉。
   if (truncated.length >= 2 && !truncated.some((item) => item.evidence.some((evidence) => (Number(evidence.G) || 0) < 0))) {

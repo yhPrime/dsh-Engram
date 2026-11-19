@@ -43,6 +43,7 @@ import { classifyExperienceWithSession, localClassifyExperience } from '../kerne
 import { shadowReport } from '../kernel/tag-rank.js'
 import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
 import { validateTagSet } from '../kernel/tag-registry.js'
+import { backfillFamilies, derivedFamilyOf, representativesOf, tagTree, visibleRowsOf } from '../kernel/family-tools.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -1061,6 +1062,72 @@ export async function handleRequest(req, res, source, deps = {}) {
       const dataDir = active !== null && active.mode === 'live' ? String(read.dataDir || '').trim() : ''
       const store = storeOf(active)
       return json(res, 200, { ok: true, data: tagRegistryView(store, dataDir === '' ? {} : { dataDir }) })
+    }
+    if (route === '/tag-tree') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      const store = storeOf(active)
+      return json(res, 200, { ok: true, data: tagTree(visibleRowsOf(store)) })
+    }
+    if (route === '/families') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      const store = storeOf(active)
+      const rows = visibleRowsOf(store)
+      const reps = representativesOf(store)
+      const types = new Map()
+      let unfiled = 0
+      for (const row of rows) {
+        const family = derivedFamilyOf(row)
+        if (family === '') { unfiled += 1; continue }
+        const typeId = String(row.typeId || 'ty_other')
+        if (!types.has(typeId)) types.set(typeId, { typeId, name: String(row.typeName || '未分类'), count: 0, families: new Map() })
+        const type = types.get(typeId)
+        type.count += 1
+        if (!type.families.has(family)) {
+          const rep = reps.get(`${typeId}\u0000${family}`) || null
+          type.families.set(family, { family, count: 0, representative: rep })
+        }
+        type.families.get(family).count += 1
+      }
+      const data = [...types.values()].map((type) => ({
+        typeId: type.typeId,
+        name: type.name,
+        count: type.count,
+        families: [...type.families.values()].sort((left, right) => (right.count - left.count) || (left.family < right.family ? -1 : 1)),
+      })).sort((left, right) => (left.typeId < right.typeId ? -1 : 1))
+      return json(res, 200, { ok: true, data: { types: data, unfiled } })
+    }
+    if (route === '/families/backfill') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      const dryRun = body === null || body.dryRun === undefined ? true : body.dryRun !== false
+      const store = storeOf(active)
+      const preview = backfillFamilies(store)
+      if (dryRun || active.mode !== 'live') return json(res, 200, { ok: true, data: { dryRun: true, ...preview } })
+      const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
+      const byId = new Map(store.experiences.map((row) => [String(row.id), row]))
+      for (const change of preview.changes) {
+        const row = byId.get(change.id)
+        if (row !== undefined) row.family = change.to
+      }
+      writeStore(dataDir, store)
+      return json(res, 200, { ok: true, data: { dryRun: false, ...preview } })
+    }
+    if (route === '/retrieval-policy') {
+      if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      const store = storeOf(active)
+      const rows = visibleRowsOf(store)
+      const reps = representativesOf(store)
+      const config = readEngineConfig()
+      return json(res, 200, {
+        ok: true,
+        data: {
+          tagRank: String(config.tagRank || 'shadow'),
+          routing: String(config.routing || 'on'),
+          visible: rows.length,
+          families: reps.size,
+          unfiled: rows.filter((row) => derivedFamilyOf(row) === '').length,
+        },
+      })
     }
     if (route === '/types') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

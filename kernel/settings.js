@@ -124,7 +124,8 @@ export const ENGINE_CONFIG_DEFAULTS = Object.freeze({
   // - routing：'on' 仍按类型收窄候选池（P2 / 0.21.4 按影子判据决定是否改 'off'）；
   // - autoAssign：只有自动记录用它（手动记录不归族，主分类由模型给）；
   // - autoRouteMinScore：自动记录专用门槛，比召回路由的 0.17 松，见 cluster.js 注释。
-  routing: 'on',
+  // 0.30.0：离线 A/B（tools/eval-policy.mjs，120 条同词金标）routing=off Recall@5 0.75 ≥ on 0.7333，切默认 off；on 留显式调试。
+  routing: 'off',
   autoAssign: true,
   autoRouteMinScore: 0.08,
   // 回合收尾自动记录（0.24.1 用户口径）：**默认关闭**——每轮都落一条待判定经验是噪音，
