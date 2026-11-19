@@ -717,6 +717,12 @@ export function createMockSource() {
         updatedAt: bootAt,
         notice: this.notice,
         storage: {
+          layout: 'family',
+          typeDirs: 4,
+          familyFiles: 12,
+          familyBytes: bucketBytes,
+          indexFiles: 8,
+          indexBytes: 6 * 1024,
           manifestBytes,
           bucketBytes,
           bucketFiles: 12,

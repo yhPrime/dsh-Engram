@@ -67,7 +67,7 @@ export const SETTINGS_SPEC = {
     { key: 'pendingReceipt', label: '回执带待判定', type: 'boolean', tip: '关闭后 exp_record / exp_recall 的返回里不再附带 pending，判定只能靠控制台查看。' },
     { key: 'autoRecord', label: '自动记录回合', type: 'boolean', default: false, hint: '默认关', tip: '默认关闭。打开后每个回合收尾时，把这一轮的交付动作自动记成一条待判定经验（note 里带工具序列与产物，成败留待回填）；每轮都记会攒下大量没人回填的待判定行。纯问答、寒暄、以及本回合已经手动 exp_record 的不会重复记；关着就完全依赖模型手动记录。' },
     { key: 'tagShadow', label: '标签影子对照', type: 'boolean', default: false, hint: '默认关', tip: '打开后每次召回都额外算一遍「只按标签排序」的结果（不改候选顺序与数量），用于观察标签排序与类型路由的差异；控制台检索页可临时勾选查看，不必长期打开。' },
-    { key: 'tagRank', label: '标签进查询', type: 'enum', values: ['shadow', 'on', 'off'], labels: { shadow: '影子（默认，只记录）', on: '生效', off: '关' }, hint: '默认 shadow', tip: 'shadow：从意图自动抽标签，只写 usage 供 P0 判据报表，不改召回；on：把抽出的标签并进 context，走既有 contextMatch 加分（复用同一套排序，不新增打分代码）；off：完全不抽。P0 判据达标前别改 on。' },
+    { key: 'tagRank', label: '标签进查询', type: 'enum', values: ['shadow', 'on', 'off'], labels: { shadow: '影子（默认，只记录）', on: '生效', off: '关' }, hint: '默认 shadow', tip: 'shadow：从意图自动抽标签，只写 usage 供判据报表，不改召回；on：把抽出的标签并进 context，走既有 contextMatch 加分（复用同一套排序，不新增打分代码）；off：完全不抽。0.30 A/B：同词 Recall 0.7333（on=off），换说法集缺失、未达 +10pp，故默认仍 shadow。' },
     { key: 'skillBodyMode', label: '技能正文模式', type: 'enum', values: ['full', 'clip'], labels: { full: '全文（默认）', clip: '裁剪 6000 字（排障）' }, hint: '默认全文', tip: '全文＝像普通技能一样让模型通读（安全上限 30000 字，超了保留开头与 Resources/脚本节）；裁剪＝只给前 6000 字并保留末尾脚本节，仅用于排障或省 token。' },
     { key: 'skillCatalog', label: '会话技能目录', type: 'boolean', default: true, hint: '默认开', tip: '命中过的技能会发一份会话级技能目录；上下文被压缩遮掉后，下一步自动补发一份替换版，模型据此按 exp_recall({skill, load:true}) 重取正文。关掉就完全退回 0.20.9 行为：每次命中都给全文，不发目录也不补发。目录条数上限 / 描述截断长度只在 settings.json 里改（catalogMaxSkills / catalogDescriptionChars），不在本页。' },
     { key: 'reuseReceipt', label: '复用短回执', type: 'boolean', default: true, hint: '默认开', tip: '同一个技能本会话已给过全文、且那条结果仍在可见上下文里时，只给 ≤400 字短回执（3 条正文二级标题锚点 + 「对不上就重取」提示），不再重发 4–7k token 的全文。关掉后每次都发全文，只用于排障。' },
@@ -75,7 +75,7 @@ export const SETTINGS_SPEC = {
     { key: 'usageLogMaxBytes', label: '日志上限（字节）', type: 'number', tip: 'usage.jsonl 超过这个大小就轮转成 usage.jsonl.1（只保留一份旧文件）。内部有 1024 字节下限：填 1 也按 1024 生效。' },
     { key: 'feedbackEta', label: '反馈学习率 η', type: 'number', hint: '0~1，默认 0.35', tip: '每次「有帮助/没帮上」把 G 往 +1 / -1 拉的幅度。η 越大改得越快；默认 0.35。' },
     { key: 'feedbackDecayDays', label: '反馈衰减（天）', type: 'number', tip: '它不是「G 随时间自然衰减」，而是「超过天数的旧反馈事件折叠进基准 GOutcome」——折叠后 G 值不变，只是日志变短（压缩）。填 0 表示不折叠。' },
-    { key: 'routing', label: '簇路由', type: 'enum', values: ['on', 'shadow', 'off'], tip: 'on：召回先用簇路由收窄候选；shadow：只记录路由结果不实际收窄（用来对比效果）；off：全库检索。' },
+    { key: 'routing', label: '簇路由', type: 'enum', values: ['on', 'shadow', 'off'], hint: '默认 off', tip: 'on：召回先用簇路由收窄候选；shadow：只记录路由结果不实际收窄（用来对比效果）；off：全库检索。0.30 A/B：off Recall@5 0.75 ≥ on 0.7333，默认 off；on 只留显式调试。' },
     { key: 'autoAssign', label: '自动记录归族', type: 'boolean', tip: '只对自动记录（回合收尾那条）生效：它没给类型，就按簇路由归族。手动 exp_record 不再自动归族——主分类由模型自己给，没给就落「未分类」并在回执里提示补（0.21.3 计划书 §0.1 D1/D3）。' },
     { key: 'autoRouteMinScore', label: '自动记录归族门槛', type: 'number', hint: '0~1，默认 0.08', tip: '自动记录归族用的分数门槛，比召回路由的 0.17 松：自动记录的意图常是短追问，词面信号弱。调高更保守（更多落「未分类」），调低更激进（更容易归错族）。' },
     { key: 'consolidation', label: '沉淀候选', type: 'boolean', tip: '召回结果里附带一条「候选规则」：同族样本够多、且正负对照都有时才给，用来提示可以沉淀成技能。不写库、不花 token。' },
@@ -1094,7 +1094,8 @@ export async function handleRequest(req, res, source, deps = {}) {
         count: type.count,
         families: [...type.families.values()].sort((left, right) => (right.count - left.count) || (left.family < right.family ? -1 : 1)),
       })).sort((left, right) => (left.typeId < right.typeId ? -1 : 1))
-      return json(res, 200, { ok: true, data: { types: data, unfiled } })
+      const unfiledRows = rows.filter((row) => derivedFamilyOf(row) === '').slice(0, 50).map((row) => ({ id: String(row.id || ''), typeId: String(row.typeId || 'ty_other'), typeName: String(row.typeName || ''), intent: String(row.intent || '') }))
+      return json(res, 200, { ok: true, data: { types: data, unfiled, unfiledRows } })
     }
     if (route === '/families/backfill') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')

@@ -160,6 +160,12 @@ window.__ModuleLoader__.load({
 .eng-modal-warn { margin: 12px 0 12px; padding: 8px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); font-size: var(--eng-fs-sm); line-height: 1.65; color: var(--dsw-alias-label-secondary); }
 .eng-modal-warn b { color: var(--dsw-alias-label-primary); font-weight: 620; }
 .eng-modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+/* 原生 dialog：焦点/遮罩/Esc 交给平台；只做外观与滚动隔离 */
+.eng-dialog { padding: 0; border: 0; background: transparent; max-width: min(660px, calc(100vw - 32px)); }
+.eng-dialog:modal { overscroll-behavior: contain; }
+.eng-dialog::backdrop { background: rgba(0, 0, 0, .32); overscroll-behavior: contain; }
+/* 原生 progress：覆盖率条，accent-color 足够，不覆盖 UA 结构 */
+.eng-progress { width: 100%; height: 6px; accent-color: var(--eng-accent); }
 /* P3 命令面板 / 快捷键表 / Toast / 页面入场 */
 .eng-palette { width: min(560px, 100%); max-height: min(620px, 84vh); display: flex; flex-direction: column; gap: var(--eng-s-2); }
 .eng-palette-input { height: 36px; font-size: var(--eng-fs-body); }
@@ -1177,6 +1183,8 @@ window.__ModuleLoader__.load({
         gear: 'M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Zm5.4-2.2c0-.5-.1-.9-.2-1.3l1.5-1.1-1.4-2.4-1.8.7c-.6-.5-1.3-.9-2-1.2L9.2 1H6.8l-.3 1.7c-.7.3-1.4.7-2 1.2l-1.8-.7L1.3 5.6l1.5 1.1c-.1.4-.2.8-.2 1.3s.1.9.2 1.3L1.3 10.4l1.4 2.4 1.8-.7c.6.5 1.3.9 2 1.2l.3 1.7h2.4l.3-1.7c.7-.3 1.4-.7 2-1.2l1.8.7 1.4-2.4-1.5-1.1c.1-.4.2-.8.2-1.3Z',
         expand: 'M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4',
         collapse: 'M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4',
+        folder: 'M2 3.5h4l1.2 1.5H14V13H2V3.5Z',
+        layers: 'M8 2 2 5l6 3 6-3-6-3ZM2 8l6 3 6-3M2 11l6 3 6-3',
       }
       return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true', style: { flex: '0 0 auto', opacity: .9 } },
         h('path', { d: paths[props.name] || paths.overview }))
@@ -1259,7 +1267,7 @@ window.__ModuleLoader__.load({
     const SHORTCUTS = [
       ['Ctrl / Cmd + K', '命令面板'],
       ['?', '快捷键表'],
-      ['g 然后 o / e / r / n / s / t / u / ,', '跳概览 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置'],
+      ['g 然后 o / e / f / l / r / n / s / t / u / ,', '跳概览 / 经验 / 分类·族 / 标签分级 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置'],
       ['j / k / Enter', '列表下移 / 上移 / 打开'],
       ['Ctrl / Cmd + Enter', '表单提交'],
       ['Shift + R', '刷新当前页'],
@@ -1430,14 +1438,15 @@ window.__ModuleLoader__.load({
             h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '存储结构')),
             storage === null
               ? h('div', { className: 'eng-muted' }, '暂无存储信息')
-              : h('div', { className: 'eng-storage-grid' },
-                storageCell('manifest', fmtBytes(storage.manifestBytes), '分片索引'),
-                storageCell('分片', `${storage.bucketFiles || 0} 个`, fmtBytes(storage.bucketBytes)),
-                storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'),
-                storageCell('legacy', legacy.exists ? fmtBytes(legacy.bytes) : '无', legacy.exists ? '可删' : '已无旧库')),
-            storage !== null ? h('div', { className: 'eng-muted eng-section-note' },
-              `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件`,
-              legacy.exists ? '；legacy 为迁移前快照，仅用于回滚（可删）' : '') : null,
+              : storage.layout === 'family'
+                ? h('div', { className: 'eng-storage-grid' },
+                  storageCell('manifest', fmtBytes(storage.manifestBytes), '分族清单'),
+                  storageCell('分类', `${storage.typeDirs || 0} 个`, `索引 ${storage.indexFiles || 0} 个`),
+                  storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
+                  storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'))
+                : h('div', { className: 'eng-muted' }, '仍是旧布局（schema 2）：请先迁移到分族布局，概览只展示新口径。'),
+            storage !== null && storage.layout === 'family' ? h('div', { className: 'eng-muted eng-section-note' },
+              `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件 · 分类 ${storage.typeDirs || 0} · 族 ${storage.familyFiles || 0}`) : null,
             h('div', { className: 'eng-subsection' },
               h('button', { type: 'button', className: 'eng-subsection-head', 'aria-expanded': coldOpen ? 'true' : 'false', onClick: () => setColdOpen((open) => !open) },
                 h('span', { className: 'eng-strong' }, '冷档'),
@@ -1952,7 +1961,9 @@ window.__ModuleLoader__.load({
           toast('已复制检索结果')
         } catch { /* 剪贴板不可用就算了 */ }
       }
+      const policy = useLoad(useCallback(() => request('/retrieval-policy'), []))
       return h('div', { className: 'eng-fill' },
+        policy.data ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '当前策略：tagRank=' + policy.data.tagRank + ' · routing=' + policy.data.routing + '（routing 默认 off 由 0.30 A/B 决定；tagRank 仍 shadow）') : null,
         error ? h(Banner, { bad: true }, error) : null,
         h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 14 } },
           h('div', { className: 'eng-form-grid' },
@@ -3058,6 +3069,153 @@ window.__ModuleLoader__.load({
 
     }
 
+    function Families(props) {
+      const data = useLoad(useCallback(() => request('/families'), []))
+      useRefreshEvent(data.reload)
+      const [selected, setSelected] = useState('')
+      const [preview, setPreview] = useState(null)
+      const [confirming, setConfirming] = useState(false)
+      const [notice, setNotice] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [showUnfiled, setShowUnfiled] = useState(false)
+      const dialogRef = useRef(null)
+      // 原生 dialog 管焦点/Esc/遮罩；这里只负责开关与回执。
+      useEffect(() => {
+        const dialog = dialogRef.current
+        if (!dialog) return
+        if (confirming && !dialog.open) {
+          try { dialog.showModal() } catch { dialog.setAttribute('open', '') }
+        } else if (!confirming && dialog.open) {
+          dialog.close()
+        }
+      }, [confirming])
+      const types = data.data ? data.data.types || [] : []
+      const unfiled = data.data ? Number(data.data.unfiled) || 0 : 0
+      const unfiledRows = data.data ? data.data.unfiledRows || [] : []
+      const current = types.find((type) => type.typeId === selected) || types[0] || null
+      const totalFamilies = types.reduce((sum, type) => sum + (type.families || []).length, 0)
+      const runBackfill = async (dryRun) => {
+        setBusy(true)
+        setNotice('')
+        try {
+          const out = await request('/families/backfill', { method: 'POST', body: { dryRun } })
+          setPreview(out)
+          if (!dryRun) {
+            setConfirming(false)
+            await data.reload()
+            if (props.onChanged) props.onChanged()
+          }
+          setNotice(dryRun ? '补族预览完成' : '已补 ' + (out.filled || 0) + ' 条')
+        } catch (caught) {
+          setNotice(caught && caught.message ? caught.message : String(caught))
+        } finally {
+          setBusy(false)
+        }
+      }
+      const previewRows = preview && Array.isArray(preview.changes) ? preview.changes.slice(0, 50) : []
+      const unfiledPanel = showUnfiled ? h('div', { className: 'eng-card', style: { padding: 15, marginTop: 14 } },
+        h('div', { className: 'eng-section-head' },
+          h('h3', { className: 'eng-section-title' }, '未分族行（前 50 条）'),
+          h('span', { className: 'eng-muted' }, '共 ' + unfiled + ' 条，无可推导的动作族')),
+        unfiledRows.length === 0
+          ? h('div', { className: 'eng-muted' }, '没有未分族行')
+          : h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } }, unfiledRows.map((row) => h('div', { key: row.id }, (row.typeName || row.typeId) + ' · ' + row.intent)))) : null
+      const typeList = types.length === 0
+        ? h(Empty, null, '还没有分类')
+        : types.map((type) => h('button', {
+          key: type.typeId,
+          type: 'button',
+          className: 'eng-nav-item',
+          'data-active': current !== null && current.typeId === type.typeId ? 'true' : 'false',
+          onClick: () => setSelected(type.typeId),
+        }, h('span', null, type.name || type.typeId), h('span', { className: 'eng-nav-count' }, String(type.count || 0))))
+      const familyRows = (current ? current.families || [] : []).map((family) => h('tr', { key: family.family },
+        h('td', null, family.family),
+        h('td', { className: 'eng-mono' }, String(family.count || 0)),
+        h('td', { className: 'eng-row-intent', title: family.representative ? family.representative.intent : '' }, family.representative ? family.representative.intent + '（G ' + Number(family.representative.G || 0).toFixed(2) + '）' : '—'),
+        h('td', { className: 'eng-muted' }, family.representative && family.representative.lastSeenAt ? String(family.representative.lastSeenAt).slice(0, 10) : '—')))
+      const familyTable = current === null
+        ? h(Empty, null, '还没有族数据')
+        : h('div', null,
+          h('div', { className: 'eng-section-head', style: { padding: '12px 15px' } },
+            h('h3', { className: 'eng-section-title' }, (current.name || current.typeId) + ' · ' + (current.families || []).length + ' 族'),
+            h('span', { className: 'eng-muted' }, (current.count || 0) + ' 条可见经验')),
+          h('table', { className: 'eng-table' },
+            h('thead', null, h('tr', null, h('th', null, '族'), h('th', null, '条数'), h('th', null, '族代表'), h('th', null, '最近使用'))),
+            h('tbody', null, familyRows)))
+      const previewPanel = preview === null ? null : h('div', { className: 'eng-card', style: { padding: 15, marginTop: 14 } },
+        h('div', { className: 'eng-section-head' },
+          h('h3', { className: 'eng-section-title' }, (preview.dryRun ? '补族预览' : '已补族') + '（' + (preview.filled || 0) + ' 条）'),
+          h('span', { className: 'eng-muted' }, '扫描 ' + (preview.scanned || 0) + ' 条，跳过 ' + (preview.skipped || 0) + ' 条')),
+        previewRows.length === 0
+          ? h('div', { className: 'eng-muted' }, '没有可补的未分族行（能从动作标签推导的会在规则里自动补）。')
+          : h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } }, previewRows.map((change) => h('div', { key: change.id }, change.id + ' → ' + change.to))))
+      const confirmModal = h('dialog', {
+        ref: dialogRef,
+        className: 'eng-dialog',
+        'aria-labelledby': 'eng-backfill-title',
+        onClose: () => setConfirming(false),
+      },
+        h('div', { className: 'eng-modal' },
+          h('h3', { id: 'eng-backfill-title', className: 'eng-modal-title' }, '确认执行补族？'),
+          h('div', { className: 'eng-muted', style: { marginBottom: 12 } }, '将把 ' + (preview ? preview.filled : 0) + ' 条未分族行写入 family 字段（只改族归属，不改内容/评分）。'),
+          h('div', { className: 'eng-modal-actions' },
+            h(Button, { small: true, onClick: () => { setConfirming(false); if (dialogRef.current && dialogRef.current.open) dialogRef.current.close() } }, '取消'),
+            h(Button, { small: true, kind: 'primary', disabled: busy, onClick: () => runBackfill(false) }, busy ? '执行中…' : '确认执行'))))
+      return h('div', { className: 'eng-fill' },
+        data.error ? h(Banner, { bad: true }, data.error) : null,
+        notice ? h(Banner, null, notice) : null,
+        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '分类=文件夹、族=文件；族代表取该族 G 最高的一条。补族只改 family 字段，默认先预览，执行前需确认。'),
+        h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
+          h('span', { className: 'eng-strong' }, '分类 ' + types.length + ' · 族 ' + totalFamilies + ' · 未分族 ' + unfiled),
+          h('span', { style: { flex: 1 } }),
+          h(Button, { small: true, disabled: busy, onClick: () => runBackfill(true) }, busy ? '处理中…' : '预览补族'),
+          h(Button, { small: true, kind: 'primary', disabled: busy || preview === null || (preview.filled || 0) === 0, onClick: () => setConfirming(true) }, '执行补族')),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(180px, 240px) minmax(0, 1fr)', gap: 14, alignItems: 'start' } },
+          h('div', { className: 'eng-card eng-scroll', style: { padding: 8, maxHeight: 520 } }, typeList),
+          h('div', { className: 'eng-card eng-scroll', style: { padding: 0 } }, familyTable)),
+        h('div', { style: { marginTop: 14 } },
+          h('button', { type: 'button', className: 'eng-nav-item', 'aria-expanded': showUnfiled ? 'true' : 'false', onClick: () => setShowUnfiled((open) => !open) },
+            h('span', null, '未分族 ' + unfiled + ' 条'), h('span', { className: 'eng-nav-count' }, showUnfiled ? '收起' : '展开'))),
+        unfiledPanel,
+        previewPanel,
+        confirmModal)
+    }
+
+    function Tags() {
+      const data = useLoad(useCallback(() => request('/tag-tree'), []))
+      useRefreshEvent(data.reload)
+      const facets = data.data ? data.data.facets || {} : {}
+      const total = data.data ? Number(data.data.total) || 0 : 0
+      const labels = { object: '对象', action: '动作', topic: '主题', quality: '质量' }
+      const hasAny = ['object', 'action', 'topic', 'quality'].some((facet) => (facets[facet] || []).some((group) => (group.children || []).length > 0))
+      const childOf = (child) => {
+        const percent = Math.round((child.coverage || 0) * 100)
+        return h('div', { key: child.name, style: { display: 'grid', gridTemplateColumns: 'minmax(80px, 160px) minmax(0, 1fr) 56px', gap: 8, alignItems: 'center', marginBottom: 2 } },
+          h('span', { className: 'eng-row-intent', title: child.name }, child.name, child.core ? h('span', { className: 'eng-muted' }, ' · core') : null),
+          h('progress', { className: 'eng-progress', max: 100, value: percent, 'aria-label': child.name + ' 覆盖率' }),
+          h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, percent + '%'))
+      }
+      const groupOf = (group) => h('div', { key: group.parent, style: { marginBottom: 10 } },
+        h('div', { className: 'eng-strong', style: { fontSize: 12, marginBottom: 4 } }, group.parent),
+        (group.children || []).map(childOf))
+      const facetOf = (facet) => {
+        const groups = facets[facet] || []
+        const count = groups.reduce((sum, group) => sum + (group.children || []).length, 0)
+        return h('div', { key: facet, className: 'eng-card eng-section-card', style: { marginBottom: 14 } },
+          h('div', { className: 'eng-section-head' },
+            h('h3', { className: 'eng-section-title' }, labels[facet]),
+            h('span', { className: 'eng-muted' }, count + ' 词')),
+          groups.length === 0 ? h('div', { className: 'eng-muted' }, '暂无') : groups.map(groupOf))
+      }
+      return h('div', { className: 'eng-fill' },
+        data.error ? h(Banner, { bad: true }, data.error) : null,
+        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '标签分级只用于展示与补族规则，不参与召回排序；共 ' + total + ' 条可见经验。'),
+        data.loading && !hasAny ? h(Skeleton, { rows: 5 }) : null,
+        !data.loading && !hasAny ? h(Empty, null, '还没有可统计的标签') : null,
+        ['object', 'action', 'topic', 'quality'].map(facetOf))
+    }
+
     function Types(props) {
       const types = useLoad(useCallback(() => request('/types'), []))
       useRefreshEvent(types.reload)
@@ -3088,7 +3246,7 @@ window.__ModuleLoader__.load({
         types.error ? h(Banner, { bad: true }, types.error) : null,
         notice ? h(Banner, null, notice) : null,
         // 文案口径（计划书 §10.3）：类型只做归档/筛选/统计，召回由标签承担。
-        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '类型只用于归档、筛选和统计，不参与召回排序；分类信号由「标签」承担（对象 + 动作 + 主题 + 质量）。类型路由（兼容）仅作对照保留，0.20.0 不改召回结果。'),
+        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '分类只用于归档、筛选和统计，不参与召回排序；族与标签见「分类·族」「标签分级」。'),
         h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14 } },
           h('div', { className: 'eng-form-grid' },
             h(Field, { label: '新类型名称' }, h('input', { className: 'eng-input', value: name, onChange: (event) => setName(event.target.value) })),
@@ -5967,6 +6125,8 @@ window.__ModuleLoader__.load({
       ['overview', '概览', 'overview'],
       ['graph', '关系图', 'graph'],
       ['experiences', '经验', 'book'],
+      ['families', '分类·族', 'folder'],
+      ['tags', '标签分级', 'layers'],
       ['recall', '检索', 'search'],
       ['record', '记录', 'plus'],
       ['skills', '技能', 'spark'],
@@ -5978,7 +6138,7 @@ window.__ModuleLoader__.load({
 
     const NAV_GROUPS = [
       ['总览', ['overview', 'graph']],
-      ['数据', ['experiences', 'types', 'cold']],
+      ['数据', ['experiences', 'families', 'tags', 'types', 'cold']],
       ['动作', ['recall', 'record', 'skills']],
       ['系统', ['usage', 'settings']],
     ]
@@ -6087,7 +6247,7 @@ window.__ModuleLoader__.load({
             return
           }
           if (Date.now() - goRef.current < 1200) {
-            const map = { o: 'overview', e: 'experiences', r: 'recall', n: 'record', s: 'skills', t: 'types', u: 'usage', ',': 'settings' }
+            const map = { o: 'overview', e: 'experiences', f: 'families', l: 'tags', r: 'recall', n: 'record', s: 'skills', t: 'types', u: 'usage', ',': 'settings' }
             const target = map[String(event.key).toLowerCase()]
             if (target !== undefined) {
               event.preventDefault()
@@ -6193,6 +6353,8 @@ window.__ModuleLoader__.load({
         if (tab === 'recall') return h(Recall, { seed: recallSeed, types: state ? state.types : [] })
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
+        if (tab === 'families') return h(Families, { onChanged: loadState })
+        if (tab === 'tags') return h(Tags, { onChanged: loadState })
         if (tab === 'types') return h(Types, { onChanged: loadState })
         if (tab === 'cold') return h(Cold)
         if (tab === 'usage') return h(Usage)

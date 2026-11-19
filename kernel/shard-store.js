@@ -2541,6 +2541,12 @@ export function storageUsage(dataDir) {
     coldBytes: 0,
     coldFiles: 0,
     legacy: { exists: false, bytes: 0 },
+    layout: 'legacy',
+    typeDirs: 0,
+    familyFiles: 0,
+    familyBytes: 0,
+    indexFiles: 0,
+    indexBytes: 0,
     fileCount: 0,
     totalBytes: 0,
     updatedAt: null,
@@ -2574,8 +2580,24 @@ export function storageUsage(dataDir) {
     if (size < 0) continue
     usage.bucketBytes += size
     usage.bucketFiles += 1
+    usage.familyBytes += size
+    usage.familyFiles += 1
     usage.fileCount += 1
   }
+  // 0.31 UI：分族布局的分类目录数与索引文件也进报表（只用于展示，不改任何读写）。
+  let familyDirs = []
+  try { familyDirs = fs.readdirSync(path.join(dir, LIBRARY_DIR)).filter((name) => !isIgnoredLibraryDir(name)) } catch { familyDirs = [] }
+  usage.typeDirs = familyDirs.length
+  for (const typeId of familyDirs) {
+    for (const name of ['_type.json', '_index.json']) {
+      const size = fileSizeOf(path.join(dir, LIBRARY_DIR, typeId, name))
+      if (size < 0) continue
+      usage.indexBytes += size
+      usage.indexFiles += 1
+      usage.fileCount += 1
+    }
+  }
+  usage.layout = familyDirs.length > 0 ? 'family' : 'legacy'
   const legacySize = fileSizeOf(legacyPath(dir))
   if (legacySize >= 0) {
     usage.legacy = { exists: true, bytes: legacySize }
