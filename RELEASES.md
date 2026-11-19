@@ -688,3 +688,9 @@ pm test 在 release 分支全绿
   - 关系图新增 kind 文案：详情徽标/搜索命中/读屏列表补「对象」「链」；对象 tone=brand、链 tone=muted
   - 布局经验云的分组键改用转义后的族 id（带 : / % 的族名不再把经验摆到太阳附近）
   - 回归：/graph?objects=1 同链重复族只一条 step 边；test:ui / npm test 全绿
+
+- **v0.36.8（四轮第 11 轮收口：坏库路径占用 + 对象层回归夹具）**
+  - exp-lib.json 路径存在但不是普通文件（目录等）时，snapshot 判 corrupt 并指向该路径，/state 不再静默空库
+  - 对象层回归夹具补强：同链重复族、注册表有无经验族、别名族、缺 id 脏行；删 families.has / 去重 / 缺 id 守卫任一实现都会让用例变红
+  - 客户端补布局族键源码断言（graphFamilyIdOf(node.family)），回退会变红
+  - test:ui / npm test 在 release 分支全绿

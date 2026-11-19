@@ -273,6 +273,7 @@ export function createEngine(options = {}) {
       const usage = storageUsageOf(dataDir)
       const singleFile = path.join(dataDir, shardStore.LEGACY_SOURCE_FILE)
       const singleExists = statIsFile(singleFile)
+      const singleOccupied = fs.existsSync(singleFile)
       let manifest = null
       let corrupt = false
       let corruptFile = ''
@@ -284,6 +285,12 @@ export function createEngine(options = {}) {
         corrupt = true
         corruptFile = shardStore.manifestPath(dataDir)
         parseError = String((error && error.message) || error)
+      }
+      // 路径存在但不是普通文件（目录/其它）：与读路径 EISDIR 同口径，不能静默当空库。
+      if (!corrupt && manifest === null && singleOccupied && !singleExists) {
+        corrupt = true
+        corruptFile = singleFile
+        parseError = `经验库路径被占用（不是普通文件）：${singleFile}`
       }
       // manifest 合法但 type id 重复：库已不可读（列表/图/写都会拒绝），快照也要给坏库信号。
       if (!corrupt && manifest !== null) {
@@ -337,7 +344,7 @@ export function createEngine(options = {}) {
           parseError = String((error && error.message) || error)
         }
       }
-      const exists = manifest !== null || usage.fileCount > 0 || singleExists
+      const exists = manifest !== null || usage.fileCount > 0 || singleExists || singleOccupied
       return {
         dataDir,
         // 坏库时指向真正解析失败的文件（manifest 坏 → manifest.json；老库坏 → exp-lib.json）。
