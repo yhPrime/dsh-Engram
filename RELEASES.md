@@ -35,6 +35,13 @@
 
 ## 当前发布
 
+- **v0.36.0（关系图换族骨架 + 类型彻底退场 + 对象页）**
+  - 关系图：`/graph` 骨架由 `root→类型→经验` 换成 `root→族→经验`（本机真实库实测 47 族 / 329 行 → 406 节点 / 424 边），类型节点退场；同标签连线跳过与族同名的标签，避免双重语义；「族」按族名建节点，未分族单独成族（`system: true`），改名/合并后随下次 `/graph` 自动重建，不落盘、不加建边接口
+  - 关系图渲染：族主星 2D 化——多面体只留给条数 ≥8 的大族、选中与悬停节点（47 族全画会顶到预算 76/80），光晕/星芒阈值收紧；布局、拾取、隔离等不变
+  - 控制台：导航删 `types` 死项；概览「类型分布」→「族分布」；经验列表/详情/冷档改显示族；删类型页、类型筛选、改挂类型与一键分类；记录页表单改成「族（可选）」，提交 `body.family`
+  - 对象页（0.35 对象链的 UI 适配，只读）：对象清单 + 链树 + 分支缩进 + 常用分支提示；`GET /objects` 只读接口（`available/total/objects[].hints`，契约见 `ui/API.md`）；mock / 未配置返回 `available:false`
+  - 测试：`npm run test:ui` 除 `/sync` 两项（沙箱 `spawnSync git EPERM`，非代码）外全绿；`npm test` 同因在 git-sync 用例失败
+
 - **v0.35.1（修 exp_object 参数 schema：宿主激活校验）**
   - `exp_object` 的 `chain` / `steps` 参数 items 补 `additionalProperties: true`——0.35.0 漏了它，DSH 激活时报 `JsonSchemaError: parameters.chain.items.additionalProperties must be explicitly true or false`，整个 engram 入口不激活
   - 守卫加强：`tools/tests/tool-schema.test.mjs` 从「带 properties 的 object」扩到**所有** `type:'object'`，这类漏写以后在测试里就红

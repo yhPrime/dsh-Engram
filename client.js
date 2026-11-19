@@ -1,7 +1,7 @@
 /**
  * 经验库控制台（dsh-engram client 半）
  *
- * 八个页面覆盖内核全部能力：概览 / 经验 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置。
+ * 八个页面覆盖内核全部能力：概览 / 关系图 / 经验 / 族 / 对象 / 检索 / 记录 / 技能 / 使用记录 / 设置。
  * 只通过 `/exp-ui/api/*` 访问数据；mock 与 live 返回形状一致。
  */
 
@@ -1514,7 +1514,6 @@ window.__ModuleLoader__.load({
     function Experiences(props) {
       const seed = props.seedFilters || {}
       const [searchDraft, setSearchDraft] = useState('')
-      const [type, setType] = useState(seed.typeId || '')
       const [family, setFamily] = useState(seed.family || '')
       const [outcome, setOutcome] = useState('')
       const [lifecycle, setLifecycle] = useState('')
@@ -1531,15 +1530,14 @@ window.__ModuleLoader__.load({
       const list = useLoad(useCallback(() => {
         const params = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize), sort })
       if (family !== '') params.set('family', family)
-        if (type !== '') params.set('type', type)
         if (outcome !== '') params.set('outcome', outcome)
         if (lifecycle !== '') params.set('lifecycle', lifecycle)
         if (source !== '') params.set('source', source)
         if (verdict !== '') params.set('verdict', verdict)
         return request(`/experiences?${params.toString()}`)
-      }, [type, outcome, lifecycle, source, verdict, sort, page, pageSize, family]))
+      }, [outcome, lifecycle, source, verdict, sort, page, pageSize, family]))
       // 换筛选/排序/页大小时回到第一页，避免停在越界页码。
-      useEffect(() => { setPage(0) }, [type, outcome, lifecycle, source, verdict, sort, pageSize])
+      useEffect(() => { setPage(0) }, [outcome, lifecycle, source, verdict, sort, pageSize])
       useRefreshEvent(list.reload)
       const detail = useLoad(useCallback(() => selected === null ? Promise.resolve(null) : request(`/experience?id=${encodeURIComponent(selected)}`), [selected]))
       // 窄面板下列表与详情会被压成一列：选中后把详情卡片滚进视野，否则看起来「点了没反应」。
@@ -1548,7 +1546,6 @@ window.__ModuleLoader__.load({
         if (selected === null || node === null || typeof node.scrollIntoView !== 'function') return
         node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
       }, [selected, detail.data])
-      const types = (props.state && props.state.types) || []
       const rows = (list.data && (list.data.rows || list.data.candidates)) || []
       // j/k 在列表里移动选中；输入框/文本域里不拦截。
       useEffect(() => {
@@ -1599,11 +1596,6 @@ window.__ModuleLoader__.load({
           setSending(false)
         }
       }
-      const assign = async (id, typeName) => {
-        await request('/type', { method: 'POST', body: { action: 'assign', id, name: typeName } })
-        await Promise.all([list.reload(), detail.reload()])
-        props.onChanged()
-      }
       /** 时效复核（0.20 P0）：确认有效 / 标待复核 / 退休 / 恢复；只改时效字段，不动 G。 */
       const review = async (action, note) => {
         if (selected === null || sending) return
@@ -1642,12 +1634,6 @@ window.__ModuleLoader__.load({
         props.onChanged()
         return out
       }
-      const autoAssign = async (id) => {
-        const out = await request('/classify', { method: 'POST', body: { id } })
-        await Promise.all([list.reload(), detail.reload()])
-        props.onChanged()
-        return out
-      }
       return h('div', { className: 'eng-fill' },
         list.error ? h(Banner, { bad: true }, list.error) : null,
         family !== '' ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '当前只看族「' + family + '」', h('button', { type: 'button', className: 'eng-subnav-item', style: { marginLeft: 8 }, onClick: () => setFamily('') }, '清除')) : null,
@@ -1655,8 +1641,6 @@ window.__ModuleLoader__.load({
         notice ? h(Banner, { bad: true }, notice) : null,
         h('div', { className: 'eng-toolbar' },
           h('input', { className: 'eng-input', placeholder: '按意图检索（回车跳到检索页）…', value: searchDraft, onChange: (event) => setSearchDraft(event.target.value), onKeyDown: (event) => { if (event.key === 'Enter' && searchDraft.trim() !== '') props.onSearch(searchDraft.trim()) } }),
-          h('select', { className: 'eng-select', value: type, onChange: (event) => setType(event.target.value) },
-            h('option', { value: '' }, '全部类型'), types.map((item) => h('option', { key: item.id, value: item.id }, item.name))),
           h('select', { className: 'eng-select', value: outcome, onChange: (event) => setOutcome(event.target.value) },
             h('option', { value: '' }, '全部结果'), Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0]))),
           h('select', { className: 'eng-select', style: { width: 128 }, value: lifecycle, onChange: (event) => setLifecycle(event.target.value), title: '按生命周期筛选：stale 是待复核，retired/superseded 默认不在列表里' },
@@ -1677,8 +1661,7 @@ window.__ModuleLoader__.load({
           h('select', { className: 'eng-select', style: { width: 120 }, value: sort, onChange: (event) => setSort(event.target.value) },
             h('option', { value: 'recent' }, '最近'),
             h('option', { value: 'g' }, 'G'),
-            h('option', { value: 'hits' }, '用过次数'),
-            h('option', { value: 'type' }, '类型')),
+            h('option', { value: 'hits' }, '用过次数')),
           h('span', { className: 'eng-muted' }, `${total} 条`),
           h(Button, { small: true, disabled: searchDraft.trim() === '', onClick: () => props.onSearch(searchDraft.trim()) }, '检索'),
           h(Button, { small: true, disabled: list.loading, onClick: list.reload }, list.loading ? '刷新中…' : '刷新'),
@@ -1710,7 +1693,7 @@ window.__ModuleLoader__.load({
               h(Button, { small: true, disabled: page <= 0, onClick: () => setPage(page - 1) }, '上一页'),
               h(Button, { small: true, disabled: page + 1 >= pages, onClick: () => setPage(page + 1) }, '下一页'))),
           h('div', { className: 'eng-card eng-detail-card', ref: detailRef },
-            h(DetailPane, { key: selected === null ? 'empty' : selected, selected, detail, send, busy: sending, types, onAssign: assign, labelOptions: (labelCatalog.data && labelCatalog.data.labels) || [], onAddLabels: addLabels, onAutoAssign: autoAssign, onReview: review, onClose: () => setSelected(null) }))))
+            h(DetailPane, { key: selected === null ? 'empty' : selected, selected, detail, send, busy: sending, labelOptions: (labelCatalog.data && labelCatalog.data.labels) || [], onAddLabels: addLabels, onReview: review, onClose: () => setSelected(null) }))))
     }
 
     /**
@@ -1719,16 +1702,13 @@ window.__ModuleLoader__.load({
      */
     function DetailPane(props) {
       const { selected, detail, send, onClose, busy } = props
-      const [assignTo, setAssignTo] = useState('')
-      const [assigning, setAssigning] = useState(false)
-      const [assignMessage, setAssignMessage] = useState('')
       const [labelPick, setLabelPick] = useState('')
       const [newLabel, setNewLabel] = useState('')
       const [newLabelFacet, setNewLabelFacet] = useState('topic')
       const [labelBusy, setLabelBusy] = useState(false)
       const [labelMessage, setLabelMessage] = useState('')
       const [pane, setPane] = useState('overview')
-      useEffect(() => { setAssignTo(''); setAssigning(false); setAssignMessage(''); setLabelPick(''); setNewLabel(''); setLabelBusy(false); setLabelMessage(''); setPane('overview') }, [selected])
+      useEffect(() => { setLabelPick(''); setNewLabel(''); setLabelBusy(false); setLabelMessage(''); setPane('overview') }, [selected])
       if (selected === null) return h(Empty, null, '选一条经验看详情')
       if (detail && detail.error) return h(ErrorState, { title: '读取详情失败', message: detail.error, onRetry: detail.reload })
       const data = detail ? detail.data : null
@@ -1744,8 +1724,6 @@ window.__ModuleLoader__.load({
       const reviewState = lifecycleStateOf(row)
       const events = Array.isArray(data.history) ? data.history : []
       const feedbackLog = Array.isArray(data.feedbackLog) ? data.feedbackLog : []
-      const types = Array.isArray(props.types) ? props.types.filter((item) => item && item.system !== true) : []
-      const assignable = typeof props.onAssign === 'function' && types.length > 0
       // 标签按面分组（计划书 §10.2）：面的真相来自 /type labels（tagCatalog 带 facet），未登记的落「其他」。
       const labelCatalogOf = Array.isArray(props.labelOptions) ? props.labelOptions : []
       const facetOfRowTag = (name) => {
@@ -1788,23 +1766,6 @@ window.__ModuleLoader__.load({
               h('div', { className: 'eng-actions', style: { marginBottom: 8 } }, h(Button, { small: true, onClick: copyJson }, '复制 JSON')),
               h('pre', { className: 'eng-pre eng-pre-json' }, JSON.stringify(data, null, 2)))
             : h('div', null,
-              assignable ? h('div', { className: 'eng-actions', style: { marginBottom: 12, flexWrap: 'wrap' } },
-                h('span', { className: 'eng-label' }, '分类'),
-                h('select', { className: 'eng-select', style: { width: 170 }, value: assignTo, onChange: (event) => setAssignTo(event.target.value) },
-                  h('option', { value: '' }, '选择主分类…'),
-                  types.map((item) => h('option', { key: item.id, value: item.name }, item.name))),
-                h(Button, { small: true, disabled: assigning || assignTo === '' || assignTo === row.typeName, onClick: async () => {
-                  setAssigning(true)
-                  setAssignMessage('')
-                  try { await props.onAssign(row.id, assignTo); setAssignMessage(`已移到「${assignTo}」`) } catch (error) { setAssignMessage(error && error.message ? error.message : '分类失败') } finally { setAssigning(false) }
-                } }, assigning ? '移动中…' : '移到该分类'),
-                assignMessage ? h('span', { className: 'eng-muted' }, assignMessage) : null,
-                typeof props.onAutoAssign === 'function' ? h(Button, { small: true, disabled: assigning, onClick: async () => {
-                  setAssigning(true)
-                  setAssignMessage('')
-                  try { const out = await props.onAutoAssign(row.id); setAssignTo(out.typeName || ''); const tagPart = Array.isArray(out.addedTags) && out.addedTags.length > 0 ? `，标签：${out.addedTags.join('、')}` : '，未新增标签'; setAssignMessage(`已分到「${out.typeName}」${tagPart}${out.classifier === 'local' ? '（本地兜底，未耗模型）' : '（临时会话）'}`) } catch (error) { setAssignMessage(error && error.message ? error.message : '自动分类失败') } finally { setAssigning(false) }
-                } }, '一键分类') : null,
-                typeof props.onAutoAssign === 'function' ? h(Tip, { text: '一键分类会拉起一次性临时会话（不注入工具/历史、只发最小文本），会产生额外 Token 消费' }) : null) : null,
               typeof props.onAddLabels === 'function' ? h('div', { className: 'eng-actions', style: { marginBottom: 12, flexWrap: 'wrap' } },
                 h('span', { className: 'eng-label' }, '标签'),
                 h('select', { className: 'eng-select', style: { width: 170 }, value: labelPick, onChange: (event) => setLabelPick(event.target.value) },
@@ -2074,7 +2035,7 @@ window.__ModuleLoader__.load({
                   h('strong', null, item.action || '（无做法）'),
                   h('span', { className: 'eng-mono' }, `Â ${fmtNumber(item.advantage)}`),
                   h('span', { className: 'eng-muted' }, `support ${item.support || 0} · sim ${fmtNumber(item.mean_similarity !== undefined ? item.mean_similarity : item.meanSimilarity)}`),
-                  item.typeName ? h('span', { className: 'eng-muted' }, item.typeName) : null,
+                  item.family ? h('span', { className: 'eng-muted' }, item.family) : null,
                   item.applicability === 'mismatch' ? h(Badge, { tone: 'bad' }, '环境不匹配') : item.applicability === 'partial' ? h(Badge, { tone: 'warn' }, '部分匹配') : null),
                 h('div', { className: 'eng-stack' }, (item.evidence || []).map((evidence) => {
                   const [label, tone] = outcomeOf(evidence.outcome)
