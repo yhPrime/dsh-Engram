@@ -292,12 +292,27 @@ export function createEngine(options = {}) {
           // 合法 JSON 但结构不对（null / 数组 / experiences 非数组）同样算坏库，不能静默当空库。
           const badTop = parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)
           const badRows = !badTop && parsed.experiences !== undefined && parsed.experiences !== null && !Array.isArray(parsed.experiences)
-          if (badTop || badRows) {
+          const badTypes = !badTop && parsed.types !== undefined && parsed.types !== null && !Array.isArray(parsed.types)
+          let dupTypeId = ''
+          if (!badTop && Array.isArray(parsed.types)) {
+            const seen = new Set()
+            for (const type of parsed.types) {
+              const id = type !== null && typeof type === 'object' ? String(type.id || '') : ''
+              if (id === '') continue
+              if (seen.has(id)) { dupTypeId = id; break }
+              seen.add(id)
+            }
+          }
+          if (badTop || badRows || badTypes || dupTypeId !== '') {
             corrupt = true
             corruptFile = singleFile
             parseError = badTop
               ? `经验库结构损坏：${singleFile} 顶层应为对象，实际是 ${parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed}`
-              : `经验库结构损坏：${singleFile} 的 experiences 应为数组`
+              : badRows
+                ? `经验库结构损坏：${singleFile} 的 experiences 应为数组`
+                : badTypes
+                  ? `经验库结构损坏：${singleFile} 的 types 应为数组`
+                  : `经验库结构损坏：${singleFile} 的类型 id 重复：${dupTypeId}`
           }
         } catch (error) {
           corrupt = true

@@ -1159,8 +1159,13 @@ function cleanupStaleTempFiles(dir, base) {
 export function migrateStore(dataDir) {
   return withStoreLock(dataDir, () => {
     if (readManifest(dataDir) !== null) return { migrated: false, reason: 'manifest-exists' }
-    const raw = readJsonFile(storeFile(dataDir), '经验库')
-    if (raw === null) return { migrated: false, reason: 'no-legacy' }
+    const single = storeFile(dataDir)
+    const raw = readJsonFile(single, '经验库')
+    if (raw === null) {
+      // 文件存在但内容是 JSON null：不是「没有老库」，按结构损坏拦下，避免被当成空库迁走。
+      if (fs.existsSync(single)) throw new Error(`经验库结构损坏：${single} 顶层是 null`)
+      return { migrated: false, reason: 'no-legacy' }
+    }
     const store = normalizeStore(raw)
     ensureClusters(store)
     const out = migrateToShards(dataDir, store)

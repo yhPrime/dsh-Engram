@@ -653,3 +653,11 @@
   - 坏库横幅 notice 带上文件路径（manifest 与 exp-lib 两条路径一致）
   - 内核补测：坏单文件库四种形状必须抛错；	est:ui / 
 pm test 在 release 分支全绿
+
+- **v0.36.3（四轮第 7 轮收口：坏库信号一致）**
+  - /state 在坏单文件库时补 storeError（与 /experiences、/graph 同口径），概览不再只有文案没有结构化错误
+  - 坏库结构校验覆盖 	ypes 非数组、类型 id 重复；坏库检索态（/experiences?query=）从 500 改为 200 + storeError
+  - migrateStore 不再把「文件存在但内容为 null」当没有老库，避免静默建空分片把坏库洗白
+  - uto-record 用例改用隔离 dataDir（不再依赖真实词表，避免并发改词表把测试拖红）；engine 补坏结构快照回归
+  - 	est:ui / 
+pm test 在 release 分支全绿

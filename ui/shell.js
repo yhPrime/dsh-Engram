@@ -351,6 +351,7 @@ export function buildState(source) {
     bytes,
     updatedAt: read.updatedAt === null || read.updatedAt === undefined ? '' : String(read.updatedAt),
     notice: String(read.notice || ''),
+    ...(read.error ? { storeError: read.error } : {}),
     ...(storage !== null ? { storage } : {}),
     ...(cold !== null ? { cold } : {}),
     feedbackEta: FEEDBACK_ETA,
@@ -409,8 +410,13 @@ export function buildExperiences(source, params) {
   if (query !== '') {
     const limit = numberParam(params && typeof params.get === 'function' ? params.get('limit') : null, 8, 50)
     if (source && typeof source.recall === 'function') {
-      const recalled = source.recall({ intent: query, limit })
-      return { ...meta, ...recalled, query }
+      try {
+        const recalled = source.recall({ intent: query, limit })
+        return { ...meta, ...recalled, query }
+      } catch (error) {
+        // 坏库检索不能 500：与列表态同口径，给空结果 + storeError（横幅在页面上显示）。
+        return { ...meta, rows: [], candidates: [], mode: 'unavailable', note: String((error && error.message) || error), storeError: meta.storeError || { code: 'store-unreadable', message: String((error && error.message) || error), file: String(read.file || '') }, query }
+      }
     }
     return { ...meta, ...recallOf(storeRead.store, query, limit) }
   }
