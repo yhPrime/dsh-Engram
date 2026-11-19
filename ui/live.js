@@ -248,7 +248,7 @@ export function createLiveSource(config = {}) {
           bytes: snapshot.bytes,
           updatedAt: snapshot.updatedAt,
           notice: snapshot.corrupt
-            ? `经验库文件读不了：${snapshot.parseError}；已按空库显示。`
+            ? `经验库文件读不了：${snapshot.file ? `${snapshot.file}：` : ''}${snapshot.parseError}；已按空库显示。`
             : (snapshot.exists ? '' : `没有找到经验库文件：${file}（先跑一次 exp_record，或确认 dataDir 配置）`),
         }
       } catch (error) {

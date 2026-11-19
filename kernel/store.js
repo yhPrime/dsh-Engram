@@ -356,6 +356,9 @@ function emptyStore() {
  */
 function normalizeStore(raw) {
   // 结构损坏不能静默降级成空库：空快照被下一次写回会覆盖原数据（对抗测试实测丢 2 条）。
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`经验库结构损坏：顶层应为对象，实际是 ${raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw}`)
+  }
   if (raw.experiences !== undefined && raw.experiences !== null && !Array.isArray(raw.experiences)) {
     throw new Error(`经验库结构损坏：experiences 应为数组，实际是 ${typeof raw.experiences}`)
   }
@@ -781,7 +784,11 @@ function readStoreUncached(dataDir) {
       }
     }
   } else {
-    const raw = readJsonFile(storeFile(dataDir), '经验库')
+    const singlePath = storeFile(dataDir)
+    const raw = readJsonFile(singlePath, '经验库')
+    if (raw === null && fs.existsSync(singlePath)) {
+      throw new Error(`经验库结构损坏：${singlePath} 顶层是 null`)
+    }
     store = raw === null ? emptyStore() : normalizeStore(raw)
   }
   // 簇是派生视图：每次读都从 types + 可见经验重算；manifest.clusters 只是给提示段/路由用的缓存。

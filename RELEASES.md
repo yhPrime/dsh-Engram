@@ -646,3 +646,10 @@
   - 构建：client.js 拆成 client/ 17 个源片 + tools/build-client.mjs 零依赖拼接 + --check（产物逐字节一致）；可预期错误单行输出
   - 其他：坏库横幅指向真实出错文件（manifest.json / exp-lib.json）；标签影子提示按面区分；#types 深链重定向族页
   - 测试：test:ui 全绿；在 release/0.36.1 干净链上 npm test 全绿；真实库 /graph 406 节点 / 47 族 / 421 边
+
+- **v0.36.2（四轮第 6 轮收口：详情标签面 + 坏单文件库结构校验）**
+  - 经验详情不再提示「缺对象/项目类型」——对象面 0.32 起已退出标签体系，详情只要求动作面
+  - 老库（未迁移 xp-lib.json）顶层为 null/数组、或 xperiences 非数组时，读路径与 /state 都按坏库报错并指向 xp-lib.json，不再静默显示成空库
+  - 坏库横幅 notice 带上文件路径（manifest 与 exp-lib 两条路径一致）
+  - 内核补测：坏单文件库四种形状必须抛错；	est:ui / 
+pm test 在 release 分支全绿

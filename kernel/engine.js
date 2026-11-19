@@ -288,7 +288,17 @@ export function createEngine(options = {}) {
       // 老库（还没有分片）仍要像以前一样检查 exp-lib.json 是否可解析，坏库不能静默当空库。
       if (!corrupt && manifest === null && singleExists) {
         try {
-          JSON.parse(fs.readFileSync(singleFile, 'utf8'))
+          const parsed = JSON.parse(fs.readFileSync(singleFile, 'utf8'))
+          // 合法 JSON 但结构不对（null / 数组 / experiences 非数组）同样算坏库，不能静默当空库。
+          const badTop = parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)
+          const badRows = !badTop && parsed.experiences !== undefined && parsed.experiences !== null && !Array.isArray(parsed.experiences)
+          if (badTop || badRows) {
+            corrupt = true
+            corruptFile = singleFile
+            parseError = badTop
+              ? `经验库结构损坏：${singleFile} 顶层应为对象，实际是 ${parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed}`
+              : `经验库结构损坏：${singleFile} 的 experiences 应为数组`
+          }
         } catch (error) {
           corrupt = true
           corruptFile = singleFile

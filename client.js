@@ -1739,7 +1739,7 @@ window.__ModuleLoader__.load({
       const rowTagGroups = TAG_FACET_ORDER
         .map((facet) => [facet, rowTags.filter((name) => facetOfRowTag(name) === facet)])
         .filter(([, names]) => names.length > 0)
-      const rowMissing = rowTags.length === 0 ? [] : ['object', 'action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
+      const rowMissing = rowTags.length === 0 ? [] : ['action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
       const copyJson = () => {
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(data, null, 2))
