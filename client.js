@@ -1267,7 +1267,7 @@ window.__ModuleLoader__.load({
     const SHORTCUTS = [
       ['Ctrl / Cmd + K', '命令面板'],
       ['?', '快捷键表'],
-      ['g 然后 o / e / f / l / r / n / s / t / u / ,', '跳概览 / 经验 / 分类·族 / 标签分级 / 检索 / 记录 / 技能 / 类型 / 使用记录 / 设置'],
+      ['g 然后 o / e / f / l / r / n / s / u / ,', '跳概览 / 经验 / 分类·族 / 标签分级 / 检索 / 记录 / 技能 / 使用记录 / 设置'],
       ['j / k / Enter', '列表下移 / 上移 / 打开'],
       ['Ctrl / Cmd + Enter', '表单提交'],
       ['Shift + R', '刷新当前页'],
@@ -1438,14 +1438,20 @@ window.__ModuleLoader__.load({
             h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '存储结构')),
             storage === null
               ? h('div', { className: 'eng-muted' }, '暂无存储信息')
-              : storage.layout === 'family'
+              : storage.layout === 'family-flat'
                 ? h('div', { className: 'eng-storage-grid' },
-                  storageCell('manifest', fmtBytes(storage.manifestBytes), '分族清单'),
-                  storageCell('分类', `${storage.typeDirs || 0} 个`, `索引 ${storage.indexFiles || 0} 个`),
+                  storageCell('manifest', fmtBytes(storage.manifestBytes), '单层族清单'),
                   storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
+                  storageCell('索引', `${storage.indexFiles || 0} 个`, fmtBytes(storage.indexBytes)),
                   storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'))
-                : h('div', { className: 'eng-muted' }, '仍是旧布局（schema 2）：请先迁移到分族布局，概览只展示新口径。'),
-            storage !== null && storage.layout === 'family' ? h('div', { className: 'eng-muted eng-section-note' },
+                : storage.layout === 'family'
+                  ? h('div', { className: 'eng-storage-grid' },
+                    storageCell('manifest', fmtBytes(storage.manifestBytes), '分族清单'),
+                    storageCell('分类', `${storage.typeDirs || 0} 个`, `索引 ${storage.indexFiles || 0} 个`),
+                    storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
+                    storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'))
+                  : h('div', { className: 'eng-muted' }, '仍是旧布局（schema 2）：请先迁移到分族布局，概览只展示新口径。'),
+            storage !== null && (storage.layout === 'family' || storage.layout === 'family-flat') ? h('div', { className: 'eng-muted eng-section-note' },
               `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件 · 分类 ${storage.typeDirs || 0} · 族 ${storage.familyFiles || 0}`) : null,
             h('div', { className: 'eng-subsection' },
               h('button', { type: 'button', className: 'eng-subsection-head', 'aria-expanded': coldOpen ? 'true' : 'false', onClick: () => setColdOpen((open) => !open) },
@@ -3086,14 +3092,39 @@ window.__ModuleLoader__.load({
     function Families(props) {
       const data = useLoad(useCallback(() => request('/families'), []))
       useRefreshEvent(data.reload)
-      const [selected, setSelected] = useState('')
       const [preview, setPreview] = useState(null)
       const [confirming, setConfirming] = useState(false)
       const [notice, setNotice] = useState('')
       const [busy, setBusy] = useState(false)
       const [showUnfiled, setShowUnfiled] = useState(false)
       const dialogRef = useRef(null)
-      // 原生 dialog 管焦点/Esc/遮罩；这里只负责开关与回执。
+      const manageRef = useRef(null)
+      const [managing, setManaging] = useState(false)
+      const [manageAction, setManageAction] = useState('create')
+      const [manageFamily, setManageFamily] = useState('')
+      const [manageNewName, setManageNewName] = useState('')
+      const [manageNames, setManageNames] = useState('')
+      const [manageIds, setManageIds] = useState('')
+      useEffect(() => {
+        const dialog = manageRef.current
+        if (!dialog) return
+        if (managing && !dialog.open) { try { dialog.showModal() } catch { dialog.setAttribute('open', '') } }
+        else if (!managing && dialog.open) dialog.close()
+      }, [managing])
+      const runManage = async () => {
+        setBusy(true); setNotice('')
+        try {
+          const body = { action: manageAction, family: manageFamily.trim(), newName: manageNewName.trim() }
+          if (manageAction === 'merge') body.names = manageNames.split(',').map((x) => x.trim()).filter(Boolean)
+          if (manageAction === 'assign') body.ids = manageIds.split(',').map((x) => x.trim()).filter(Boolean)
+          const out = await request('/families/manage', { method: 'POST', body })
+          setManaging(false)
+          setNotice('族操作完成：' + manageAction + (out.changed ? '（' + out.changed + ' 条）' : ''))
+          await data.reload()
+          if (props.onChanged) props.onChanged()
+        } catch (caught) { setNotice(caught && caught.message ? caught.message : String(caught)) }
+        finally { setBusy(false) }
+      }
       useEffect(() => {
         const dialog = dialogRef.current
         if (!dialog) return
@@ -3103,11 +3134,9 @@ window.__ModuleLoader__.load({
           dialog.close()
         }
       }, [confirming])
-      const types = data.data ? data.data.types || [] : []
+      const families = data.data ? data.data.families || [] : []
       const unfiled = data.data ? Number(data.data.unfiled) || 0 : 0
       const unfiledRows = data.data ? data.data.unfiledRows || [] : []
-      const current = types.find((type) => type.typeId === selected) || types[0] || null
-      const totalFamilies = types.reduce((sum, type) => sum + (type.families || []).length, 0)
       const runBackfill = async (dryRun) => {
         setBusy(true)
         setNotice('')
@@ -3127,43 +3156,47 @@ window.__ModuleLoader__.load({
         }
       }
       const previewRows = preview && Array.isArray(preview.changes) ? preview.changes.slice(0, 50) : []
-      const unfiledPanel = showUnfiled ? h('div', { className: 'eng-card', style: { padding: 15, marginTop: 14 } },
-        h('div', { className: 'eng-section-head' },
-          h('h3', { className: 'eng-section-title' }, '未分族行（前 50 条）'),
-          h('span', { className: 'eng-muted' }, '共 ' + unfiled + ' 条，无可推导的动作族')),
-        unfiledRows.length === 0
-          ? h('div', { className: 'eng-muted' }, '没有未分族行')
-          : h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } }, unfiledRows.map((row) => h('div', { key: row.id }, (row.typeName || row.typeId) + ' · ' + row.intent)))) : null
-      const typeList = types.length === 0
-        ? h(Empty, null, '还没有分类')
-        : types.map((type) => h('button', {
-          key: type.typeId,
-          type: 'button',
-          className: 'eng-nav-item',
-          'data-active': current !== null && current.typeId === type.typeId ? 'true' : 'false',
-          onClick: () => setSelected(type.typeId),
-        }, h('span', null, type.name || type.typeId), h('span', { className: 'eng-nav-count' }, String(type.count || 0))))
-      const familyRows = (current ? current.families || [] : []).map((family) => h('tr', { key: family.family, style: { cursor: 'pointer' }, onClick: () => { if (props.onOpenFamily) props.onOpenFamily(current.typeId, family.family) } },
-        h('td', null, family.family),
-        h('td', { className: 'eng-mono' }, String(family.count || 0)),
-        h('td', { className: 'eng-row-intent', title: family.representative ? family.representative.intent : '' }, family.representative ? family.representative.intent + '（G ' + Number(family.representative.G || 0).toFixed(2) + '）' : '—'),
-        h('td', { className: 'eng-muted' }, family.representative && family.representative.lastSeenAt ? String(family.representative.lastSeenAt).slice(0, 10) : '—')))
-      const familyTable = current === null
-        ? h(Empty, null, '还没有族数据')
-        : h('div', null,
-          h('div', { className: 'eng-section-head', style: { padding: '12px 15px' } },
-            h('h3', { className: 'eng-section-title' }, (current.name || current.typeId) + ' · ' + (current.families || []).length + ' 族'),
-            h('span', { className: 'eng-muted' }, (current.count || 0) + ' 条可见经验')),
-          h('table', { className: 'eng-table' },
-            h('thead', null, h('tr', null, h('th', null, '族'), h('th', null, '条数'), h('th', null, '族代表'), h('th', null, '最近使用'))),
-            h('tbody', null, familyRows)))
+      const familyRows = families.map((item) => h('tr', {
+        key: item.family,
+        style: { cursor: 'pointer' },
+        onClick: () => { if (props.onOpenFamily) props.onOpenFamily('', item.family) },
+      },
+        h('td', null, item.family),
+        h('td', { className: 'eng-mono' }, String(item.count || 0)),
+        h('td', { className: 'eng-row-intent', title: item.representative ? item.representative.intent : '' }, item.representative ? item.representative.intent + '（G ' + Number(item.representative.G || 0).toFixed(2) + '）' : '—'),
+        h('td', { className: 'eng-muted' }, item.representative && item.representative.lastSeenAt ? String(item.representative.lastSeenAt).slice(0, 10) : '—')))
       const previewPanel = preview === null ? null : h('div', { className: 'eng-card', style: { padding: 15, marginTop: 14 } },
         h('div', { className: 'eng-section-head' },
           h('h3', { className: 'eng-section-title' }, (preview.dryRun ? '补族预览' : '已补族') + '（' + (preview.filled || 0) + ' 条）'),
           h('span', { className: 'eng-muted' }, '扫描 ' + (preview.scanned || 0) + ' 条，跳过 ' + (preview.skipped || 0) + ' 条')),
         previewRows.length === 0
-          ? h('div', { className: 'eng-muted' }, '没有可补的未分族行（能从动作标签推导的会在规则里自动补）。')
+          ? h('div', { className: 'eng-muted' }, '没有可补的未分族行。')
           : h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } }, previewRows.map((change) => h('div', { key: change.id }, change.id + ' → ' + change.to))))
+      const unfiledPanel = showUnfiled ? h('div', { className: 'eng-card', style: { padding: 15, marginTop: 14 } },
+        h('div', { className: 'eng-section-head' },
+          h('h3', { className: 'eng-section-title' }, '未分族行（前 50 条）'),
+          h('span', { className: 'eng-muted' }, '共 ' + unfiled + ' 条')),
+        unfiledRows.length === 0
+          ? h('div', { className: 'eng-muted' }, '没有未分族行')
+          : h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } }, unfiledRows.map((row) => h('div', { key: row.id }, (row.typeName || row.typeId) + ' · ' + row.intent)))) : null
+      const manageModal = h('dialog', {
+        ref: manageRef,
+        className: 'eng-dialog',
+        'aria-labelledby': 'eng-manage-title',
+        onClose: () => setManaging(false),
+      },
+        h('div', { className: 'eng-modal' },
+          h('h3', { id: 'eng-manage-title', className: 'eng-modal-title' }, '管理族'),
+          h('div', { className: 'eng-form-grid' },
+            h(Field, { label: '动作' }, h('select', { className: 'eng-input', value: manageAction, onChange: (event) => setManageAction(event.target.value) },
+              h('option', { value: 'create' }, '新建族'), h('option', { value: 'rename' }, '改名'), h('option', { value: 'merge' }, '合并'), h('option', { value: 'assign' }, '指派'))),
+            h(Field, { label: manageAction === 'assign' ? '目标族' : '族名' }, h('input', { className: 'eng-input', value: manageFamily, onChange: (event) => setManageFamily(event.target.value) })),
+            manageAction === 'rename' || manageAction === 'merge' ? h(Field, { label: '新族名' }, h('input', { className: 'eng-input', value: manageNewName, onChange: (event) => setManageNewName(event.target.value) })) : null,
+            manageAction === 'merge' ? h(Field, { label: '来源族（逗号分隔）' }, h('input', { className: 'eng-input', value: manageNames, onChange: (event) => setManageNames(event.target.value) })) : null,
+            manageAction === 'assign' ? h(Field, { label: '经验 id（逗号分隔）' }, h('input', { className: 'eng-input', value: manageIds, onChange: (event) => setManageIds(event.target.value) })) : null),
+          h('div', { className: 'eng-modal-actions' },
+            h(Button, { small: true, onClick: () => setManaging(false) }, '取消'),
+            h(Button, { small: true, kind: 'primary', disabled: busy, onClick: runManage }, busy ? '处理中…' : '提交'))))
       const confirmModal = h('dialog', {
         ref: dialogRef,
         className: 'eng-dialog',
@@ -3179,20 +3212,27 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'eng-fill' },
         data.error ? h(Banner, { bad: true }, data.error) : null,
         notice ? h(Banner, null, notice) : null,
-        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '分类=文件夹、族=文件；族代表取该族 G 最高的一条。补族只改 family 字段，默认先预览，执行前需确认。'),
+        h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '族由模型显式创建：exp_record 带 family，首次写入即落盘；不预置族，未给族落「未分族」。'),
         h('div', { className: 'eng-card', style: { padding: 15, marginBottom: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
-          h('span', { className: 'eng-strong' }, '分类 ' + types.length + ' · 族 ' + totalFamilies + ' · 未分族 ' + unfiled),
+          h('span', { className: 'eng-strong' }, '族 ' + families.length + ' · 未分族 ' + unfiled),
           h('span', { style: { flex: 1 } }),
+          h(Button, { small: true, onClick: () => setManaging(true) }, '管理族'),
           h(Button, { small: true, disabled: busy, onClick: () => runBackfill(true) }, busy ? '处理中…' : '预览补族'),
           h(Button, { small: true, kind: 'primary', disabled: busy || preview === null || (preview.filled || 0) === 0, onClick: () => setConfirming(true) }, '执行补族')),
-        h('div', { style: { display: 'grid', gridTemplateColumns: 'minmax(180px, 240px) minmax(0, 1fr)', gap: 14, alignItems: 'start' } },
-          h('div', { className: 'eng-card eng-scroll', style: { padding: 8, maxHeight: 520 } }, typeList),
-          h('div', { className: 'eng-card eng-scroll', style: { padding: 0 } }, familyTable)),
+        h('div', { className: 'eng-card eng-scroll', style: { padding: 0 } },
+          h('table', { className: 'eng-table' },
+            h('thead', null, h('tr', null, h('th', null, '族'), h('th', null, '条数'), h('th', null, '族代表'), h('th', null, '最近使用'))),
+            h('tbody', null, familyRows))),
         h('div', { style: { marginTop: 14 } },
-          h('button', { type: 'button', className: 'eng-nav-item', 'aria-expanded': showUnfiled ? 'true' : 'false', onClick: () => setShowUnfiled((open) => !open) },
-            h('span', { onClick: () => { if (props.onOpenFamily) props.onOpenFamily('', '__unfiled__') } }, '未分族 ' + unfiled + ' 条'), h('span', { className: 'eng-nav-count', onClick: () => setShowUnfiled((open) => !open) }, showUnfiled ? '收起' : '展开'))),
+          h('button', {
+            type: 'button',
+            className: 'eng-nav-item',
+            'aria-expanded': showUnfiled ? 'true' : 'false',
+            onClick: () => setShowUnfiled((open) => !open),
+          }, h('span', null, '未分族 ' + unfiled + ' 条'), h('span', { className: 'eng-nav-count' }, showUnfiled ? '收起' : '展开'))),
         unfiledPanel,
         previewPanel,
+        manageModal,
         confirmModal)
     }
 
@@ -6144,7 +6184,6 @@ window.__ModuleLoader__.load({
       ['recall', '检索', 'search'],
       ['record', '记录', 'plus'],
       ['skills', '技能', 'spark'],
-      ['types', '类型', 'tag'],
       ['cold', '冷档', 'archive'],
       ['usage', '使用记录', 'clock'],
       ['settings', '设置', 'gear'],
@@ -6296,7 +6335,7 @@ window.__ModuleLoader__.load({
             return
           }
           if (Date.now() - goRef.current < 1200) {
-            const map = { o: 'overview', e: 'experiences', f: 'families', l: 'tags', r: 'recall', n: 'record', s: 'skills', t: 'types', u: 'usage', ',': 'settings' }
+            const map = { o: 'overview', e: 'experiences', f: 'families', l: 'tags', r: 'recall', n: 'record', s: 'skills', u: 'usage', ',': 'settings' }
             const target = map[String(event.key).toLowerCase()]
             if (target !== undefined) {
               event.preventDefault()

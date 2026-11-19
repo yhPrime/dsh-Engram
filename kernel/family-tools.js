@@ -155,3 +155,75 @@ export function representativesOf(store) {
   }
   return out
 }
+
+
+/**
+ * 0.33 族管理（纯逻辑，不写盘）：list/create/rename/merge/assign/delete。
+ * 词表/对象面规则复用 tag-registry；写盘由调用方（exp_family / UI API）负责。
+ * @returns {{result: object, changed: boolean}}
+ */
+export function manageFamilies(store, action, args = {}) {
+  const rows = Array.isArray(store && store.experiences) ? store.experiences : []
+  const familyOfRow = (row) => {
+    const raw = row !== null && typeof row === 'object' && typeof row.family === 'string' ? row.family.trim() : ''
+    return raw === '' ? '未分族' : raw
+  }
+  const checkName = (raw) => {
+    const name = String(raw === undefined || raw === null ? '' : raw).trim()
+    if (name === '') throw new Error('族名不能为空')
+    if ([...name].length > 12) throw new Error('族名最多 12 字')
+    if (facetOf(name) === 'object') throw new Error('对象面标签不能当族名（对象不参与标签/分族）')
+    if (/[\\/:*?"<>|]/.test(name) || /^\d+\.\d+/.test(name)) throw new Error('族名不能是路径/版本号')
+    return name
+  }
+  const rowsOf = (family) => rows.filter((row) => familyOfRow(row) === family)
+  if (action === 'list' || action === '' || action === undefined) {
+    const counts = new Map()
+    for (const row of rows) {
+      const family = familyOfRow(row)
+      counts.set(family, (counts.get(family) || 0) + 1)
+    }
+    return {
+      changed: false,
+      result: { families: [...counts.entries()].map(([family, count]) => ({ family, count })).sort((a, b) => b.count - a.count) },
+    }
+  }
+  if (action === 'create') {
+    const family = checkName(args.family)
+    const exists = rows.some((row) => familyOfRow(row) === family)
+    return { changed: false, result: { family, created: !exists, materialized: false, note: exists ? '族已存在' : '已登记；首次 exp_record.family 写入时落盘' } }
+  }
+  if (action === 'rename' || action === 'merge') {
+    const target = checkName(action === 'rename' ? args.newName : (args.newName || args.family))
+    const sources = action === 'rename'
+      ? [String(args.family || '').trim()]
+      : (Array.isArray(args.names) ? args.names.map((name) => String(name).trim()) : [])
+    if (sources.length === 0 || sources.some((name) => name === '')) throw new Error('需要来源族名')
+    let changed = 0
+    for (const row of rows) {
+      if (sources.includes(familyOfRow(row))) { row.family = target; row.actionFamily = target; changed += 1 }
+    }
+    return { changed: changed > 0, result: { action, target, sources, changed } }
+  }
+  if (action === 'assign') {
+    const target = checkName(args.family)
+    const ids = new Set(Array.isArray(args.ids) ? args.ids.map(String) : [])
+    const sourceId = String(args.sourceId || '')
+    let changed = 0
+    for (const row of rows) {
+      if ((ids.size > 0 && ids.has(String(row.id))) || (sourceId !== '' && String(row.sourceId || '') === sourceId)) {
+        row.family = target
+        row.actionFamily = target
+        changed += 1
+      }
+    }
+    if (changed === 0) throw new Error('没有匹配的经验可指派')
+    return { changed: true, result: { action, target, changed } }
+  }
+  if (action === 'delete') {
+    const family = checkName(args.family)
+    if (rowsOf(family).length > 0) throw new Error('族里还有经验，先 exp_family assign 再删除')
+    return { changed: false, result: { family, deleted: true, note: '空族无需落盘；未分族不可删除' } }
+  }
+  throw new Error('未知 action：' + action)
+}

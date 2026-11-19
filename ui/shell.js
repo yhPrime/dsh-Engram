@@ -43,7 +43,7 @@ import { classifyExperienceWithSession, localClassifyExperience } from '../kerne
 import { shadowReport } from '../kernel/tag-rank.js'
 import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
 import { validateTagSet } from '../kernel/tag-registry.js'
-import { backfillFamilies, derivedFamilyOf, representativesOf, tagTree, visibleRowsOf } from '../kernel/family-tools.js'
+import { backfillFamilies, derivedFamilyOf, manageFamilies, representativesOf, tagTree, visibleRowsOf } from '../kernel/family-tools.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
 import { spawn } from 'node:child_process'
@@ -1095,7 +1095,18 @@ export async function handleRequest(req, res, source, deps = {}) {
         families: [...type.families.values()].sort((left, right) => (right.count - left.count) || (left.family < right.family ? -1 : 1)),
       })).sort((left, right) => (left.typeId < right.typeId ? -1 : 1))
       const unfiledRows = rows.filter((row) => derivedFamilyOf(row) === '').slice(0, 50).map((row) => ({ id: String(row.id || ''), typeId: String(row.typeId || 'ty_other'), typeName: String(row.typeName || ''), intent: String(row.intent || '') }))
-      return json(res, 200, { ok: true, data: { types: data, unfiled, unfiledRows } })
+      // 0.33：单层族布局，families 是扁平事实族表；types 保留一版做兼容。
+      const flatFamilies = new Map()
+      for (const type of data) {
+        for (const item of type.families) {
+          if (!flatFamilies.has(item.family)) flatFamilies.set(item.family, { family: item.family, count: 0, representative: item.representative || null })
+          const entry = flatFamilies.get(item.family)
+          entry.count += item.count
+          if (entry.representative === null && item.representative !== null) entry.representative = item.representative
+        }
+      }
+      const families = [...flatFamilies.values()].sort((left, right) => (right.count - left.count) || (left.family < right.family ? -1 : 1))
+      return json(res, 200, { ok: true, data: { types: data, families, unfiled, unfiledRows } })
     }
     if (route === '/families/backfill') {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
@@ -1112,6 +1123,21 @@ export async function handleRequest(req, res, source, deps = {}) {
       }
       writeStore(dataDir, store)
       return json(res, 200, { ok: true, data: { dryRun: false, ...preview } })
+    }
+    if (route === '/families/manage') {
+      if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
+      const body = await readBody(req)
+      if (body === null || typeof body !== 'object' || String(body.action || '').trim() === '') {
+        return fail(res, 400, 'bad-request', '需要 action（list/create/rename/merge/assign/delete）')
+      }
+      const store = storeOf(active)
+      const outcome = manageFamilies(store, String(body.action || '').trim(), body)
+      if (outcome.changed) {
+        if (active.mode !== 'live') return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: true } })
+        const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
+        writeStore(dataDir, store)
+      }
+      return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: false } })
     }
     if (route === '/retrieval-policy') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

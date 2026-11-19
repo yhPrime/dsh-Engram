@@ -810,3 +810,10 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 
 - 到期复核面板（经验/技能页共用 `ReviewDuePanel`）：勾选批量或单条「确认仍有效 / 标待复核」；不新增导航项。
 - 概览在 `autoRecord=false` 时显示「自动记录已关闭」提示，避免误以为钩子失效（该开关 0.24.1 起默认关）。
+
+
+## 0.33 布局与族接口
+
+- `GET /families`：新增扁平 `families: [{family,count,representative}]`；`types` 保留一版兼容。
+- `GET /state.storage`：单层族布局为 `layout: 'family-flat'`，`typeDirs: 0`；族文件直接在 `library/*.jsonl`，索引为 `library/_index.json`。
+- 族由模型显式创建（`exp_record.family`）；未给族落「未分族」；族管理走 `exp_family`。

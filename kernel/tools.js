@@ -59,7 +59,8 @@ import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './setting
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
 import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
-import { hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
+import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
+import { manageFamilies } from './family-tools.js'
 
 const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 // 试用技能的门槛：略高于正式匹配下限，避免把不相关技能当试用塞给模型
@@ -1665,6 +1666,29 @@ export function buildTools(defineTool, config = {}) {
     },
   })
 
+  const familyTool = defineTool({
+    name: 'exp_family',
+    description: '管理动作族（0.33）：list 列出真实存在的族 / create 校验并登记新族（首次写入时落盘）/ rename 改名 / merge 合并 / assign 把经验指派到族 / delete 仅允许空族。族名 1–12 字短名词，对象面标签不能当族名。',
+    parameters: {
+      action: { type: 'string', enum: ['list', 'create', 'rename', 'merge', 'assign', 'delete'], required: true, description: '要执行的动作。' },
+      family: { type: 'string', description: 'create 的族名；rename/delete 的旧族名；assign 的目标族名。' },
+      newName: { type: 'string', description: 'rename 的新族名；merge 的目标族名。' },
+      names: { type: 'array', description: 'merge 的来源族名列表。' },
+      ids: { type: 'array', description: 'assign 的经验 id 列表（与 sourceId 二选一）。' },
+      sourceId: { type: 'string', description: 'assign 时按 sourceId 批量指派。' },
+    },
+    output: { schema: OUTPUT_SCHEMA, render: renderJson },
+    execute(args = {}) {
+      const dataDir = dataDirOf()
+      return withStoreLock(dataDir, () => {
+        const store = readStore(dataDir)
+        const { result, changed } = manageFamilies(store, String(args.action || '').trim(), args)
+        if (changed) writeStore(dataDir, store)
+        return result
+      })
+    },
+  })
+
   const reviewTool = defineTool({
     name: 'exp_review',
     description: '经验/技能的时效复核：due 列到期/待复核清单（只读）；verify 确认仍有效（刷新 lastVerifiedAt / reviewAfter，清 stale）；stale 标待复核（不删除、不退休）；retire 退休（保留正文与历史，可 revive）；revive 恢复 active（需要 note 说明理由）。只改时效字段，不改 G / outcome / 反馈账本。',
@@ -1807,7 +1831,7 @@ export function buildTools(defineTool, config = {}) {
   // 成功行由各工具自己写（带业务字段）；这里只兜异常。
   // 注意：必须把宿主执行上下文 exec 原样透传（tool.execute(args, exec)），
   // 否则 exp_record/exp_recall 拿不到 agent.session.header.cwd 与 agent.id（B7）。
-  const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool, reviewTool].map((tool) => ({
+  const guarded = [record, recall, feedback, consolidateTool, skillAttachTool, typeTool, familyTool, reviewTool].map((tool) => ({
     ...tool,
     execute(args = {}, exec) {
       try {

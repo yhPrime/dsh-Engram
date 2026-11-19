@@ -81,6 +81,7 @@ import {
   writeManifest,
   writeShards,
   FAMILY_LAYOUT,
+  FLAT_LAYOUT,
   FAMILY_SCHEMA,
   familyDirOf,
   contentHash,
@@ -846,7 +847,18 @@ export function ensureDefaultTypes(dataDir) {
     types: [...PRESET_TYPES.map((type) => ({ ...type })), { ...SYSTEM_TYPE }],
   }
   ensureClusters(next)
-  writeStore(dataDir, next)
+  // 0.33：空库初始化即建单层族目录，不再落 buckets/。
+  fs.mkdirSync(path.join(String(dataDir || ''), 'library'), { recursive: true })
+  fs.mkdirSync(path.join(String(dataDir || ''), 'cold'), { recursive: true })
+  fs.mkdirSync(path.join(String(dataDir || ''), 'backups'), { recursive: true })
+  // 先落一个空的 flat manifest，后续 writeStore 才会按 flat 路径写（否则空库会回落到分类型目录）。
+  if (!fs.existsSync(path.join(String(dataDir || ''), 'manifest.json'))) {
+    writeManifest(dataDir, {
+      schema: 4, version: 1, types: next.types.map((type) => ({ ...type })), clusters: [],
+      buckets: [], pending: [], recent: [], stats: null, taskIndex: [], cold: { years: [], total: 0 }, layout: FLAT_LAYOUT,
+    })
+  }
+  writeStore(dataDir, next, { layout: FLAT_LAYOUT })
   return next
 }
 
@@ -1182,7 +1194,7 @@ export function writeStore(dataDir, store, options = {}) {
   ensureClusters(shardInput)
   // 0.27.0：布局由 manifest.layout 决定；首次迁移由 options.layout='family' 显式指定。
   // R2 缺陷：manifest 丢失/损坏时布局判定不能只看 options；已有 library/ 目录就沿用分族布局（空库也一样）。
-  const layoutFamily = (manifest !== null && manifest.layout === FAMILY_LAYOUT) || options.layout === FAMILY_LAYOUT || (manifest === null && resolveLayout(dataDir, null) === 'family')
+  const layoutFamily = (manifest !== null && (manifest.layout === FAMILY_LAYOUT || manifest.layout === FLAT_LAYOUT)) || options.layout === FAMILY_LAYOUT || options.layout === FLAT_LAYOUT || (manifest === null && resolveLayout(dataDir, null) === 'family')
   let next = layoutFamily ? writeFamilyShards(dataDir, shardInput, manifest) : writeShards(dataDir, shardInput, manifest)
   // P2 容量治理（§4.4 / D4；§7.10 安全阀）：单桶 > 2 MiB、热档总字节 > 32 MiB、可见条数 > N_MAX 时，
   // 压缩当前最大的分片。压缩只动分片与冷档，manifest 在这里统一写一次（先数据后索引）。
