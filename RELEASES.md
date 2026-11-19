@@ -661,3 +661,9 @@ pm test 在 release 分支全绿
   - uto-record 用例改用隔离 dataDir（不再依赖真实词表，避免并发改词表把测试拖红）；engine 补坏结构快照回归
   - 	est:ui / 
 pm test 在 release 分支全绿
+
+- **v0.36.4（四轮第 8 轮收口：manifest 类型重复也报坏库 + 回归用例）**
+  - manifest 合法但类型 id 重复时，/state 不再静默显示正常概览：snapshot() 置 corrupt、指向 manifest.json，与列表/图/写路径同口径
+  - 补三条回归：坏库 /state 带 storeError、/experiences?query= 200+storeError、xp-lib.json=null 时 migrateStore 抛错且不写 manifest；utoTagsOf 全部用例改用隔离 dataDir（不再依赖真实词表）
+  - 	est:ui / 
+pm test 在 release 分支全绿

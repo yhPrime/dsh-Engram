@@ -285,6 +285,22 @@ export function createEngine(options = {}) {
         corruptFile = shardStore.manifestPath(dataDir)
         parseError = String((error && error.message) || error)
       }
+      // manifest 合法但 type id 重复：库已不可读（列表/图/写都会拒绝），快照也要给坏库信号。
+      if (!corrupt && manifest !== null) {
+        const seenIds = new Set()
+        let dupId = ''
+        for (const type of Array.isArray(manifest.types) ? manifest.types : []) {
+          const id = type !== null && typeof type === 'object' ? String(type.id || '') : ''
+          if (id === '') continue
+          if (seenIds.has(id)) { dupId = id; break }
+          seenIds.add(id)
+        }
+        if (dupId !== '') {
+          corrupt = true
+          corruptFile = shardStore.manifestPath(dataDir)
+          parseError = `经验库结构损坏：类型 id 重复（${dupId}）`
+        }
+      }
       // 老库（还没有分片）仍要像以前一样检查 exp-lib.json 是否可解析，坏库不能静默当空库。
       if (!corrupt && manifest === null && singleExists) {
         try {
