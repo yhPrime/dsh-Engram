@@ -3189,11 +3189,12 @@ window.__ModuleLoader__.load({
           h('h3', { id: 'eng-manage-title', className: 'eng-modal-title' }, '管理族'),
           h('div', { className: 'eng-form-grid' },
             h(Field, { label: '动作' }, h('select', { className: 'eng-input', value: manageAction, onChange: (event) => setManageAction(event.target.value) },
-              h('option', { value: 'create' }, '新建族'), h('option', { value: 'rename' }, '改名'), h('option', { value: 'merge' }, '合并'), h('option', { value: 'assign' }, '指派'))),
+              h('option', { value: 'create' }, '新建族'), h('option', { value: 'rename' }, '改名'), h('option', { value: 'merge' }, '合并'), h('option', { value: 'assign' }, '指派'), h('option', { value: 'delete' }, '删除（仅空族）'))),
             h(Field, { label: manageAction === 'assign' ? '目标族' : '族名' }, h('input', { className: 'eng-input', value: manageFamily, onChange: (event) => setManageFamily(event.target.value) })),
             manageAction === 'rename' || manageAction === 'merge' ? h(Field, { label: '新族名' }, h('input', { className: 'eng-input', value: manageNewName, onChange: (event) => setManageNewName(event.target.value) })) : null,
             manageAction === 'merge' ? h(Field, { label: '来源族（逗号分隔）' }, h('input', { className: 'eng-input', value: manageNames, onChange: (event) => setManageNames(event.target.value) })) : null,
             manageAction === 'assign' ? h(Field, { label: '经验 id（逗号分隔）' }, h('input', { className: 'eng-input', value: manageIds, onChange: (event) => setManageIds(event.target.value) })) : null),
+          manageAction === 'delete' ? h('div', { className: 'eng-muted', style: { marginTop: 8 } }, '只允许删除空族；族里还有经验时先「指派」到别的族。') : null,
           h('div', { className: 'eng-modal-actions' },
             h(Button, { small: true, onClick: () => setManaging(false) }, '取消'),
             h(Button, { small: true, kind: 'primary', disabled: busy, onClick: runManage }, busy ? '处理中…' : '提交'))))
