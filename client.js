@@ -1968,6 +1968,16 @@ window.__ModuleLoader__.load({
       const policy = useLoad(useCallback(() => request('/retrieval-policy'), []))
       return h('div', { className: 'eng-fill' },
         policy.data ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '当前策略：tagRank=' + policy.data.tagRank + ' · routing=' + policy.data.routing + '（routing 默认 off 由 0.30 A/B 决定；tagRank 仍 shadow）') : null,
+        policy.data && policy.data.ab ? h('div', { className: 'eng-card', style: { padding: 12, marginBottom: 10 } },
+          h('div', { className: 'eng-section-head' },
+            h('h3', { className: 'eng-section-title' }, '最近 A/B'),
+            h('span', { className: 'eng-muted' }, String(policy.data.ab.generatedAt || '').slice(0, 19).replace('T', ' '))),
+          h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.9 } },
+            'tagRank off / on Recall@5：' + (Number(policy.data.ab.tagRankOff && policy.data.ab.tagRankOff.recallAtK) || 0).toFixed(4) + ' / ' + (Number(policy.data.ab.tagRankOn && policy.data.ab.tagRankOn.recallAtK) || 0).toFixed(4),
+            h('br'),
+            'routing on / off Recall@5：' + (Number(policy.data.ab.routingOn && policy.data.ab.routingOn.recallAtK) || 0).toFixed(4) + ' / ' + (Number(policy.data.ab.routingOff && policy.data.ab.routingOff.recallAtK) || 0).toFixed(4),
+            h('br'),
+            '样本：' + String(policy.data.ab.queries || 0) + ' 条同词意图')) : null,
         error ? h(Banner, { bad: true }, error) : null,
         h('div', { className: 'eng-card', style: { padding: 16, marginBottom: 14 } },
           h('div', { className: 'eng-form-grid' },
@@ -6166,8 +6176,22 @@ window.__ModuleLoader__.load({
       : (props) => props.children
 
     function Console() {
-      const [tab, setTab] = useState('overview')
-      const [expFilters, setExpFilters] = useState({ typeId: '', family: '' })
+      const readHashState = () => {
+        try {
+          if (typeof location === 'undefined' || typeof location.hash !== 'string') return null
+          const raw = location.hash.replace(/^#/, '')
+          if (raw === '') return null
+          const [name, query = ''] = raw.split('?')
+          if (name === '') return null
+          const params = new URLSearchParams(query)
+          return { tab: name, typeId: String(params.get('type') || ''), family: String(params.get('family') || '') }
+        } catch { return null }
+      }
+      const initialHash = readHashState()
+      const [tab, setTab] = useState(initialHash === null ? 'overview' : initialHash.tab)
+      const [expFilters, setExpFilters] = useState({ typeId: initialHash === null ? '' : initialHash.typeId, family: initialHash === null ? '' : initialHash.family })
+      // 渲染桩/极端情况下 state 可能是 null：统一兜底，避免整页崩。
+      const safeFilters = expFilters === null || typeof expFilters !== 'object' ? { typeId: '', family: '' } : expFilters
       const [focusId, setFocusId] = useState(null)
       const [density] = useState(() => {
         try { return localStorage.getItem('eng:density') === 'compact' ? 'compact' : 'comfortable' } catch { return 'comfortable' }
@@ -6181,6 +6205,26 @@ window.__ModuleLoader__.load({
       const [importNotice, setImportNotice] = useState('')
       const [refreshedAt, setRefreshedAt] = useState('')
       const [reloadToken, setReloadToken] = useState(0)
+      // 当前页与族筛选写进 URL hash，刷新/深链接可还原（不占用 Graph 的 location.search）。
+      useEffect(() => {
+        if (typeof window === 'undefined' || !window.history || typeof window.history.replaceState !== 'function') return
+        const query = safeFilters.family !== ''
+          ? '?family=' + encodeURIComponent(safeFilters.family) + (safeFilters.typeId !== '' ? '&type=' + encodeURIComponent(safeFilters.typeId) : '')
+          : (safeFilters.typeId !== '' ? '?type=' + encodeURIComponent(safeFilters.typeId) : '')
+        const next = '#' + tab + query
+        if (window.location.hash !== next) window.history.replaceState(null, '', next)
+      }, [tab, safeFilters])
+      useEffect(() => {
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+        const onHash = () => {
+          const parsed = readHashState()
+          if (parsed === null) return
+          setTab(parsed.tab)
+          setExpFilters({ typeId: parsed.typeId, family: parsed.family })
+        }
+        window.addEventListener('hashchange', onHash)
+        return () => window.removeEventListener('hashchange', onHash)
+      }, [])
       // 「添加技能」弹层：只在技能页出现，放在顶部右侧、版本号左边。
       const [importOpen, setImportOpen] = useState(false)
       const [paletteOpen, setPaletteOpen] = useState(false)
@@ -6354,7 +6398,7 @@ window.__ModuleLoader__.load({
       const content = (() => {
         if (tab === 'overview') return h(Overview, { state, onGo: go, onChanged: loadState, onOpen: (id) => { setFocusId(id); setTab('experiences') } })
         if (tab === 'graph') return h(Graph)
-        if (tab === 'experiences') return h(Experiences, { state, focusId, seedFilters: expFilters, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
+        if (tab === 'experiences') return h(Experiences, { key: 'exp-' + safeFilters.typeId + '|' + safeFilters.family, state, focusId, seedFilters: safeFilters, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
         if (tab === 'recall') return h(Recall, { seed: recallSeed, types: state ? state.types : [] })
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })

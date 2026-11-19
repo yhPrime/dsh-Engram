@@ -1119,6 +1119,9 @@ export async function handleRequest(req, res, source, deps = {}) {
       const rows = visibleRowsOf(store)
       const reps = representativesOf(store)
       const config = readEngineConfig()
+      const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
+      let ab = null
+      try { ab = JSON.parse(fs.readFileSync(path.join(dataDir, '.cache', 'ab-report.json'), 'utf8')) } catch { ab = null }
       return json(res, 200, {
         ok: true,
         data: {
@@ -1127,6 +1130,7 @@ export async function handleRequest(req, res, source, deps = {}) {
           visible: rows.length,
           families: reps.size,
           unfiled: rows.filter((row) => derivedFamilyOf(row) === '').length,
+          ab,
         },
       })
     }
