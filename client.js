@@ -1504,8 +1504,10 @@ window.__ModuleLoader__.load({
     }
 
     function Experiences(props) {
+      const seed = props.seedFilters || {}
       const [searchDraft, setSearchDraft] = useState('')
-      const [type, setType] = useState('')
+      const [type, setType] = useState(seed.typeId || '')
+      const [family, setFamily] = useState(seed.family || '')
       const [outcome, setOutcome] = useState('')
       const [lifecycle, setLifecycle] = useState('')
       const [source, setSource] = useState('')
@@ -1520,13 +1522,14 @@ window.__ModuleLoader__.load({
       useEffect(() => { if (props.focusId) setSelected(props.focusId) }, [props.focusId])
       const list = useLoad(useCallback(() => {
         const params = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize), sort })
+      if (family !== '') params.set('family', family)
         if (type !== '') params.set('type', type)
         if (outcome !== '') params.set('outcome', outcome)
         if (lifecycle !== '') params.set('lifecycle', lifecycle)
         if (source !== '') params.set('source', source)
         if (verdict !== '') params.set('verdict', verdict)
         return request(`/experiences?${params.toString()}`)
-      }, [type, outcome, lifecycle, source, verdict, sort, page, pageSize]))
+      }, [type, outcome, lifecycle, source, verdict, sort, page, pageSize, family]))
       // 换筛选/排序/页大小时回到第一页，避免停在越界页码。
       useEffect(() => { setPage(0) }, [type, outcome, lifecycle, source, verdict, sort, pageSize])
       useRefreshEvent(list.reload)
@@ -1639,6 +1642,7 @@ window.__ModuleLoader__.load({
       }
       return h('div', { className: 'eng-fill' },
         list.error ? h(Banner, { bad: true }, list.error) : null,
+        family !== '' ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '当前只看族「' + family + '」', h('button', { type: 'button', className: 'eng-subnav-item', style: { marginLeft: 8 }, onClick: () => setFamily('') }, '清除')) : null,
         storeError ? h(Banner, { bad: true }, `经验数据读取失败：${storeError.message}${storeError.file ? `（${storeError.file}）` : ''}`) : null,
         notice ? h(Banner, { bad: true }, notice) : null,
         h('div', { className: 'eng-toolbar' },
@@ -3129,7 +3133,7 @@ window.__ModuleLoader__.load({
           'data-active': current !== null && current.typeId === type.typeId ? 'true' : 'false',
           onClick: () => setSelected(type.typeId),
         }, h('span', null, type.name || type.typeId), h('span', { className: 'eng-nav-count' }, String(type.count || 0))))
-      const familyRows = (current ? current.families || [] : []).map((family) => h('tr', { key: family.family },
+      const familyRows = (current ? current.families || [] : []).map((family) => h('tr', { key: family.family, style: { cursor: 'pointer' }, onClick: () => { if (props.onOpenFamily) props.onOpenFamily(current.typeId, family.family) } },
         h('td', null, family.family),
         h('td', { className: 'eng-mono' }, String(family.count || 0)),
         h('td', { className: 'eng-row-intent', title: family.representative ? family.representative.intent : '' }, family.representative ? family.representative.intent + '（G ' + Number(family.representative.G || 0).toFixed(2) + '）' : '—'),
@@ -3176,7 +3180,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-card eng-scroll', style: { padding: 0 } }, familyTable)),
         h('div', { style: { marginTop: 14 } },
           h('button', { type: 'button', className: 'eng-nav-item', 'aria-expanded': showUnfiled ? 'true' : 'false', onClick: () => setShowUnfiled((open) => !open) },
-            h('span', null, '未分族 ' + unfiled + ' 条'), h('span', { className: 'eng-nav-count' }, showUnfiled ? '收起' : '展开'))),
+            h('span', { onClick: () => { if (props.onOpenFamily) props.onOpenFamily('', '__unfiled__') } }, '未分族 ' + unfiled + ' 条'), h('span', { className: 'eng-nav-count', onClick: () => setShowUnfiled((open) => !open) }, showUnfiled ? '收起' : '展开'))),
         unfiledPanel,
         previewPanel,
         confirmModal)
@@ -6163,6 +6167,7 @@ window.__ModuleLoader__.load({
 
     function Console() {
       const [tab, setTab] = useState('overview')
+      const [expFilters, setExpFilters] = useState({ typeId: '', family: '' })
       const [focusId, setFocusId] = useState(null)
       const [density] = useState(() => {
         try { return localStorage.getItem('eng:density') === 'compact' ? 'compact' : 'comfortable' } catch { return 'comfortable' }
@@ -6349,11 +6354,11 @@ window.__ModuleLoader__.load({
       const content = (() => {
         if (tab === 'overview') return h(Overview, { state, onGo: go, onChanged: loadState, onOpen: (id) => { setFocusId(id); setTab('experiences') } })
         if (tab === 'graph') return h(Graph)
-        if (tab === 'experiences') return h(Experiences, { state, focusId, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
+        if (tab === 'experiences') return h(Experiences, { state, focusId, seedFilters: expFilters, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
         if (tab === 'recall') return h(Recall, { seed: recallSeed, types: state ? state.types : [] })
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
-        if (tab === 'families') return h(Families, { onChanged: loadState })
+        if (tab === 'families') return h(Families, { onChanged: loadState, onOpenFamily: (typeId, family) => { setExpFilters({ typeId: typeId || '', family: family || '' }); setTab('experiences') } })
         if (tab === 'tags') return h(Tags, { onChanged: loadState })
         if (tab === 'types') return h(Types, { onChanged: loadState })
         if (tab === 'cold') return h(Cold)

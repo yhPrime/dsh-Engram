@@ -86,6 +86,7 @@ export function rowOf(experience) {
     action: String(experience.action || ''),
     typeId: String(experience.typeId || ''),
     typeName: String(experience.typeName || '未分类'),
+    family: String(experience.family || ''),
     outcome: String(experience.outcome || 'unknown'),
     G: Number(experience.G) || 0,
     GOutcome: Number(experience.GOutcome) || 0,
@@ -194,6 +195,7 @@ export function listOf(store, params) {
   // 判定筛选：非空时精确匹配 verdict（pending / decided / skipped …）。
   const verdictFilter = String(params.get('verdict') || '')
   const lifecycleFilter = String(params.get('lifecycle') || '')
+  const familyFilter = String(params.get('family') || '')
   const volatilityFilter = String(params.get('volatility') || '')
   const dueOnly = String(params.get('due') || '') === '1'
   const sort = String(params.get('sort') || 'recent')
@@ -219,6 +221,11 @@ export function listOf(store, params) {
     .filter((row) => volatilityFilter === '' || row.volatility === volatilityFilter)
     .filter((row) => !dueOnly || row.reviewDue === true || row.lifecycle.state === 'stale')
     .filter((row) => typeFilter === '' || row.typeId === typeFilter)
+    .filter((row) => {
+      if (familyFilter === '') return true
+      if (familyFilter === '__unfiled__') return row.family === ''
+      return row.family === familyFilter
+    })
     .filter((row) => outcomeFilter === '' || row.outcome === outcomeFilter)
     .filter((row) => {
       if (sourceFilter === 'auto') return row.origin === 'auto'
