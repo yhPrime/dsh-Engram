@@ -105,13 +105,20 @@ function matchedAndMissing(tags, queryTags) {
 export function rankByTags(store, intent, options = {}) {
   const queryTags = normalizeQueryTags(options.queryTags || extractQueryTags(intent))
   const limit = Math.max(1, Math.min(50, Math.trunc(Number(options.limit) || TAG_TOPN_DEFAULT)))
-  const weightedQuery = WEIGHTED_FACETS.some((facet) => queryTags[facet].length > 0)
+  // 只有权重 > 0 的面才算「有加权查询」：对象面 0.32 起权重为 0，不能让它把全 0 分值伪装成排序结果。
+  const weightedQuery = WEIGHTED_FACETS.some((facet) => TAG_FACET_WEIGHTS[facet] > 0 && queryTags[facet].length > 0)
   if (!weightedQuery) {
     return {
       queryTags,
       top: [],
       total: 0,
-      note: '意图里没有命中动作/主题/对象标签，标签影子排序为空（只影响影子，不影响默认召回）。',
+      // 只命中不计权重的面（对象权重 0、质量面永不加权）时，不能说「没命中标签」。
+      note: (() => {
+        const zeroFacets = Object.keys(queryTags).filter((facet) => queryTags[facet].length > 0 && !(TAG_FACET_WEIGHTS[facet] > 0))
+        if (zeroFacets.length === 0) return '意图里没有命中动作/主题/对象标签，标签影子排序为空（只影响影子，不影响默认召回）。'
+        const labels = { object: '对象', quality: '质量' }
+        return `只命中了不计权重的${zeroFacets.map((facet) => labels[facet] || facet).join('/')}标签，加权查询为空（只影响影子，不影响默认召回）。`
+      })(),
     }
   }
   const rows = visibleExperiences(store)

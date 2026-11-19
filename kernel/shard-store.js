@@ -168,7 +168,7 @@ export function readJsonFile(file, label) {
       }
     }
     if (raw === null) {
-      throw new Error(`${label}读取失败（文件可能正被写入）：${lastError && lastError.message ? lastError.message : lastError}`)
+      throw new Error(`${label}读取失败（已重试 10 次，文件可能正被写入或已损坏）：${file}：${lastError && lastError.message ? lastError.message : lastError}`)
     }
   }
   return raw

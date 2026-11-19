@@ -94,6 +94,7 @@ window.__ModuleLoader__.load({
   /* 主按钮文字色：JS 按强调色亮度覆写；默认白字（蓝底） */
   --eng-on-brand: #fff;
   /* 骨架屏 */
+  --eng-line: color-mix(in srgb, var(--dsw-alias-label-secondary) 28%, transparent);
   --eng-skeleton-base: color-mix(in srgb, var(--dsw-alias-label-secondary) 10%, transparent);
   --eng-skeleton-hi: color-mix(in srgb, var(--dsw-alias-label-secondary) 18%, transparent);
   /* 布局硬约束与最终属性放最后 */
@@ -259,6 +260,7 @@ window.__ModuleLoader__.load({
 .eng-table th { padding: 8px 8px; text-align: left; font-size: var(--eng-fs-micro); font-weight: 600; letter-spacing: .05em; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .eng-table td { padding: 8px 8px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
 .eng-table tr:last-child td { border-bottom: 0; }
+.eng-table tbody tr:nth-child(even) { background: var(--eng-zebra); }
 .eng-scroll .eng-table thead th { position: sticky; top: 0; z-index: 1; background: var(--dsw-alias-bg-layer-1); }
 .eng-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-micro); font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
 .eng-tip:hover, .eng-tip:focus-visible { color: var(--eng-accent-text); border-color: var(--eng-accent); outline: none; }
@@ -484,7 +486,7 @@ window.__ModuleLoader__.load({
      * 标签面（0.20.0 P0）：与 kernel/tag-registry.js 的 TAG_FACET_LABELS 对齐。
      * UI 只负责「按面分组展示 + 缺面提示」，面的真相在服务端词表（GET /tag-registry）。
      */
-    const TAG_FACET_ORDER = ['object', 'action', 'topic', 'quality', 'other']
+    const TAG_FACET_ORDER = ['action', 'topic', 'quality', 'other']
     const TAG_FACET_LABELS = { object: '对象/项目类型', action: '动作/任务', topic: '主题/场景', quality: '质量/异常', other: '其他已用标签' }
     const TAG_FACET_HINTS = {
       object: '再补一个对象标签，例如 代码/PPT/课件/DSH插件',
@@ -503,10 +505,10 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    /** 缺哪些必填面（object/action）。 */
+    /** 缺哪些必填面：0.32 起对象面退出标签体系，只剩动作面必填。 */
     function missingTagFacets(tags, groups) {
       const list = Array.isArray(tags) ? tags : []
-      return ['object', 'action'].filter((facet) => !list.some((name) => tagFacetOf(name, groups) === facet))
+      return ['action'].filter((facet) => !list.some((name) => tagFacetOf(name, groups) === facet))
     }
 
     /** 组的并集：词表里所有标签（已选/未选都要能点）。 */
@@ -559,8 +561,8 @@ window.__ModuleLoader__.load({
           : null,
         h('div', { className: 'eng-tag-groups' }, TAG_FACET_ORDER.filter((facet) => facet !== 'other' ? true : tagEntriesOf(groups, 'other').length > 0).map((facet) => {
           const entries = tagEntriesOf(groups, facet)
-          if (entries.length === 0 && !(facet === 'object' || facet === 'action')) return null
-          const required = facet === 'object' || facet === 'action'
+          if (entries.length === 0 && facet !== 'action') return null
+          const required = facet === 'action'
           return h('details', { key: facet, className: 'eng-tag-group', open: required || facet === 'topic' },
             h('summary', { className: 'eng-tag-group-title' }, TAG_FACET_LABELS[facet], required ? h('span', { className: 'eng-req-mark' }, ' 必填至少 1 个') : null, h('span', { className: 'eng-muted' }, ` · ${entries.length}`)),
             h('div', { className: 'eng-tag-chips' }, entries.length === 0
@@ -1373,10 +1375,11 @@ window.__ModuleLoader__.load({
       // 0.22.0 P2：自动记录被关掉时要在概览看得见，否则会以为钩子坏了。
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const families = useLoad(useCallback(() => request('/families'), []))
+      const objects = useLoad(useCallback(() => request('/objects'), []))
       const autoRecordState = (props.seedSettings && props.seedSettings.config && typeof props.seedSettings.config === 'object')
         ? props.seedSettings.config.autoRecord
         : (settings.data && settings.data.config ? settings.data.config.autoRecord : undefined)
-      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload(); settings.reload(); families.reload() }, [recent.reload, pending.reload, settings.reload, families.reload]))
+      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload(); settings.reload(); families.reload(); objects.reload() }, [recent.reload, pending.reload, settings.reload, families.reload, objects.reload]))
       const [coldOpen, setColdOpen] = useState(Boolean(props.state && props.state.cold && Number(props.state.cold.total) > 0))
       const [notice, setNotice] = useState('')
       const state = props.state || {}
@@ -1391,9 +1394,11 @@ window.__ModuleLoader__.load({
       const familyRows = familyList.slice(0, 6).map((item) => [item.family, Number(item.count) || 0])
       const familyMax = Math.max(1, ...familyRows.map(([, value]) => value))
       const pendingRows = Array.isArray(pending.data) ? pending.data : []
+      const objectTotal = objects.data && objects.data.available !== false ? Number(objects.data.total) || 0 : null
       const kpis = [
         ['可见经验', totals.visible, '条'],
         ['固化技能', totals.skills, '个'],
+        ['对象', objectTotal, '个'],
         ['今日调用', usage.today, '次'],
         ['库大小', fmtBytes(state.bytes), ''],
       ]
@@ -2151,7 +2156,7 @@ window.__ModuleLoader__.load({
             h(Field, { key: 'action', label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
             h(Field, { key: 'outcome', label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
             h(Field, { key: 'family', label: '族（可选，留空落未分族）' }, h('input', { className: 'eng-input', value: form.family, onChange: update('family'), placeholder: '写课件' })),
-            h(Field, { key: 'context', label: `标签（至少 1 个对象 + 1 个动作，≤${TAG_LIMIT} 个）`, wide: true, hint: '标签只写类型不写实例名：写 DSH插件，不写 DSH-Engram；项目名放 intent/artifacts' },
+            h(Field, { key: 'context', label: `标签（至少 1 个动作，≤${TAG_LIMIT} 个）`, wide: true, hint: '标签只写类型不写实例名：写 DSH插件，不写 DSH-Engram；项目名放 intent/artifacts' },
               h(TagPicker, {
                 view: registry.data || null,
                 value: pickedTags,
@@ -3054,12 +3059,14 @@ window.__ModuleLoader__.load({
 
     function Families(props) {
       const data = useLoad(useCallback(() => request('/families'), []))
-      useRefreshEvent(data.reload)
+      const objects = useLoad(useCallback(() => request('/objects'), []))
+      useRefreshEvent(useCallback(() => { data.reload(); objects.reload() }, [data.reload, objects.reload]))
       const [preview, setPreview] = useState(null)
       const [confirming, setConfirming] = useState(false)
       const [notice, setNotice] = useState('')
       const [busy, setBusy] = useState(false)
       const [showUnfiled, setShowUnfiled] = useState(false)
+      const [refsOpen, setRefsOpen] = useState('')
       const dialogRef = useRef(null)
       const manageRef = useRef(null)
       const [managing, setManaging] = useState(false)
@@ -3100,6 +3107,34 @@ window.__ModuleLoader__.load({
       const families = data.data ? data.data.families || [] : []
       const unfiled = data.data ? Number(data.data.unfiled) || 0 : 0
       const unfiledRows = data.data ? data.data.unfiledRows || [] : []
+      // 对象链引用：只读 /objects，按 steps[].family（已解析别名）聚合，供每族展开看「被哪些链引用」。
+      const refsByFamily = (() => {
+        const map = new Map()
+        const list = objects.data && Array.isArray(objects.data.objects) ? objects.data.objects : []
+        const walk = (steps, object, chainIndex, base) => {
+          (Array.isArray(steps) ? steps : []).forEach((step, index) => {
+            const name = String((step && step.family) || '').trim()
+            const here = [...base, index + 1]
+            if (name !== '' && name !== '(族已删除)') {
+              const hit = map.get(name) || []
+              hit.push({ object, chainIndex, stepPath: here })
+              map.set(name, hit)
+            }
+            (Array.isArray(step && step.branches) ? step.branches : []).forEach((branch, branchIndex) => walk(branch.steps, object, chainIndex, [...here, branchIndex + 1]))
+          })
+        }
+        list.forEach((obj) => (Array.isArray(obj.chains) ? obj.chains : []).forEach((chain, index) => walk(chain.steps, obj.object, index + 1, [])))
+        return map
+      })()
+      const refsPanel = refsOpen === '' ? null : (() => {
+        const refs = refsByFamily.get(refsOpen) || []
+        return h('div', { className: 'eng-card', style: { padding: 15, marginTop: 14 } },
+          h('div', { className: 'eng-section-head' },
+            h('h3', { className: 'eng-section-title' }, '「' + refsOpen + '」被这些对象链引用'),
+            h('span', { className: 'eng-muted' }, refs.length + ' 处')),
+          h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } },
+            refs.map((ref, index) => h('div', { key: index }, ref.object + ' · 链 ' + ref.chainIndex + ' · 步骤 ' + ref.stepPath.join('.')))))
+      })()
       const runBackfill = async (dryRun) => {
         setBusy(true)
         setNotice('')
@@ -3127,7 +3162,17 @@ window.__ModuleLoader__.load({
         h('td', null, item.family),
         h('td', { className: 'eng-mono' }, String(item.count || 0)),
         h('td', { className: 'eng-row-intent', title: item.representative ? item.representative.intent : '' }, item.representative ? item.representative.intent + '（G ' + Number(item.representative.G || 0).toFixed(2) + '）' : '—'),
-        h('td', { className: 'eng-muted' }, item.representative && item.representative.lastSeenAt ? String(item.representative.lastSeenAt).slice(0, 10) : '—')))
+        h('td', { className: 'eng-muted' }, item.representative && item.representative.lastSeenAt ? String(item.representative.lastSeenAt).slice(0, 10) : '—'),
+        h('td', null, (() => {
+          const refs = refsByFamily.get(item.family) || []
+          if (refs.length === 0) return h('span', { className: 'eng-muted' }, '—')
+          return h('button', {
+            type: 'button',
+            className: 'eng-subnav-item',
+            'aria-expanded': refsOpen === item.family ? 'true' : 'false',
+            onClick: (event) => { event.stopPropagation(); setRefsOpen(refsOpen === item.family ? '' : item.family) },
+          }, refs.length + ' 条链')
+        })())))
       const previewPanel = preview === null ? null : h('div', { className: 'eng-card', style: { padding: 15, marginTop: 14 } },
         h('div', { className: 'eng-section-head' },
           h('h3', { className: 'eng-section-title' }, (preview.dryRun ? '补族预览' : '已补族') + '（' + (preview.filled || 0) + ' 条）'),
@@ -3141,7 +3186,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'eng-muted' }, '共 ' + unfiled + ' 条')),
         unfiledRows.length === 0
           ? h('div', { className: 'eng-muted' }, '没有未分族行')
-          : h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } }, unfiledRows.map((row) => h('div', { key: row.id }, (row.typeName || row.typeId) + ' · ' + row.intent)))) : null
+          : h('div', { className: 'eng-mono', style: { fontSize: 12, lineHeight: 1.8 } }, unfiledRows.map((row) => h('div', { key: row.id }, (row.intent || row.id))))) : null
       const manageModal = h('dialog', {
         ref: manageRef,
         className: 'eng-dialog',
@@ -3185,8 +3230,10 @@ window.__ModuleLoader__.load({
           h(Button, { small: true, kind: 'primary', disabled: busy || preview === null || (preview.filled || 0) === 0, onClick: () => setConfirming(true) }, '执行补族')),
         h('div', { className: 'eng-card eng-scroll', style: { padding: 0 } },
           h('table', { className: 'eng-table' },
-            h('thead', null, h('tr', null, h('th', null, '族'), h('th', null, '条数'), h('th', null, '族代表'), h('th', null, '最近使用'))),
-            h('tbody', null, familyRows))),
+            h('thead', null, h('tr', null, h('th', null, '族'), h('th', null, '条数'), h('th', null, '族代表'), h('th', null, '最近使用'), h('th', null, '对象链'))),
+            h('tbody', null, familyRows.length === 0
+              ? h('tr', null, h('td', { colSpan: 5 }, h(Empty, null, '还没有族：记录经验时填「族」（记录页），不填会落「未分族」。')))
+              : familyRows))),
         h('div', { style: { marginTop: 14 } },
           h('button', {
             type: 'button',
@@ -3195,6 +3242,7 @@ window.__ModuleLoader__.load({
             onClick: () => setShowUnfiled((open) => !open),
           }, h('span', null, '未分族 ' + unfiled + ' 条'), h('span', { className: 'eng-nav-count' }, showUnfiled ? '收起' : '展开'))),
         unfiledPanel,
+        refsPanel,
         previewPanel,
         manageModal,
         confirmModal)
@@ -4248,6 +4296,9 @@ window.__ModuleLoader__.load({
       }
       return positions
     }
+    // 族 id 转义与服务端 graphFamilyId 同口径：过滤「只看此族」时必须用同一条规则比较，否则带 : / % 的族会把经验全滤掉。
+    const graphFamilyIdOf = (name) => `family:${String(name || '').replace(/%/g, '%25').replace(/:/g, '%3A').replace(/\//g, '%2F')}`
+    const graphFamilyNameOf = (id) => String(id || '').replace(/^family:/, '').replace(/%3A/g, ':').replace(/%2F/g, '/').replace(/%25/g, '%')
     function Graph() {
       const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
@@ -4320,7 +4371,7 @@ window.__ModuleLoader__.load({
         }
         if (focusedFamily !== null) {
           const nodes = (data.nodes || []).filter((node) => node.id === focusedFamily
-            || (node.kind === 'experience' && `family:${node.family}` === focusedFamily))
+            || (node.kind === 'experience' && graphFamilyIdOf(node.family) === focusedFamily))
           const ids = new Set(nodes.map((node) => node.id))
           data = { ...data, nodes, edges: (data.edges || []).filter((edge) => ids.has(edge.source) && ids.has(edge.target)) }
         }
@@ -5482,7 +5533,7 @@ window.__ModuleLoader__.load({
             selection.kind === 'suite' ? h('dd', null, String(selection.count || 0)) : null,
             selection.kind === 'family' ? h('dt', null, '经验数') : null,
             selection.kind === 'family' ? h('dd', null, String(selection.count || 0)) : null,
-            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, String(selection.id || '').replace(/^(exp|skill|family|suite):/, '')))))
+            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, selection.kind === 'family' ? graphFamilyNameOf(selection.id) : String(selection.id || '').replace(/^(exp|skill|suite):/, '')))))
     }
 
     // 0.25.0 P0：影子判据只读卡片（数据来自 usage.shadow，不写盘、不改召回）。
@@ -6074,7 +6125,7 @@ window.__ModuleLoader__.load({
     }
 
     /** 对象页（0.35 对象链的 UI 适配）：只读；写入口仍是 exp_object 工具。 */
-    function Objects() {
+    function Objects(props) {
       const load = useLoad(useCallback(() => request('/objects'), []))
       useRefreshEvent(useCallback(() => load.reload(), [load.reload]))
       const [selectedId, setSelectedId] = useState(null)
@@ -6083,16 +6134,16 @@ window.__ModuleLoader__.load({
       const data = load.data || { available: false, total: 0, objects: [] }
       const objects = Array.isArray(data.objects) ? data.objects : []
       if (data.available === false) {
-        return h('div', { className: 'eng-card' },
+        return h('div', { className: 'eng-fill' }, h('div', { className: 'eng-card eng-scroll', style: { margin: 12 } },
           h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '对象链')),
           h(Empty, null, data.error
             ? `对象数据读不到：${data.error}`
-            : '还没有对象链。对象链由 exp_object 工具写入，记录一件事按什么顺序做完；控制台只读。'))
+            : '还没有对象链。对象链由 exp_object 工具写入，记录一件事按什么顺序做完；控制台只读。')))
       }
       if (objects.length === 0) {
-        return h('div', { className: 'eng-card' },
+        return h('div', { className: 'eng-fill' }, h('div', { className: 'eng-card eng-scroll', style: { margin: 12 } },
           h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '对象链')),
-          h(Empty, null, '还没有对象链。对象链由 exp_object 工具写入，记录一件事按什么顺序做完；控制台只读。'))
+          h(Empty, null, '还没有对象链。对象链由 exp_object 工具写入，记录一件事按什么顺序做完；控制台只读。')))
       }
       const current = objects.find((item) => item.id === selectedId) || objects[0]
       const stepNode = (step, depth, key) => {
@@ -6101,16 +6152,20 @@ window.__ModuleLoader__.load({
         return h('div', { key, style: { marginLeft: depth * 18 } },
           h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', padding: '3px 0' } },
             h('span', { className: 'eng-mono eng-muted', style: { flex: '0 0 auto' } }, depth === 0 ? `${key.split('-').pop()}` : '·'),
-            h('span', { className: 'eng-row-intent' }, step.family || '未命名族'),
+            h('span', { className: 'eng-row-intent' },
+              typeof props.onOpenFamily === 'function' && step.family !== '(族已删除)'
+                ? h('button', { type: 'button', className: 'eng-subnav-item', onClick: () => props.onOpenFamily(step.family) }, step.family || '未命名族')
+                : (step.family || '未命名族')),
             failed ? h(Badge, { tone: 'bad' }, '失败') : null,
-            step.aliasOf ? h('span', { className: 'eng-muted' }, `原族 ${step.aliasOf}，已并入`) : null,
+            step.aliasOf ? h('span', { className: 'eng-muted' }, `由旧族合并而来（已并入「${step.family}」）`) : null,
             step.note ? h('span', { className: 'eng-muted' }, step.note) : null),
           branches.map((branch, branchIndex) => h('div', {
             key: `${key}-b${branchIndex}`,
-            style: { marginLeft: 22, paddingLeft: 10, borderLeft: '1px solid var(--eng-line, rgba(127,127,127,0.35))' },
+            style: { marginLeft: 22, paddingLeft: 10, borderLeft: '1px solid var(--eng-line)' },
           },
-            h('div', { className: 'eng-muted', style: { padding: '2px 0' } },
-              `分支 · ${branch.when || '（未写原因）'}${branch.result === 'aborted' ? ' · 放弃收工' : ''}`),
+            h('div', { style: { padding: '2px 0', display: 'flex', gap: 6, alignItems: 'baseline' } },
+              h('span', { className: 'eng-muted' }, `分支 · ${branch.when || '（未写原因）'}`),
+              branch.result === 'aborted' ? h(Badge, { tone: 'bad' }, '放弃收工') : null),
             (Array.isArray(branch.steps) ? branch.steps : []).map((child, childIndex) => stepNode(child, depth + 1, `${key}-b${branchIndex}-${childIndex + 1}`)))))
       }
       const chainBlocks = (Array.isArray(current.chains) ? current.chains : []).map((chain, chainIndex) => h('div', { key: `c${chainIndex}`, className: 'eng-card', style: { marginBottom: 10 } },
@@ -6119,7 +6174,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'eng-muted' }, fmtTime(chain.at))),
         chain.note ? h('div', { className: 'eng-muted', style: { marginBottom: 6 } }, chain.note) : null,
         (Array.isArray(chain.steps) ? chain.steps : []).map((step, stepIndex) => stepNode(step, 0, `c${chainIndex}-s${stepIndex + 1}`))))
-      return h('div', { className: 'eng-split' },
+      return h('div', { className: 'eng-fill' }, h('div', { className: 'eng-split', style: { padding: 12 } },
         h('div', { className: 'eng-card eng-scroll' },
           h('div', { className: 'eng-section-head' },
             h('h3', { className: 'eng-section-title' }, '对象'),
@@ -6134,6 +6189,7 @@ window.__ModuleLoader__.load({
           },
             h('span', { className: 'eng-row-intent' }, item.object),
             h('span', { className: 'eng-muted' }, `${Array.isArray(item.chains) ? item.chains.length : 0} 条链`),
+            h('span', { className: 'eng-muted' }, fmtTime(item.at)),
             Array.isArray(item.hints) && item.hints.length > 0 ? h(Badge, { tone: 'warn' }, `常用分支 ${item.hints.length}`) : null))),
         h('div', { className: 'eng-scroll' },
           h('div', { className: 'eng-card', style: { marginBottom: 10 } },
@@ -6142,7 +6198,7 @@ window.__ModuleLoader__.load({
               h('span', { className: 'eng-muted' }, `${Array.isArray(current.chains) ? current.chains.length : 0} 条链 · ${fmtTime(current.at)}`)),
             (Array.isArray(current.hints) ? current.hints : []).map((hint, index) => h('div', { key: `h${index}`, className: 'eng-warn-text' },
               `常用分支：「${hint.when || '（未写原因）'}」在最近 ${hint.window} 条链里出现 ${hint.count} 次，建议并进主干`))),
-          chainBlocks))
+          chainBlocks)))
     }
 
     const NAV = [
@@ -6193,8 +6249,10 @@ window.__ModuleLoader__.load({
           if (raw === '') return null
           const [name, query = ''] = raw.split('?')
           if (name === '') return null
+          // 0.36 类型页退场：旧的 #types 深链重定向到族页，不落到兜底设置页。
+          const tab = name === 'types' ? 'families' : name
           const params = new URLSearchParams(query)
-          return { tab: name, typeId: String(params.get('type') || ''), family: String(params.get('family') || '') }
+          return { tab, typeId: String(params.get('type') || ''), family: String(params.get('family') || '') }
         } catch { return null }
       }
       const initialHash = readHashState()
@@ -6408,11 +6466,11 @@ window.__ModuleLoader__.load({
         if (tab === 'overview') return h(Overview, { state, onGo: go, onChanged: loadState, onOpen: (id) => { setFocusId(id); setTab('experiences') } })
         if (tab === 'graph') return h(Graph)
         if (tab === 'experiences') return h(Experiences, { key: 'exp-' + safeFilters.typeId + '|' + safeFilters.family, state, focusId, seedFilters: safeFilters, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
-        if (tab === 'recall') return h(Recall, { seed: recallSeed, types: state ? state.types : [] })
+        if (tab === 'recall') return h(Recall, { seed: recallSeed })
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
         if (tab === 'families') return h(Families, { onChanged: loadState, onOpenFamily: (typeId, family) => { setExpFilters({ typeId: typeId || '', family: family || '' }); setTab('experiences') } })
-        if (tab === 'objects') return h(Objects)
+        if (tab === 'objects') return h(Objects, { onOpenFamily: (family) => { setExpFilters({ typeId: '', family: family || '' }); setTab('experiences') } })
         if (tab === 'tags') return h(Tags, { onChanged: loadState })
         if (tab === 'cold') return h(Cold)
         if (tab === 'usage') return h(Usage)

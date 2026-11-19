@@ -894,6 +894,7 @@ export function buildGraph(source, params) {
   }
   const skillTree = buildSkillTree(skills)
   const skillNodes = new Map()
+  const rootLinked = new Set()
   const walkSkill = (node, parentId) => {
     const id = node.kind === 'group' ? `suite:${node.path}` : `skill:${node.path}`
     if (node.kind === 'group') {
@@ -927,6 +928,7 @@ export function buildGraph(source, params) {
       skillNodes.set(node.path, skillNode)
     }
     // 顶层挂根；套件内部挂父节点（总技能或组节点），这样图上能看出母子关系。
+    if (parentId === '') rootLinked.add(id)
     edges.push({
       source: parentId || 'root',
       target: id,
@@ -943,8 +945,8 @@ export function buildGraph(source, params) {
     const derived = Array.isArray(skill.derivedFrom) ? skill.derivedFrom : []
     const linked = derived.filter((experienceId) => expIds.has(String(experienceId)))
     for (const experienceId of linked) edges.push({ source: `exp:${experienceId}`, target: `skill:${id}`, kind: 'derived', strength: 0.5 + Math.min(0.45, (skill.uses || 0) / 12) })
-    // 独立技能没有经验来源时仍然挂根；套件子技能已有父边，不再重复挂根。
-    if (linked.length === 0 && !String(id).includes('/')) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
+    // 独立技能没有经验来源时仍然挂根；套件子技能已有父边、技能树根节点已挂根，都不再重复挂根。
+    if (linked.length === 0 && !String(id).includes('/') && !rootLinked.has(`skill:${id}`)) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
   }
   const suiteRoots = skillTree.filter((node) => node.kind === 'group' || node.skillCount > 1).length
   // degree 用一遍边表累加（O(N+E)）：前端画图不用再自己数邻居。

@@ -108,6 +108,12 @@ function fallbackStorageUsage(dataDir) {
     bucketFiles: buckets.files,
     coldBytes: cold.bytes,
     coldFiles: cold.files,
+    layout: 'fallback',
+    typeDirs: 0,
+    familyFiles: 0,
+    familyBytes: 0,
+    indexFiles: 0,
+    indexBytes: 0,
     legacy,
     single,
     fileCount: shardStore.storageFileCount(dir),
@@ -151,6 +157,13 @@ function storageUsageOf(dataDir) {
           bucketFiles: pick('bucketFiles', 0),
           coldBytes: pick('coldBytes', 0),
           coldFiles: pick('coldFiles', 0),
+          // 0.31/0.36：分族布局口径（storageUsage 已经算好，这里原样透传，别手工挑字段再漏掉）。
+          layout: usage.layout === undefined || usage.layout === null ? null : String(usage.layout),
+          typeDirs: pick('typeDirs', 0),
+          familyFiles: pick('familyFiles', 0),
+          familyBytes: pick('familyBytes', 0),
+          indexFiles: pick('indexFiles', 0),
+          indexBytes: pick('indexBytes', 0),
           legacy: usage.legacy !== null && typeof usage.legacy === 'object'
             ? { exists: usage.legacy.exists === true, bytes: Number(usage.legacy.bytes) || 0 }
             : { exists: false, bytes: 0 },
@@ -262,12 +275,14 @@ export function createEngine(options = {}) {
       const singleExists = statIsFile(singleFile)
       let manifest = null
       let corrupt = false
+      let corruptFile = ''
       let parseError = ''
       try {
         // readManifest 带自愈：缓存丢了/对不上会按分片重建（manifest 是可重建缓存，D1）。
         manifest = readManifest(dataDir)
       } catch (error) {
         corrupt = true
+        corruptFile = shardStore.manifestPath(dataDir)
         parseError = String((error && error.message) || error)
       }
       // 老库（还没有分片）仍要像以前一样检查 exp-lib.json 是否可解析，坏库不能静默当空库。
@@ -276,13 +291,15 @@ export function createEngine(options = {}) {
           JSON.parse(fs.readFileSync(singleFile, 'utf8'))
         } catch (error) {
           corrupt = true
+          corruptFile = singleFile
           parseError = String((error && error.message) || error)
         }
       }
       const exists = manifest !== null || usage.fileCount > 0 || singleExists
       return {
         dataDir,
-        file: manifest !== null ? shardStore.manifestPath(dataDir) : singleFile,
+        // 坏库时指向真正解析失败的文件（manifest 坏 → manifest.json；老库坏 → exp-lib.json）。
+        file: corrupt && corruptFile !== '' ? corruptFile : (manifest !== null ? shardStore.manifestPath(dataDir) : singleFile),
         exists,
         bytes: usage.totalBytes,
         updatedAt: usage.updatedAt,

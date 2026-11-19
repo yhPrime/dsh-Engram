@@ -285,7 +285,8 @@ export function createLiveSource(config = {}) {
           error: {
             code: 'store-unreadable',
             message: String((error && error.message) || error),
-            file,
+            // 报真实出问题的文件：manifest 读坏时是 manifest.json，老库 exp-lib.json 读坏时是 exp-lib.json。
+            file: (() => { try { const snapshot = engine.snapshot(); return snapshot && snapshot.file ? snapshot.file : file } catch { return file } })(),
           },
         }
       }

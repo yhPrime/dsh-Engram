@@ -907,3 +907,11 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 
 - 宽族拆分是离线工具（`node tools/refine-families.mjs --data-dir <dir> [--dry-run|--apply]`），不是 HTTP 接口；`--apply` 前整库备份，只删「完全无动作信息」的行，其余按 action 重拆成具体族。
 - 迁移完成后 `GET /families` 的 `families[].family` 只会出现具体族与「未分族」，不再出现 `执行` / `其它动作`。
+
+## 0.36.0 增量（关系图换族 / 对象页 / 口径修正）
+
+- **`GET /graph`**：节点 `kind` 取值改为 `root / family / experience / skill / suite`，**不再有 `type`**；边 `kind` 取值 `root / family / label / suite / derived`，其中 `family` 是 `族 → 经验`，原 `type` 边退役。`family` 节点带 `family`（名）、`count`（族内条数）、`system`（「未分族」为 true）；`family` id 统一 `family:` 前缀，名字里的 `%`/`:`/`/` 分别转义为 `%25`/`%3A`/`%2F`。`summary` 改为 `{ families, experiences, skills, suites }`。
+- **`GET /families`**：`families` 是扁平事实族表（含「未分族」这个真实族，当前 166 条）；`unfiled` 只统计「推导不出族」的行（0.33 起为 0），`unfiledRows` 是该类行前 50 条。不要把 `unfiled` 当成「未分族条数」。
+- **`GET /objects`**：`available=false` 分两种——mock / 未配置数据目录时**不带 `error`**（客户端走空态文案）；`objects.jsonl` 读坏时带 `error`（含行号）。`hints[].steps` 是**族 id 数组**，渲染名字要走族注册表解析。
+- **`GET /state`**：`storage` 增加分族布局字段 `layout / typeDirs / familyFiles / familyBytes / indexFiles / indexBytes`（`layout` 为 `family-flat` 时概览按新布局渲染）；`updatedAt` 在 D1 之后恒为 `''`（manifest 不写 `updated_at`），消费方不要当时间戳用。
+- **`GET /graph` 边去重**：技能树根边（`root → skill`，kind `root`）与 `derived` 根边同向重复的问题已修；`degree` 不再重复计数。
