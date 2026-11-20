@@ -1270,7 +1270,7 @@ window.__ModuleLoader__.load({
     const SHORTCUTS = [
       ['Ctrl / Cmd + K', '命令面板'],
       ['?', '快捷键表'],
-      ['g 然后 o / e / f / l / r / n / s / u / ,', '跳概览 / 经验 / 分类·族 / 标签分级 / 检索 / 记录 / 技能 / 使用记录 / 设置'],
+      ['g 然后 o / e / f / l / r / n / s / u / ,', '跳概览 / 经验 / 族 / 标签分级 / 检索 / 记录 / 技能 / 使用记录 / 设置'],
       ['j / k / Enter', '列表下移 / 上移 / 打开'],
       ['Ctrl / Cmd + Enter', '表单提交'],
       ['Shift + R', '刷新当前页'],
@@ -1454,7 +1454,6 @@ window.__ModuleLoader__.load({
                 : storage.layout === 'family'
                   ? h('div', { className: 'eng-storage-grid' },
                     storageCell('manifest', fmtBytes(storage.manifestBytes), '分族清单'),
-                    storageCell('分类', `${storage.typeDirs || 0} 个`, `索引 ${storage.indexFiles || 0} 个`),
                     storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
                     storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'))
                   : h('div', { className: 'eng-muted' }, '仍是旧布局（schema 2）：请先迁移到分族布局，概览只展示新口径。'),
@@ -1847,7 +1846,7 @@ window.__ModuleLoader__.load({
         // 分类与标签置顶（2026-11-17 反馈：详情里翻不到当前经验的标签和分类）。
         h('div', { className: 'eng-card', style: { padding: 10, marginBottom: 10 } },
           h('div', { className: 'eng-actions', style: { marginBottom: 6, flexWrap: 'wrap' } },
-            h('span', { className: 'eng-label' }, '分类'),
+            h('span', { className: 'eng-label' }, '族'),
             h(Badge, { tone: 'muted' }, row.family || '未分族')),
           h('div', { className: 'eng-actions', style: { flexWrap: 'wrap' } },
             h('span', { className: 'eng-label' }, '标签'),
@@ -6206,7 +6205,7 @@ window.__ModuleLoader__.load({
       ['overview', '概览', 'overview'],
       ['graph', '关系图', 'graph'],
       ['experiences', '经验', 'book'],
-      ['families', '分类·族', 'folder'],
+      ['families', '族', 'folder'],
       ['objects', '对象', 'chain'],
       ['tags', '标签分级', 'layers'],
       ['recall', '检索', 'search'],
