@@ -268,11 +268,9 @@ export function autoTagsOf({ intent, process, artifacts, cwd, tools, dataDir } =
     if (tags.some((tag) => tag.toLowerCase() === value.toLowerCase())) return
     tags.push(value)
   }
-  for (const name of objectTags.object.slice(0, 2)) push(name)
-  if (objectTags.object.length === 0) {
-    const rule = OBJECT_RULES.find((item) => item.pattern.test(objectText))
-    if (rule !== undefined) push(rule.tag)
-  }
+  // 0.37：object 面已物理删除。产物/工作区抽出的词现在归 topic 面，不再产对象标签；
+  // 原来按 OBJECT_RULES 兜底推「PPT/课件」这类对象词的做法一并停用（那些词已不是登记词）。
+  for (const name of (objectTags.topic || []).slice(0, 2)) push(name)
   let actionCount = 0
   for (const name of intentTags.action.slice(0, 2)) {
     const before = tags.length

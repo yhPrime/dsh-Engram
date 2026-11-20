@@ -236,13 +236,12 @@
 {
   "ok": true,
   "data": {
-    "facets": ["object", "action", "topic", "quality"],
-    "labels": { "object": "对象/项目类型", "action": "动作/任务", "topic": "主题/场景", "quality": "质量/异常", "other": "其他已用标签" },
-    "hints": { "object": "再补一个对象标签，例如 代码/PPT/课件/DSH插件", "action": "再补一个动作标签，例如 提交/推送/校验/验收" },
-    "required": ["object", "action"],
+    "facets": ["action", "topic", "quality"],
+    "labels": { "action": "动作/任务", "topic": "主题/场景", "quality": "质量/异常", "other": "其他已用标签" },
+    "hints": { "action": "再补一个动作标签，例如 提交/推送/校验/验收" },
+    "required": ["action"],
     "emptyFacets": [],
     "groups": {
-      "object": [ { "name": "PPT", "facet": "object", "core": true, "count": 15, "description": "演示文稿本体…", "status": "active", "source": "core" } ],
       "action": [ { "name": "提交", "facet": "action", "core": true, "count": 0, "description": "git commit、表单提交…", "status": "active", "source": "core" } ],
       "topic": [], "quality": [], "other": []
     },

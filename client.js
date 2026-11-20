@@ -487,9 +487,9 @@ window.__ModuleLoader__.load({
      * UI 只负责「按面分组展示 + 缺面提示」，面的真相在服务端词表（GET /tag-registry）。
      */
     const TAG_FACET_ORDER = ['action', 'topic', 'quality', 'other']
-    const TAG_FACET_LABELS = { object: '对象/项目类型', action: '动作/任务', topic: '主题/场景', quality: '质量/异常', other: '其他已用标签' }
+    // 0.37：object 面已在 kernel 物理删除，UI 常量同步去掉，否则详情页会提示「缺对象」。
+    const TAG_FACET_LABELS = { action: '动作/任务', topic: '主题/场景', quality: '质量/异常', other: '其他已用标签' }
     const TAG_FACET_HINTS = {
-      object: '再补一个对象标签，例如 代码/PPT/课件/DSH插件',
       action: '再补一个动作标签，例如 提交/推送/校验/验收',
     }
     const TAG_LIMIT = 8
@@ -1739,7 +1739,8 @@ window.__ModuleLoader__.load({
       const rowTagGroups = TAG_FACET_ORDER
         .map((facet) => [facet, rowTags.filter((name) => facetOfRowTag(name) === facet)])
         .filter(([, names]) => names.length > 0)
-      const rowMissing = rowTags.length === 0 ? [] : ['object', 'action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
+      // 0.37：object 面已删，详情只检查动作面。
+      const rowMissing = rowTags.length === 0 ? [] : ['action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
       const copyJson = () => {
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(data, null, 2))
