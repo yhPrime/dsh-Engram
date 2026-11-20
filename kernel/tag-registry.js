@@ -630,6 +630,19 @@ export function directionsOfFamily(family) {
   return names
 }
 
+/** 0.39：一次建「族→方向名[]」映射（避免每族都全表扫 BY_NAME）。 */
+export function directionsByFamily() {
+  const out = new Map()
+  for (const entry of BY_NAME.values()) {
+    if (entry.facet !== 'direction') continue
+    const family = normalizeFamilyName(entry.family)
+    if (family === '') continue
+    if (!out.has(family)) out.set(family, [])
+    out.get(family).push(entry.name)
+  }
+  return out
+}
+
 /**
  * 校验一个方向能否用于某族：必须是已登记 direction 标签 + 归属族匹配（拍板⑤）。
  * family 为空时只校验「是已登记方向」。

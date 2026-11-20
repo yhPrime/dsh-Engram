@@ -19,7 +19,7 @@ export const FAMILY_NAME_MAX_CHARS = 12
  * 0.38：族名里禁止的零宽/不可见字符（在原始串上判，NFKC 会吃掉一部分）。
  * 覆盖 \p{Cf}（零宽空格/BOM/双向控制符…）、\p{Default_Ignorable_Code_Point}（Hangul Filler/变体选择符…）、U+2800 盲文空白。
  */
-export const FAMILY_INVISIBLE_RE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/u
+export const FAMILY_INVISIBLE_RE = /[\p{Cf}\p{Cc}\p{Default_Ignorable_Code_Point}\u2800]/u
 
 /**
  * 同义归一表：命令/工具写法 → 规范中文族名（键必须已经是归一后的形态：小写、单空格）。

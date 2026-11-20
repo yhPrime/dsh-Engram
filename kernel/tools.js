@@ -60,7 +60,7 @@ import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseRece
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
 import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, updateTagFacet, validateNewTagName, validateTagSet, validateDirectionForFamily, directionFamilyOf, remapDirectionFamily, wordlistUnreadable } from './tag-registry.js'
 import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
-import { manageFamilies, readCreatedFamilies, syncCreatedFamilies, validateFamilyName } from './family-tools.js'
+import { manageFamilies, readCreatedFamilies, searchFamiliesByBuckets, syncCreatedFamilies, validateFamilyName } from './family-tools.js'
 import { FAMILY_INVISIBLE_RE, GENERIC_FAMILY_NAMES, normalizeFamilyName, specificFamilyOf } from './family-name.js'
 import {
   canonicalFamilyName,
@@ -382,7 +382,7 @@ export function buildTools(defineTool, config = {}) {
 
   const record = defineTool({
     name: 'exp_record',
-    description: '记录一条可复用的工作经验（做法 + 结果）。族=可复用动作模式（动词+对象，如 跑测试/写断言/git 推送），用 family 指定；方向标签=族内场景（如 写断言下的 契约断言/回归断言/探针先行），放 context/labels。同一做法就地更新 hits，近似替换写新条并标记旧条被取代。裸命令/裸工具名/单文件无技法编辑会被拒记——那是具体任务流水，改用 exp_object 记。标签只写类型不写实例名（仓库名等会被丢弃并记 tagsRejected）。',
+    description: '记录一条可复用的工作经验（做法 + 结果）。族=可复用动作（如 跑测试/写断言/git 推送），用 family 指定；方向标签=族内场景（如 写断言下的 契约断言/回归断言/探针先行），放 context/labels。同一做法就地更新 hits，近似替换写新条并标记旧条被取代。裸命令/裸工具名/单文件无技法编辑会被拒记——那是具体任务流水，改用 exp_object 记。标签只写类型不写实例名（仓库名等会被丢弃并记 tagsRejected）。',
     parameters: {
       intent: { type: 'string', required: true, description: '要做的任务/意图。' },
       action: { type: 'string', required: true, description: '采取的做法或方案名。' },
@@ -403,7 +403,7 @@ export function buildTools(defineTool, config = {}) {
       labels: { type: 'array', description: '可选：次级分类标签（≤8），与 context 合并；优先用 exp_type action=labels 列出的已有标签，已有无法满足才新建（方向标签新建须 facet=direction + family）。' },
       artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
       dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
-      family: { type: 'string', description: '可选：动作族=可复用动作模式（动词+对象，如 git 推送/跑测试/写断言）。不填则按动作标签/动作文本推导；对象词/裸泛词（执行/校验/代码）会被拒。建族前先 exp_family list 看有无近义族。' },
+      family: { type: 'string', description: '可选：动作族=可复用动作（如 git 推送/跑测试/写断言）。不填则按动作标签/动作文本推导；对象词/裸泛词（执行/校验/代码）会被拒。建族前先 exp_family list 看有无近义族。' },
       force: { type: 'boolean', description: '可选：强制记录（覆盖记录门槛）。只在你确认这条经验重学成本高、但门槛误判时用。' },
       // 时效治理（0.20 P0）：全部可选；不填就是旧行为（读时按 semi 解释）。
       volatility: { type: 'string', enum: ['stable', 'semi', 'perishable'], description: '可选：易腐层。stable=偏好/硬约束，semi=判断原则（默认），perishable=具体步骤/命令/API。只影响召回降权与复核，不改 G。' },
@@ -471,7 +471,7 @@ export function buildTools(defineTool, config = {}) {
         return {
           skipped: true,
           reason: '没有可执行动作信息',
-          suggestion: '补一句「动词+对象」的具体动作再记；动作写不出就说明这条还不值得记',
+          suggestion: '补一句具体的「动词+名词」动作再记；动作写不出就说明这条还不值得记',
         }
       }
       if (args.force !== true && !gateNegative && !gateUser && (gateGeneric || familyGeneric)) {
@@ -480,20 +480,20 @@ export function buildTools(defineTool, config = {}) {
           reason: familyGeneric
             ? '族名太泛，不能单独成为动作族'
             : '通用单步操作，模型本来就会，重学成本低',
-          suggestion: familyGeneric ? '改用「动词+对象」，例如 git 推送 / 跑 npm 测试 / 改 React 页面' : '这是任务流水：这件任务怎么做的用 exp_object 记；可复用做法请写清技法，确需记录可传 force:true',
+          suggestion: familyGeneric ? '改用具体动作，例如 git 推送 / 跑 npm 测试 / 改 React 页面' : '这是任务流水：这件任务怎么做的用 exp_object 记；可复用做法请写清技法，确需记录可传 force:true',
         }
       }
 
       // 0.38：显式族名类型错误（数字/数组/对象）必须明确拒，不能静默当「没给」再按推导族落库。
       if (args.family !== undefined && args.family !== null && typeof args.family !== 'string') {
-        return { skipped: true, reason: '族名必须是字符串', suggestion: 'family 传「动词+对象」的族名字符串；不需要族就别传 family' }
+        return { skipped: true, reason: '族名必须是字符串', suggestion: 'family 传可复用动作的族名字符串；不需要族就别传 family' }
       }
       // 0.38：显式给了族名（哪怕全是空白/纯不可见）就不能静默当「没给」。
       const familyProvided = typeof args.family === 'string' && args.family !== ''
       // 用**原始**串校验（含不可见字符/BOM），不能先归一再校验——否则 BOM 会被 NFKC 吃掉、纯空白/纯 BOM 文案也会分叉。
       if (familyProvided) {
         try { validateFamilyName(args.family) } catch (error) {
-          return { skipped: true, reason: `族名不合法：${error.message}`, suggestion: '族名要是「动词+对象」的可复用动作模式；具体任务用 exp_object 记，不需要族就别传 family' }
+          return { skipped: true, reason: `族名不合法：${error.message}`, suggestion: '族名要是具体动作（如 写脚本/改代码/跑测试）；具体任务用 exp_object 记，不需要族就别传 family' }
         }
       }
       // 0.38 P4：族名（显式/推导）必须过族名校验；force 只覆盖记录门槛，不覆盖族名合法性。
@@ -507,7 +507,7 @@ export function buildTools(defineTool, config = {}) {
       if (effectiveFamily === '') effectiveFamily = specificFamilyOf(gateText)
       if (effectiveFamily !== '') {
         try { validateFamilyName(effectiveFamily) } catch (error) {
-          return { skipped: true, reason: `族名不合法：${error.message}`, suggestion: '族名要是「动词+对象」的可复用动作模式；具体任务用 exp_object 记' }
+          return { skipped: true, reason: `族名不合法：${error.message}`, suggestion: '族名要是具体动作（如 写脚本/改代码/跑测试）；具体任务用 exp_object 记' }
         }
       }
       // 0.38：引用方向时校验「归属族匹配」（未登记的词按普通标签处理，不算方向）。
@@ -956,7 +956,7 @@ export function buildTools(defineTool, config = {}) {
 
   const recall = defineTool({
     name: 'exp_recall',
-    description: '按任务意图召回历史经验。默认先做簇路由（确定性的簇内检索，无同族回退全库）；返回 brief（记忆简报）、route（路由结果）与 candidates。mode=advantage：按 JitRL 优势排序；mode=evidence：无成败对照，Â 不具区分度，改按相似度×证据强度排序。',
+    description: '按任务意图召回历史经验。【怎么搜】intent 写「对象+任务+关键约束」（如「给研学课 PPT 插页（深蓝）」），别写「再来一页」这类省略句；已知族就用 family=<族名> 只读该族分片；技能用 skill=<slug> 取正文、group=<组名> 只列组内名字；不知道族名先 exp_family list query=<关键词/任务描述> 模糊搜族，或直接给 intent 让引擎路由。【怎么读结果】routes[].family 是本次命中的族名（≤3），candidates[].evidence[].family 是每条所属族，brief 是记忆简报；搜不到就把 intent 写具体些或换关键词再搜，不要凭空造族名。默认先做簇路由（确定性簇内检索，无同族回退全库）。mode=advantage：按 JitRL 优势排序；mode=evidence：无成败对照，Â 不具区分度，改按相似度×证据强度排序。',
     parameters: {
       intent: { type: 'string', description: '当前任务意图。写「对象+任务+关键约束」（如「给研学课 PPT 插一页（深蓝色调）」）；只写「再来一页」这种省略句会因相似度不足召回不到。用 skill 直接取技能时可省略。' },
       skill: { type: 'string', description: '可选：直接取这个技能（slug 或 id；可带 skill: 前缀，也可原样用目录条目名 engram:<slug>，两种前缀都剥）。给了就跳过检索，按本会话三态决定给全文还是复用回执；找不到返回 no-such-skill，不退回普通召回。' },
@@ -1454,6 +1454,18 @@ export function buildTools(defineTool, config = {}) {
         if (typeof result.induction === 'string') payload.induction = result.induction
         if (Number(result.marked) > 0) payload.marked = Number(result.marked)
         payload.pendingSkills = pendingSkills
+        // 0.39 P2：回执顶层带「本次命中的族」（≤3），模型从结果里就知道族名怎么叫，不必背全族目录。
+        const familyHits = new Map()
+        for (const candidate of Array.isArray(result.candidates) ? result.candidates : []) {
+          const row = (Array.isArray(candidate.evidence) && candidate.evidence[0]) || candidate
+          const family = row !== null && typeof row === 'object' && typeof row.family === 'string' ? row.family.trim() : ''
+          if (family !== '') familyHits.set(family, (familyHits.get(family) || 0) + 1)
+        }
+        const routeFamilies = [...familyHits.entries()]
+          .map(([family, count]) => ({ family, count }))
+          .sort((left, right) => (right.count - left.count) || left.family.localeCompare(right.family, 'zh'))
+          .slice(0, 3)
+        if (routeFamilies.length > 0) payload.routes = routeFamilies
         // 运行环境回执（P1）：让模型知道「这次按什么环境判断适用性」，以及哪些经验被环境门控隐藏/降权。
         const envDeclared = currentEnv.models.length > 0 || currentEnv.tools.length > 0 || currentEnv.environment !== ''
         if (envDeclared) payload.currentEnv = { models: currentEnv.models, tools: currentEnv.tools, environment: currentEnv.environment }
@@ -1739,7 +1751,9 @@ export function buildTools(defineTool, config = {}) {
         // 0.38：用原始串校验（含不可见字符/BOM）——String().trim() 会把首尾 BOM 吃掉，导致六入口口径不一致。
         // 纯空白（无不可见符）留给下面报「必须给 family」；纯不可见符（如 U+FEFF）走校验器的「族名不能为空」。
         if (typeof args.family === 'string' && args.family !== '') {
-          const plainBlank = args.family.trim() === '' && !FAMILY_INVISIBLE_RE.test(args.family)
+          // 0.39：先剥掉标准空白（\t\n\r 也是 \p{Cc}），纯空白仍报「必须给 family」；只剩非空白不可见符才走校验器。
+          const withoutBlank = args.family.replace(/[\t\n\r]/gu, '')
+          const plainBlank = args.family.trim() === '' && !FAMILY_INVISIBLE_RE.test(withoutBlank)
           if (!plainBlank) validateFamilyName(args.family)
         }
         const labelFamily = String(args.family || '').trim()
@@ -1880,9 +1894,10 @@ export function buildTools(defineTool, config = {}) {
 
   const familyTool = defineTool({
     name: 'exp_family',
-    description: '管理动作族（族=可复用动作模式，动词+对象）：list 列出真实存在的族 / create 校验并登记新族 / rename 改名 / merge 合并 / assign 把经验指派到族 / delete 仅允许空族。建族前先 list 看有无近义族，有就复用或 merge，别重复造。对象词（代码/课件）与裸泛词（执行/校验）不能当族名。具体任务怎么做用 exp_object，不进族。',
+    description: '管理动作族（族=可复用动作）：list 列出真实存在的族（可带 query 按关键词/任务描述模糊搜族，返回最像的 top 5）/ create 校验并登记新族 / rename 改名 / merge 合并 / assign 把经验指派到族 / delete 仅允许空族。建族前先 list 或 list query 看有无近义族，有就复用或 merge，别重复造。对象词（代码/课件）与裸泛词（执行/校验）不能当族名。具体任务怎么做用 exp_object，不进族。',
     parameters: {
       action: { type: 'string', enum: ['list', 'create', 'rename', 'merge', 'assign', 'delete'], required: true, description: '要执行的动作。' },
+      query: { type: 'string', description: '可选：仅 list 用。按关键词/任务描述模糊搜族（族名 + 方向标签，bigram/词双信号），返回最像的 top 5；不传则全量列。' },
       family: { type: 'string', description: 'create 的族名；rename/delete 的旧族名；assign 的目标族名。' },
       newName: { type: 'string', description: 'rename 的新族名；merge 的目标族名。' },
       names: { type: 'array', description: 'merge 的来源族名列表。' },
@@ -1911,6 +1926,19 @@ export function buildTools(defineTool, config = {}) {
             throw new Error(`族「${name}」还被 ${refs.length} 处对象链引用（如对象「${first.object}」第 ${first.chainIndex} 条链），先把链里的引用改掉再删`)
           }
         }
+        // 0.39：list query 只读 manifest.buckets（不读分片）——族多了也快。
+        if (action === 'list' && typeof args.query === 'string' && args.query.trim() !== '') {
+          let buckets = null
+          try { buckets = (readManifest(dataDir) || {}).buckets } catch { buckets = null }
+          const queryResult = searchFamiliesByBuckets(buckets, args.query)
+          if (queryResult !== null) {
+            for (const item of queryResult.families) {
+              const id = familyIdByName(registry, item.family)
+              if (id !== '') item.id = id
+            }
+            return queryResult
+          }
+        }
         const store = readStore(dataDir)
         // 0.38：create/assign 的目标族名先把旧名归一到当前族名，别把旧名复活成幽灵族（同一 id 出现两次）。
         let managedArgs = args
@@ -1922,9 +1950,17 @@ export function buildTools(defineTool, config = {}) {
             managedArgs = { ...args, family: canonical }
           }
         }
+        // 0.39：create 的「是否首次」要含已登记的空族——第二次 create 同一空族应为 created:false。
+        const createdBefore = action === 'create' ? readCreatedFamilies(dataDir) : []
         const { result, changed } = manageFamilies(store, action, managedArgs)
         if (changed) writeStore(dataDir, store)
-        syncCreatedFamilies(dataDir, action, managedArgs, result)
+        // 0.39：只读的 list 不写盘——只有改族动作才同步空族登记表。
+        if (action === 'create' || action === 'rename' || action === 'merge' || action === 'assign' || action === 'delete') {
+          syncCreatedFamilies(dataDir, action, managedArgs, result)
+        }
+        if (action === 'create' && result.created === true && createdBefore.includes(normalizeFamilyName(result.family))) {
+          result.created = false
+        }
         if (retiredNote !== '') result.note = result.note ? `${result.note}；${retiredNote}` : retiredNote
         // 族稳定 id 跟着 rename/merge 走：rename 只改 name，merge 把来源 id 记进目标别名。
         const beforeRegistry = JSON.stringify(registry)
@@ -1965,10 +2001,14 @@ export function buildTools(defineTool, config = {}) {
           result.directionWarning = `指派到族「${clipText(result.target, 40)}」时摘除了不属于该族的方向：${result.droppedDirections.join('、')}`
         }
         if (action === 'list' && Array.isArray(result.families)) {
-          for (const family of readCreatedFamilies(dataDir)) {
-            if (!result.families.some((item) => item.family === family)) result.families.push({ family, count: 0 })
+          // 0.39：query 模式保持模糊搜的 score 顺序，不并入空族、不再按 count 重排（count 只在同分时做次序）。
+          const queryMode = typeof args.query === 'string' && args.query.trim() !== ''
+          if (!queryMode) {
+            for (const family of readCreatedFamilies(dataDir)) {
+              if (!result.families.some((item) => item.family === family)) result.families.push({ family, count: 0 })
+            }
+            result.families.sort((a, b) => (b.count - a.count) || (a.family < b.family ? -1 : 1))
           }
-          result.families.sort((a, b) => (b.count - a.count) || (a.family < b.family ? -1 : 1))
           for (const item of result.families) {
             const id = familyIdByName(registry, item.family)
             if (id !== '') item.id = id

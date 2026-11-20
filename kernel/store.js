@@ -3314,6 +3314,11 @@ function clipHintText(text, limit) {
   return `${chars.slice(0, max - 1).join('')}…`
 }
 
+/** 0.39：把 \r\n/U+2028/U+2029/U+0085 等行分隔符换成空格——提示段是逐行拼的，名字里带分隔符会折行。 */
+function oneLine(text) {
+  return String(text === undefined || text === null ? '' : text).replace(/[\r\n\u2028\u2029\u0085]/g, ' ')
+}
+
 /**
  * L0（0.37 P1）：技能按组计数，如 `技能：ai-base-tools 8 / 动画 18 / 未分组 2（共 28）`。
  * 组数 > 10 时降级成 `技能 12 组（共 200）`：组名多到列不下，先保证长度有界。
@@ -3326,7 +3331,7 @@ function slimSkillLine(skills, limit = HINT_INDEX_LINE_CHARS) {
   if (groups.length === 0) return ''
   const text = groups.length > 10
     ? `技能 ${groups.length} 组（共 ${skills.length}）`
-    : `技能：${groups.map((group) => `${group.name} ${group.count}`).join(' / ')}（共 ${skills.length}）`
+    : `技能：${groups.map((group) => `${oneLine(group.name)} ${group.count}`).join(' / ')}（共 ${skills.length}）`
   return clipHintText(text, limit)
 }
 
@@ -3358,7 +3363,7 @@ function slimFamilyLine(dataDir, limit = HINT_INDEX_LINE_CHARS) {
   // 先按 top 10 出；放不下就少列几个族（可读的截断），最后一招才硬截断。
   let text = `经验族 ${rows.length} 个（共 ${total} 条）`
   for (let take = Math.min(10, rows.length); take >= 1; take -= 1) {
-    const shown = rows.slice(0, take).map(([family, count]) => `${family} ${count}`)
+    const shown = rows.slice(0, take).map(([family, count]) => `${oneLine(family)} ${count}`)
     const rest = rows.length - take
     const line = `经验族 ${rows.length}：${shown.join('、')}${rest > 0 ? `、…还有 ${rest}` : ''}（共 ${total} 条）`
     text = line
@@ -3379,7 +3384,7 @@ export function renderHintSlim(config = {}, maxCharacters = 1400) {
   }
   const active = visibleExperiences(store).length
   const lines = [
-    `经验库：记不记由你判断，不必每轮都记——只记以后能复用、能落成做法的；琐事与流水账不记。exp_recall(intent=对象+任务)；exp_record 顺手给主分类（分不出才留空），outcome 可省→pending，verdicts 回填；被否定 exp_feedback hurt。共 ${active} 条。`,
+    `经验库：不必每轮都记，只记可复用做法，流水账不记。搜：exp_recall(intent=描述目标+约束)；族=可复用动作；不知族名先 exp_family list query=<词> 搜。写：exp_record（对象=描述+族+方向），outcome 可省、verdicts 回填。共 ${active} 条。`,
   ]
   const pending = pendingRows(store, 2)
   if (pending.length > 0) {
@@ -3405,7 +3410,14 @@ export function renderHintSlim(config = {}, maxCharacters = 1400) {
   if (finalSkillLine !== '') lines.push(finalSkillLine)
   if (familyLine !== '') lines.push(familyLine)
   const text = lines.join('\n')
-  return text.length > cap ? text.slice(0, Math.max(0, cap - 1)) : text
+  // 硬 cap 按码元截断，但截断点落在代理对中间时退一格（不劈 emoji，且 .length ≤ cap）。
+  if (text.length <= cap) return text
+  let cut = cap
+  if (cut > 0) {
+    const code = text.charCodeAt(cut - 1)
+    if (code >= 0xd800 && code <= 0xdbff) cut -= 1
+  }
+  return text.slice(0, cut)
 }
 
 /** 旧版完整提示段（hintMode:'full'）：类型目录 + 全量技能目录。 */

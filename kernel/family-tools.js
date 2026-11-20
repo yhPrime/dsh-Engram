@@ -4,12 +4,58 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { canonicalRegisteredName, directionFamilyOf, facetOf, registrySnapshot } from './tag-registry.js'
+import { canonicalRegisteredName, directionFamilyOf, directionsByFamily, directionsOfFamily, facetOf, registrySnapshot } from './tag-registry.js'
 import { FAMILY_INVISIBLE_RE, FAMILY_NAME_MAX_CHARS, isGenericFamilyName, normalizeFamilyName } from './family-name.js'
+import { cjkBigrams, stateSimilarity, tokenize } from './kernel.js'
+
+/** 0.39 P1：族模糊搜返回上限（先按 5 试，四轮测试再调）。 */
+const FAMILY_SEARCH_LIMIT = 5
+
+/** 0.39 P1：按 manifest.buckets 直接搜族（不读分片）——族多了也只对族名+方向标签做内存计算。 */
+export function searchFamiliesByBuckets(buckets, query, limit = FAMILY_SEARCH_LIMIT) {
+  const queryText = typeof query === 'string' ? query.trim() : ''
+  if (queryText === '') return null
+  const counts = new Map()
+  for (const bucket of Array.isArray(buckets) ? buckets : []) {
+    const family = String((bucket && bucket.family) || '').trim()
+    const count = Math.trunc(Number(bucket && bucket.count) || 0)
+    if (family === '' || count <= 0) continue
+    counts.set(family, (counts.get(family) || 0) + count)
+  }
+  const all = [...counts.entries()].map(([family, count]) => ({ family, count }))
+  const queryState = queryStateOf(queryText)
+  const queryNorm = normalizeFamilyName(queryText)
+  const dirMap = directionsByFamily()
+  const scored = all
+    .map((item) => ({ ...item, score: familyMatchScore(queryState, queryNorm, item.family, dirMap) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => (b.score - a.score) || (b.count - a.count))
+    .slice(0, limit)
+  return { families: scored, total: all.length, query: Array.from(queryText).slice(0, 200).join('') }
+}
+
+/** 0.39 P1：query 摘要只算一次（tokenize/cjkBigrams 贵，别每个族重算一遍）；超长 query 先截断，避免集合爆炸。 */
+function queryStateOf(query) {
+  const bounded = Array.from(String(query)).slice(0, 200).join('')
+  return { tokens: tokenize(bounded), artifacts: [], cgrams: cjkBigrams(bounded.toLowerCase()) }
+}
+
+/** 0.39 P1：query 与族（名 + 该族方向标签）的相似度，复用 kernel 的 token/bigram 双信号。 */
+function familyMatchScore(queryState, queryNorm, family, dirMap) {
+  // 完全同名必须命中（1 字族名「写」「a」没有 bigram、tokenize 又会当停用词，不能算 0）。
+  if (queryNorm !== '' && normalizeFamilyName(family) === queryNorm) return 1
+  // 一次建好的「族→方向」映射优先（避免每族全表扫 BY_NAME）。
+  const directions = dirMap !== undefined
+    ? (dirMap.get(normalizeFamilyName(family)) || [])
+    : (Array.isArray(directionsOfFamily(family)) ? directionsOfFamily(family) : [])
+  const text = [family, ...directions].join(' ')
+  const have = { tokens: tokenize(text), artifacts: [], cgrams: cjkBigrams(text.toLowerCase()) }
+  return stateSimilarity(queryState, have)
+}
 
 /**
  * 0.37：object 面已从词表物理删除（TAG_FACETS 只剩 action/topic/quality），
- * `facetOf` 认不出这些词了，族名校验改按字面表挡：纯对象词不能当族名，族名必须是「动词+对象」。
+ * `facetOf` 认不出这些词了，族名校验改按字面表挡：纯对象词不能当族名，族名必须是具体动作。
  * 只比整名（`写脚本`/`改代码` 这类动作族不受影响）。
  */
 export const LEGACY_OBJECT_TAGS = new Set([
@@ -19,7 +65,7 @@ export const LEGACY_OBJECT_TAGS = new Set([
 ])
 
 /**
- * 0.38：族名唯一校验入口（族 = 可复用动作模式，「动词+对象」）。
+ * 0.38：族名唯一校验入口（族 = 可复用动作模式；一条对象 = 描述 + 族 + 方向）。
  * `exp_family` / `exp_object` / `exp_record` 三条建族路径共用，堵住「绕过校验自动建族」的口子。
  * 合法返回规范化族名；非法抛错。纯函数，不写盘。
  */
@@ -38,12 +84,12 @@ export function validateFamilyName(raw) {
   if (FAMILY_INVISIBLE_RE.test(raw)) throw new Error('族名不能含零宽/不可见字符')
   if (name === '未分族') throw new Error('「未分族」是保留族名，不能创建/改名/指派')
   // 0.37：object 面已在词表里删除，facetOf 认不出对象词，改用字面表兜住——
-  // 否则「代码」「课件」这类纯对象词会绕过校验变成族名（族名必须是「动词+对象」）。
+  // 否则「代码」「课件」这类纯对象词会绕过校验变成族名（族名必须是具体动作）。
   if (LEGACY_OBJECT_TAGS.has(name.toLowerCase())) {
-    throw new Error('对象词不能当族名，请用「动词+对象」，例如 写脚本 / 改代码 / 跑测试')
+    throw new Error('对象词不能当族名，请用具体动作，例如 写脚本 / 改代码 / 跑测试')
   }
   if (isGenericFamilyName(name)) {
-    throw new Error('族名太泛，请用「动词+对象」，例如 git 推送 / 跑 npm 测试')
+    throw new Error('族名太泛，请用具体动作，例如 git 推送 / 跑 npm 测试')
   }
   if ([...name].length > FAMILY_NAME_MAX_CHARS) throw new Error(`族名最多 ${FAMILY_NAME_MAX_CHARS} 字`)
   if (/[\\/:*?"<>|]/.test(name) || /^v?\d+(?:\.\d+)*$/iu.test(name)) throw new Error('族名不能是路径/版本号')
@@ -222,10 +268,23 @@ export function manageFamilies(store, action, args = {}) {
       const family = familyOfRow(row)
       counts.set(family, (counts.get(family) || 0) + 1)
     }
-    return {
-      changed: false,
-      result: { families: [...counts.entries()].map(([family, count]) => ({ family, count })).sort((a, b) => b.count - a.count) },
+    const all = [...counts.entries()].map(([family, count]) => ({ family, count })).sort((a, b) => b.count - a.count)
+    // 0.39 P1：按关键词/任务描述模糊搜族（族名 + 该族方向标签，bigram/词双信号），返回 top-5；不传 query 仍全量列。
+    const query = typeof args.query === 'string' ? args.query.trim() : ''
+    if (query !== '') {
+      // query 摘要只算一次；族侧逐族算（族名短，开销线性）。
+      const queryState = queryStateOf(query)
+      const queryNorm = normalizeFamilyName(query)
+      const dirMap = directionsByFamily()
+      const scored = all
+        .map((item) => ({ ...item, score: familyMatchScore(queryState, queryNorm, item.family, dirMap) }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => (b.score - a.score) || (b.count - a.count))
+        .slice(0, FAMILY_SEARCH_LIMIT)
+      // 回显的 query 也截到 200 码点界（10 万字符 query 不能原样撑爆回执）。
+      return { changed: false, result: { families: scored, total: all.length, query: Array.from(query).slice(0, 200).join('') } }
     }
+    return { changed: false, result: { families: all } }
   }
   if (action === 'create') {
     const family = checkName(args.family)
@@ -321,7 +380,8 @@ export function readCreatedFamilies(dataDir) {
 
 export function writeCreatedFamilies(dataDir, names) {
   const dir = path.join(String(dataDir || ''), 'library')
-  if (!fs.existsSync(dir)) return
+  // 0.39：未初始化的 dataDir（library/ 还没建）也要能登记空族，不能静默跳过导致 create 永远 created:true。
+  fs.mkdirSync(dir, { recursive: true })
   const list = []
   for (const item of Array.isArray(names) ? names : []) {
     const name = normalizeFamilyName(item)

@@ -63,6 +63,8 @@ function slimEvidence(evidence, first) {
     outcome: evidence.outcome,
     G: round(evidence.G),
     similarity: round(evidence.similarity),
+    // 0.39：每条证据带上所属族，模型才知道「这条属于哪族」（exp_recall 描述按此承诺）。
+    ...(typeof evidence.family === 'string' && evidence.family !== '' ? { family: cut(evidence.family, 40) } : {}),
   }
   // 同一候选的第 2 条证据只留可比较的最小字段（谁、结果、分数），细节看首条；
   // 但生命周期要带上——它正是「这条被取代/退休过」的提示。
