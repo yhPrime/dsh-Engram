@@ -2829,7 +2829,20 @@ function writeFamilyIndexes(dataDir, typeId, typeName, entries, created = false)
 export function writeFamilyShards(dataDir, store, previousManifest = null, options = {}) {
   const dir = String(dataDir || '')
   if (dir === '') throw new Error('writeFamilyShards 需要 dataDir（.exp 根目录）')
-  const groups = groupRecordsByFamily(store)
+  let groups = groupRecordsByFamily(store)
+  // flat 布局族文件路径不含 typeId（library/<族>~hash.jsonl），但 groupRecordsByFamily 按 (typeId,family) 分组。
+  // 同一族的行若来自不同 typeId（分类退场前的存量 / 跨类改族），会拆成多个组写同一个文件：
+  // 磁盘只留最后一块、entries 却登记多份 → manifest 重复 bucket + 行数对不上（读自愈报「分族文件损坏」）。
+  // 这里按族合并，保证一族一文件。typeId 在 flat 下只是残留元数据，取首组的即可。
+  if (isFlatLayout(dir)) {
+    const byFamily = new Map()
+    for (const group of groups.values()) {
+      const existing = byFamily.get(group.family)
+      if (existing !== undefined) existing.rows.push(...group.rows)
+      else byFamily.set(group.family, { ...group, rows: [...group.rows] })
+    }
+    groups = byFamily
+  }
   // 0.27.0：即使本次没有行，也要建 library/ 根——布局标记必须能从磁盘看出来（空库丢 manifest 后不能退回 schema 2）。
   fs.mkdirSync(path.join(dir, LIBRARY_DIR), { recursive: true })
   const previousByName = new Map()
