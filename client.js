@@ -1458,7 +1458,7 @@ window.__ModuleLoader__.load({
                     storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'))
                   : h('div', { className: 'eng-muted' }, '仍是旧布局（schema 2）：请先迁移到分族布局，概览只展示新口径。'),
             storage !== null && (storage.layout === 'family' || storage.layout === 'family-flat') ? h('div', { className: 'eng-muted eng-section-note' },
-              `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件 · 分类 ${storage.typeDirs || 0} · 族 ${storage.familyFiles || 0}`) : null,
+              `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件 · 族 ${storage.familyFiles || 0}`) : null,
             h('div', { className: 'eng-subsection' },
               h('button', { type: 'button', className: 'eng-subsection-head', 'aria-expanded': coldOpen ? 'true' : 'false', onClick: () => setColdOpen((open) => !open) },
                 h('span', { className: 'eng-strong' }, '冷档'),
