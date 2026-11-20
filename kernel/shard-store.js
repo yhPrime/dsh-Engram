@@ -670,7 +670,11 @@ export function hasShardFiles(dataDir) {
     if (!fs.statSync(library).isDirectory()) return true
   } catch { /* 不存在 */ }
   try {
-    for (const name of fs.readdirSync(library)) {
+    const names = fs.readdirSync(library)
+    // 分族 flat 布局（0.33+）：`library/<族>~<hash>.jsonl` 直接躺在 library 根，没有子目录。
+    // 漏了这一条会让 hasShardFiles 对 flat 库返回 false，rebuildManifest 掉进 legacy 分支把 manifest 清空。
+    if (names.some((name) => name.toLowerCase().endsWith('.jsonl'))) return true
+    for (const name of names) {
       if (isIgnoredLibraryDir(name)) continue
       // R10 缺陷：library 下的无扩展名普通文件不是「有分族布局」的证据，只认目录。
       try { if (!fs.statSync(path.join(library, name)).isDirectory()) continue } catch { continue }

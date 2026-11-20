@@ -7,6 +7,17 @@ import path from 'node:path'
 import { canonicalRegisteredName, facetOf, registrySnapshot } from './tag-registry.js'
 import { FAMILY_NAME_MAX_CHARS, isGenericFamilyName, normalizeFamilyName } from './family-name.js'
 
+/**
+ * 0.37：object 面已从词表物理删除（TAG_FACETS 只剩 action/topic/quality），
+ * `facetOf` 认不出这些词了，族名校验改按字面表挡：纯对象词不能当族名，族名必须是「动词+对象」。
+ * 只比整名（`写脚本`/`改代码` 这类动作族不受影响）。
+ */
+export const LEGACY_OBJECT_TAGS = new Set([
+  '代码', 'ppt', 'pptx', '幻灯片', '演示文稿', 'word', 'docx', 'excel', 'xlsx', 'wps',
+  '课件', '任务卡', '版式', '插页', 'dsh插件', '网页应用', 'agent', '智能体平台', '脚本',
+  'dsh', '关系图', '经验库',
+])
+
 /** 动作面标签 → 父级（UI 分组用；不影响召回）。 */
 export const TAG_PARENT_MAP = Object.freeze({
   提交: '交付',
@@ -175,6 +186,11 @@ export function manageFamilies(store, action, args = {}) {
     const name = normalizeFamilyName(raw)
     if (name === '') throw new Error('族名不能为空')
     if (name === '未分族') throw new Error('「未分族」是保留族名，不能创建/改名/指派')
+    // 0.37：object 面已在词表里删除，facetOf 不再能认出对象词，改用字面表兜住——
+    // 否则「代码」「课件」这类纯对象词会绕过校验变成族名（族名必须是「动词+对象」）。
+    if (LEGACY_OBJECT_TAGS.has(name.toLowerCase())) {
+      throw new Error('对象词不能当族名，请用「动词+对象」，例如 写脚本 / 改代码 / 跑测试')
+    }
     if (isGenericFamilyName(name)) {
       throw new Error('族名太泛，请用「动词+对象」，例如 git 推送 / 跑 npm 测试')
     }
