@@ -661,6 +661,12 @@ export function buildTools(defineTool, config = {}) {
         const canonicalFamily = canonicalFamilyName(readFamilyRegistry(dataDir), row.family)
         if (canonicalFamily !== row.family) row.family = canonicalFamily
       }
+      // 0.38：族即动作——已登记 action 面的标签不再落进 context（族已承担动作，标签只留方向/主题）。
+      const stripRowActionTags = (row) => {
+        if (row === null || typeof row !== 'object' || !Array.isArray(row.context)) return
+        const kept = row.context.filter((name) => facetOf(name) !== 'action')
+        if (kept.length !== row.context.length) row.context = kept
+      }
       const haveVerdicts = Array.isArray(args.verdicts) && args.verdicts.length > 0
       let verdictResults = []
       let pendingOut = { rows: [], skipped: [] }
@@ -755,6 +761,7 @@ export function buildTools(defineTool, config = {}) {
             // 0.38：重记/合并后摘掉跨族方向（先摘再写盘，保证落库就干净）。
             directionDropped = pruneRowForeignDirections(result.experience)
             canonicalizeRowFamily(result.experience)
+            stripRowActionTags(result.experience)
             // 写回：touched = 读过的类型 + upsert 实际落到/新建的类型；每类都要给**全部行**（含墓碑）。
             const rowsByType = groupRowsByType(store.experiences)
             const touched = [...new Set([...loadedTypeIds, String(result.experience.typeId || targetTypeId)])]
@@ -803,6 +810,7 @@ export function buildTools(defineTool, config = {}) {
         result = upsertExperience(store, upsertInput, upsertOptions)
         directionDropped = pruneRowForeignDirections(result.experience)
         canonicalizeRowFamily(result.experience)
+        stripRowActionTags(result.experience)
         writeStore(dataDir, store)
         activeCount = visibleExperiences(store).length
       }
@@ -862,7 +870,7 @@ export function buildTools(defineTool, config = {}) {
       const savedTags = normalizeContext(result.experience.context)
       const savedFacets = groupByFacet(savedTags)
       const savedMissingFacets = TAG_REQUIRED_FACETS.filter((facet) => savedFacets[facet].length === 0)
-      const overflowTags = allTags.filter((tag) => !savedTags.some((saved) => saved.toLowerCase() === tag.toLowerCase())
+      const overflowTags = allTags.filter((tag) => facetOf(tag) !== 'action' && !savedTags.some((saved) => saved.toLowerCase() === tag.toLowerCase())
         && !directionDropped.some((dropped) => dropped.toLowerCase() === tag.toLowerCase()))
       const directionWarn = directionDropped.map((tag) => `方向「${clipText(tag)}」不属于本经验的族「${clipText(result.experience && result.experience.family)}」，已摘除`)
       // 0.38：整段告警限长，避免一次塞几十条超长标签把回执撑过 2KB。

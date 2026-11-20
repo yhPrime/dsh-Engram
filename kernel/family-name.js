@@ -132,6 +132,13 @@ export function specificFamilyOf(actionText) {
   if (/复现/.test(lower)) return '复现缺陷'
   if (/定位|排查|诊断/.test(lower)) return '定位问题'
   if (/验收/.test(lower)) return '验收产物'
+  // 0.38 精度护栏：整句以改造动词开头、且含「校验/验证/对拍/回归」这类宽词时，
+  // 宽词多半是名词（如「缺面校验」），主动作是改造 → 判改代码/改文档，不据此判跑校验。
+  // 只纠这一个误判模式；不含宽词的「改页面并写文档」仍走「编写编辑在前」的原有规则。
+  if (/^(?:改|删|修改|调整|优化|重构|重写|替换|移除|去掉|补上|加上|抽出|拆分|合并)/u.test(text) && /校验|验证|对拍|回归/.test(lower)) {
+    if (/ppt|课件|教案|文档|页面|文案/u.test(lower)) return '改文档'
+    return '改代码'
+  }
   if (/校验|验证|对拍|回归/.test(lower)) return '跑校验'
   if (/编写|撰写|写文档|改文档|写教案|写计划/.test(lower)) return '编写文档'
   if (/生成|产出|导出/.test(lower)) return '生成产物'
