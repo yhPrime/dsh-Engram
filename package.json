@@ -45,7 +45,8 @@
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
     "ui/icons-gallery.js",
-    "tools/migrate-tags-v2.mjs"
+    "tools/migrate-tags-v2.mjs",
+    "tools/graph-perf-report.mjs"
   ],
   "icon": "./icon.svg",
   "dsh": {
