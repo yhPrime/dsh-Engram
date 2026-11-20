@@ -92,11 +92,12 @@ const OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
 const TRIAL_MIN_SIMILARITY = 0.18
 
 /**
- * 自动记录的类型兜底（0.24.x）：标签的对象面 → 预设主分类名。
+ * 自动记录的类型兜底（0.24.x）：标签字面 → 预设主分类名。
  *
- * 自动记录没有模型参与，只能靠引擎。簇路由命中就用簇；没命中时如果对象面已经认出
- * 「这是 DSH插件 / 课件 / 代码……」，档案柜不该还挂在「未分类」上。
- * 只映射到已有的类型（不新建），映射不到就保持原样——宁可未分类，也不凭空造分类。
+ * 自动记录没有模型参与，只能靠引擎。簇路由命中就用簇；没命中时如果标签里已经出现
+ * 「DSH插件 / 课件 / 代码……」，档案柜不该还挂在「未分类」上。
+ * 0.37 起 object 面已删除，这些词不再是登记标签，但模型/旧数据仍可能原样传进来，
+ * 所以这里按**字面**匹配（不查 facetOf），映射不到就保持原样——宁可未分类，也不凭空造分类。
  */
 const AUTO_TYPE_BY_OBJECT_TAG = {
   DSH插件: '开发', 代码: '开发', 脚本: '开发', 网页应用: '开发', Agent: '开发', 智能体平台: '开发',
@@ -335,7 +336,7 @@ export function buildTools(defineTool, config = {}) {
 
   const record = defineTool({
     name: 'exp_record',
-    description: '记录一条工作经验（做法 + 结果）。同一做法会就地更新 hits，近似替换会写新条并标记旧条被取代。标签（context/labels，≤8）请凑出「至少 1 个对象 + 1 个动作」：对象如 代码/PPT/课件/DSH插件，动作如 提交/推送/校验/验收；只写大类会回 tagWarning。标签只写类型不写实例名（DSH-Engram 会被归一成 DSH插件，yxjd-explib 这类仓库名会被丢弃并记 tagsRejected）。',
+    description: '记录一条工作经验（做法 + 结果）。同一做法会就地更新 hits，近似替换会写新条并标记旧条被取代。标签（context/labels，≤8）请凑出「至少 1 个动作 + 1 个主题」：动作如 提交/推送/校验/验收，主题如 研学课/课件/布局；0.37 起对象面已删除，别再打「代码/PPT/DSH插件」这类对象标签。只写大类会回 tagWarning。标签只写类型不写实例名（yxjd-explib 这类仓库名会被丢弃并记 tagsRejected）。',
     parameters: {
       intent: { type: 'string', required: true, description: '要做的任务/意图。' },
       action: { type: 'string', required: true, description: '采取的做法或方案名。' },
