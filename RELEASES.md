@@ -711,3 +711,6 @@ pm test 在 release 分支全绿
 - **v0.36.11（P3 读数工具）**
   - 新增 tools/graph-perf-report.mjs：只读 ~/.dsh/engram/graph-perf.jsonl，按节点规模输出 p50/p95/最差/fps；npm run graph:report
   - 有历史读数时先给基线（旧库 278 节点 p95 12.52ms），当前 415 节点版本仍需重启后重新采
+
+- **v0.36.12（安装包内带上 p95 汇总脚本）**
+  - package.json files 与 build-release 增加 tools/graph-perf-report.mjs，安装后可直接 node tools/graph-perf-report.mjs 或 npm run graph:report
