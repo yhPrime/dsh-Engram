@@ -661,10 +661,12 @@ export function buildTools(defineTool, config = {}) {
         const canonicalFamily = canonicalFamilyName(readFamilyRegistry(dataDir), row.family)
         if (canonicalFamily !== row.family) row.family = canonicalFamily
       }
-      // 0.38：族即动作——已登记 action 面的标签不再落进 context（族已承担动作，标签只留方向/主题）。
+      // 0.38：族即动作——已登记 action 面的标签、以及与行族同名的标签，都不再落进 context
+      //（族已承担动作/同名语义，标签只留方向/主题/质量）。
       const stripRowActionTags = (row) => {
         if (row === null || typeof row !== 'object' || !Array.isArray(row.context)) return
-        const kept = row.context.filter((name) => facetOf(name) !== 'action')
+        const family = normalizeFamilyName(row.family)
+        const kept = row.context.filter((name) => facetOf(name) !== 'action' && (family === '' || normalizeFamilyName(name) !== family))
         if (kept.length !== row.context.length) row.context = kept
       }
       const haveVerdicts = Array.isArray(args.verdicts) && args.verdicts.length > 0
