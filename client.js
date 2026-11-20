@@ -1739,7 +1739,7 @@ window.__ModuleLoader__.load({
       const rowTagGroups = TAG_FACET_ORDER
         .map((facet) => [facet, rowTags.filter((name) => facetOfRowTag(name) === facet)])
         .filter(([, names]) => names.length > 0)
-      const rowMissing = rowTags.length === 0 ? [] : ['action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
+      const rowMissing = rowTags.length === 0 ? [] : ['object', 'action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
       const copyJson = () => {
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(data, null, 2))
@@ -4184,9 +4184,6 @@ window.__ModuleLoader__.load({
           const list = derivedByTarget.get(edge.target) || []
           list.push(edge.source)
           derivedByTarget.set(edge.target, list)
-        } else if (edge.kind === 'chain') {
-          // 对象层：链贴在父对象旁边。
-          parentOf.set(edge.target, edge.source)
         }
       }
       const centers = new Map()
@@ -4202,7 +4199,7 @@ window.__ModuleLoader__.load({
       for (const node of families) positions.set(node.id, centers.get(node.id))
       const expByFamily = new Map()
       for (const node of experiences) {
-        const key = graphFamilyIdOf(node.family)
+        const key = `family:${node.family}`
         const list = expByFamily.get(key) || []
         list.push(node)
         expByFamily.set(key, list)
@@ -4280,23 +4277,6 @@ window.__ModuleLoader__.load({
         const rr = 450 + rand(`${node.id}r`) * 90
         positions.set(node.id, { x: Math.sin(b) * Math.cos(a) * rr, y: Math.cos(b) * rr * 0.8, z: Math.sin(b) * Math.sin(a) * rr })
       }
-      // 对象层外圈：对象按黄金角铺在 700+ 半径，链贴着父对象。
-      const extras = nodes.filter((node) => node.kind === 'object' || node.kind === 'chain')
-      let objectIndex = 0
-      for (const node of extras) {
-        if (positions.has(node.id)) continue
-        const parentId = parentOf.get(node.id)
-        const parent = parentId ? positions.get(parentId) : null
-        if (parent) {
-          const a = rand(`${node.id}a`) * Math.PI * 2
-          positions.set(node.id, { x: parent.x + Math.cos(a) * 34, y: parent.y + (rand(`${node.id}y`) - 0.5) * 40, z: parent.z + Math.sin(a) * 34 })
-          continue
-        }
-        const phi = objectIndex * 2.399963 + rand(`${node.id}a`) * 0.3
-        const rr = 700 + rand(`${node.id}r`) * 80
-        positions.set(node.id, { x: Math.cos(phi) * rr, y: (rand(`${node.id}y`) - 0.5) * 260, z: Math.sin(phi) * rr })
-        objectIndex += 1
-      }
       // 所有星球都略微离开太阳两极：纬度限制 0.9；正好落在轴上的给一点横向偏移。
       const LAT_LIMIT = 0.9
       for (const [id, point] of positions) {
@@ -4319,12 +4299,9 @@ window.__ModuleLoader__.load({
     // 族 id 转义与服务端 graphFamilyId 同口径：过滤「只看此族」时必须用同一条规则比较，否则带 : / % 的族会把经验全滤掉。
     const graphFamilyIdOf = (name) => `family:${String(name || '').replace(/%/g, '%25').replace(/:/g, '%3A').replace(/\//g, '%2F')}`
     const graphFamilyNameOf = (id) => String(id || '').replace(/^family:/, '').replace(/%3A/g, ':').replace(/%2F/g, '/').replace(/%25/g, '%')
-    const GRAPH_KIND_LABELS = { root: '根', family: '族', experience: '经验', skill: '技能', suite: '套件', object: '对象', chain: '链' }
     function Graph() {
-      // 对象层默认关：设置里打开后才请求 /graph?objects=1（多画对象/链节点）。
+      const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
-      const objectsOn = Boolean(settings.data && settings.data.ui && settings.data.ui.graphObjects === true)
-      const graph = useLoad(useCallback(() => request(objectsOn ? '/graph?objects=1' : '/graph'), [objectsOn]))
       const canvasRef = useRef(null)
       const wrapRef = useRef(null)
       const fitRef = useRef(null)
@@ -4584,8 +4561,6 @@ window.__ModuleLoader__.load({
         const radiusOf = (node, weight) => {
           const w = Math.max(0.06, Math.min(1, Number(weight) || 0.3))
           if (node.kind === 'root') return 9 + Math.pow(w, 0.85) * 3
-          if (node.kind === 'object') return 4.5 + Math.pow(w, 0.85) * 5
-          if (node.kind === 'chain') return 2.6 + Math.pow(w, 0.85) * 2.4
           if (node.kind === 'family') return 4 + Math.pow(w, 0.85) * 7
           if (node.kind === 'suite') return 6 + Math.pow(w, 0.85) * 6
           if (node.kind === 'skill') return 4.5 + Math.pow(w, 0.9) * 5.5
@@ -5264,7 +5239,7 @@ window.__ModuleLoader__.load({
           addLabel(store.selected === null ? null : store.nodes.get(store.selected), 0)
           addLabel(store.hovered === null ? null : store.nodes.get(store.hovered), 0)
           for (const entry of store.nodes.values()) {
-            if (entry.node.kind === 'family' || entry.node.kind === 'object') addLabel(entry, 1)
+            if (entry.node.kind === 'family') addLabel(entry, 1)
             else if (entry.node.kind === 'suite') addLabel(entry, 2)
             else if (entry.node.kind === 'experience' && entry.screenF > 1.05 && entry.currentWeight >= 0.5) addLabel(entry, 3)
           }
@@ -5460,10 +5435,10 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   className: 'eng-graph-search-hit',
                   onClick: () => { selectNode(node); setQuery('') },
-                }, `${node.label || node.id} · ${GRAPH_KIND_LABELS[node.kind] || node.kind}`))) : null),
+                }, `${node.label || node.id} · ${node.kind}`))) : null),
           h('div', { className: 'eng-graph-drawer-label' }, '筛选'),
           h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图节点筛选' },
-            [['all', '全部'], ['family', '族'], ['experience', '经验'], ['skill', '技能'], ['suite', '套件'], ['object', '对象']].map(([key, label]) => h('button', {
+            [['all', '全部'], ['family', '族'], ['experience', '经验'], ['skill', '技能'], ['suite', '套件']].map(([key, label]) => h('button', {
               key,
               type: 'button',
               'data-active': kindFilter === key ? 'true' : 'false',
@@ -5523,7 +5498,7 @@ window.__ModuleLoader__.load({
             .filter((node) => node.kind !== 'root')
             .slice(0, 300)
             .map((node) => h('li', { key: node.id },
-              h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${GRAPH_KIND_LABELS[node.kind] || node.kind}）`)))),
+              h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${({ family: '族', suite: '套件', skill: '技能', experience: '经验' })[node.kind] || node.kind}）`)))),
         (graph.error || (graph.data && graph.data.storeError))
           ? h('div', { style: { position: 'absolute', left: 14, top: 14, right: 14, zIndex: 3 } },
             h(Banner, { bad: true }, graph.error || `经验数据读取失败：${graph.data.storeError.message}${graph.data.storeError.file ? `（${graph.data.storeError.file}）` : ''}`))
@@ -5545,7 +5520,7 @@ window.__ModuleLoader__.load({
               : null)
           : null,
         selection === null ? null : h('div', { className: 'eng-graph-detail' },
-          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'family' || selection.kind === 'object' ? 'brand' : selection.kind === 'chain' ? 'muted' : outcomeOf(selection.outcome)[1] }, GRAPH_KIND_LABELS[selection.kind] || '经验')),
+          h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'family' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'family' ? '族' : selection.kind === 'suite' ? '套件' : selection.kind === 'skill' ? '技能' : '经验')),
           h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
           h('dl', { className: 'eng-kv' },
             selection.kind === 'experience' ? h('dt', null, '结果') : null,

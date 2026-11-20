@@ -1,7 +1,7 @@
 /**
  * 标签词表（P0 · 标签分类与召回治理，2026-11-14）
  *
- * 职责：给标签指定「面」（object/action/topic/quality）、维护别名与 core 种子词、
+ * 职责：给标签指定「面」（action/topic/quality）、维护别名与 core 种子词、
  * 提供命名校验。标签只描述**类型**，不描述**实例**：
  *  - `DSH-Engram` 这类项目实例名统一归一成 `DSH插件`；
  *  - `EigenFlux`（已拍板 2026-11-14）：具体项目名不是泛 Agent，项目类型统一为 `智能体平台`，
@@ -21,14 +21,13 @@ export const TAG_MAX_COUNT = 8
 export const TAG_RECOMMEND_MIN = 2
 export const TAG_RECOMMEND_MAX = 6
 
-/** 四个面。顺序即 UI 分组顺序。 */
-export const TAG_FACETS = ['object', 'action', 'topic', 'quality']
+/** 三个面。顺序即 UI 分组顺序。0.37：object 面已退休并物理删除。 */
+export const TAG_FACETS = ['action', 'topic', 'quality']
 
 /** 用户覆盖文件（相对数据根）：只放手动登记的新标签，内建词不写这里。 */
 export const TAG_REGISTRY_FILE = 'tag-registry.json'
 
 export const TAG_FACET_LABELS = {
-  object: '对象/项目类型',
   action: '动作/任务',
   topic: '主题/场景',
   quality: '质量/异常',
@@ -37,7 +36,6 @@ export const TAG_FACET_LABELS = {
 
 /** 缺面时的提示文案（UI 与工具回执共用一套，别两处各写一句）。 */
 export const TAG_FACET_HINTS = {
-  object: '再补一个对象标签，例如 代码/PPT/课件/DSH插件',
   action: '再补一个动作标签，例如 提交/推送/校验/验收',
 }
 
@@ -52,25 +50,6 @@ export const TAG_REQUIRED_FACETS = ['action']
  * 拍板归一成 `智能体平台`，见下）。
  */
 const SEED = [
-  // —— 对象 / 项目类型 ——
-  { name: '代码', facet: 'object', core: true, description: '改代码、写脚本、修缺陷这类产出的本体。', aliases: [] },
-  { name: 'PPT', facet: 'object', core: true, description: '演示文稿本体；具体篇目交给 intent/artifacts。', aliases: ['ppt', 'pptx', '幻灯片', '演示文稿'] },
-  { name: 'Word', facet: 'object', core: true, description: '文档本体（docx）。', aliases: ['word', 'docx'] },
-  { name: 'Excel', facet: 'object', core: false, description: '表格本体（xlsx）。', aliases: ['excel', 'xlsx'] },
-  { name: 'WPS', facet: 'object', core: true, description: 'WPS 系格式与客户端。', aliases: ['wps'] },
-  { name: '课件', facet: 'object', core: true, description: '教学用课件；具体课题交给 intent。', aliases: [] },
-  { name: '任务卡', facet: 'object', core: true, description: '任务卡这类课堂载体。', aliases: [] },
-  { name: '版式', facet: 'object', core: true, description: '排版、版式、母版与页面结构。', aliases: ['docx排版'] },
-  { name: '插页', facet: 'object', core: true, description: '给已有稿子插入页面或过渡页。', aliases: [] },
-  { name: 'DSH插件', facet: 'object', core: true, description: 'DSH 宿主上的插件开发、安装、调试与发布。', aliases: ['dsh-engram', 'dsh 插件', 'dsh 插件开发', '经验库插件', 'awesome-dsh-plugin', 'dsh-engram-dev'] },
-  { name: '网页应用', facet: 'object', core: true, description: '浏览器里跑的页面/前端应用。', aliases: [] },
-  { name: 'Agent', facet: 'object', core: true, description: '智能体、子代理、多代理编排。', aliases: [] },
-  // 已拍板（2026-11-14）：EigenFlux 是具体项目名，项目类型统一为「智能体平台」。
-  // 旧词只留隐藏别名，新记录不再出现 EigenFlux（读旧数据时归一，不批量改盘）。
-  { name: '智能体平台', facet: 'object', core: true, description: '智能体平台的开发、调试与运营（EigenFlux 这类具体项目归到这里）。', aliases: ['eigenflux', 'eigen flux'] },
-  { name: '脚本', facet: 'object', core: true, description: '一次性/批处理的脚本工具。', aliases: [] },
-  { name: 'DSH', facet: 'object', core: false, description: 'DSH 宿主本身（不是插件）。', aliases: ['dsh'] },
-
   // —— 动作 / 任务 ——
   { name: '提交', facet: 'action', core: true, description: 'git commit、表单提交、单据提交。', aliases: ['commit'] },
   { name: '推送', facet: 'action', core: true, description: 'git push、上传到远端。', aliases: ['push'] },
@@ -303,7 +282,6 @@ export function inferTagFacet(value) {
   const name = String(value || '').trim()
   if (name === '') return 'topic'
   if (/提交|推送|校验|验收|编写|注册|安装|分类|沉淀|恢复|还原|修复|生成|整理|回滚|删除|清理|导出|导入|合并|改名|查询|统计|对比|评测|部署|发布/u.test(name)) return 'action'
-  if (/PPT|Word|Excel|课件|插件|网页|页面|代码|脚本|文档|表格|任务卡|版式|插页|经验库|关系图|客户端|界面|图标/u.test(name)) return 'object'
   return 'topic'
 }
 export function facetOf(value) {
@@ -401,7 +379,7 @@ export function validateTagSet(values) {
 
 /** 按面分组；未登记的进 other。名字保持调用方顺序。 */
 export function groupByFacet(values) {
-  const out = { object: [], action: [], topic: [], quality: [], other: [] }
+  const out = { action: [], topic: [], quality: [], other: [] }
   for (const value of Array.isArray(values) ? values : []) {
     const name = String(value === undefined || value === null ? '' : value).trim()
     if (name === '') continue
@@ -416,14 +394,14 @@ export function groupByFacet(values) {
  * 从意图文本里抽取 queryTags（P1 · 类型路由影子对比，纯函数、不调模型）。
  *
  * 规则：词表里的规范名或别名，只要作为「词面」出现在 intent 里就算命中；
- * 大小写不敏感、空白折叠。四个面固定返回，没有命中就是四个空数组。
+ * 大小写不敏感、空白折叠。三个面固定返回，没有命中就是三个空数组。
  * 只收**已登记**的词（含用户覆盖），词表外的自由标签不凭空造。
  *
  * @param {string} intent
- * @returns {{object: string[], action: string[], topic: string[], quality: string[]}}
+ * @returns {{action: string[], topic: string[], quality: string[]}}
  */
 export function extractQueryTags(intent) {
-  const queryTags = { object: [], action: [], topic: [], quality: [] }
+  const queryTags = { action: [], topic: [], quality: [] }
   const text = String(intent === undefined || intent === null ? '' : intent).replace(/\s+/gu, ' ').trim().toLowerCase()
   if (text === '') return queryTags
   for (const entry of BY_NAME.values()) {
@@ -435,8 +413,7 @@ export function extractQueryTags(intent) {
     if (!terms.some((term) => text.includes(term))) continue
     if (!queryTags[facet].some((name) => name.toLowerCase() === entry.name.toLowerCase())) queryTags[facet].push(entry.name)
   }
-  // 同面的重叠词只留更具体的那个：意图「DSH插件」不应同时抽出对象 DSH（它只是长词的一部分），
-  // 否则经验只带「DSH插件」时对象面覆盖率会被一个多余查询词拉低。
+  // 同面的重叠词只留更具体的那个：意图里相邻的包含关系只保留长词，避免覆盖率被多余查询词拉低。
   for (const facet of TAG_FACETS) {
     const list = queryTags[facet]
     queryTags[facet] = list.filter((name, index) => !list.some((other, otherIndex) => (
@@ -448,7 +425,7 @@ export function extractQueryTags(intent) {
 
 /** 词表快照（给 `/tag-registry` 与测试用）。含用户覆盖条目。 */
 export function registrySnapshot() {
-  const groups = { object: [], action: [], topic: [], quality: [] }
+  const groups = { action: [], topic: [], quality: [] }
   for (const entry of BY_NAME.values()) {
     const bucket = groups[entry.facet]
     if (bucket === undefined) continue

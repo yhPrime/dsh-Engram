@@ -14,24 +14,23 @@ import { lifecycleOf } from './retrieval.js'
 import { canonicalTag, readStore, readUsage, visibleExperiences } from './store.js'
 import { ensureTagOverrides, extractQueryTags, facetOf, TAG_FACETS } from './tag-registry.js'
 
-/** 面权重（总和 1）：动作 > 主题 > 对象。 */
-// 0.32：对象面退出检索排序（用户拍板：对象另有他用，不参与标签/排序）。
-export const TAG_FACET_WEIGHTS = Object.freeze({ action: 0.55, topic: 0.30, object: 0 })
+/** 面权重（总和 1）：动作 > 主题。0.37：object 面已删除。 */
+export const TAG_FACET_WEIGHTS = Object.freeze({ action: 0.55, topic: 0.30 })
 /** 质量分在总分里的占比：score = coverage × (0.70 + 0.30 × quality)。 */
 export const TAG_QUALITY_FLOOR = 0.70
 export const TAG_QUALITY_SPAN = 0.30
 /** 默认返回几条。 */
 export const TAG_TOPN_DEFAULT = 5
 
-const WEIGHTED_FACETS = ['action', 'topic', 'object']
+const WEIGHTED_FACETS = ['action', 'topic']
 
 function round4(value) {
   return Math.round(Number(value) * 1e4) / 1e4
 }
 
-/** 把任意来源的 queryTags 归成固定四面；别名统一成规范名，去重。 */
+/** 把任意来源的 queryTags 归成固定三面；别名统一成规范名，去重。 */
 function normalizeQueryTags(input) {
-  const out = { object: [], action: [], topic: [], quality: [] }
+  const out = { action: [], topic: [], quality: [] }
   for (const facet of TAG_FACETS) {
     const list = Array.isArray(input && input[facet]) ? input[facet] : []
     for (const value of list) {
@@ -63,7 +62,7 @@ function qualityOf(row) {
 }
 
 /**
- * 标签覆盖度：按动作/主题/对象三面加权，只在「查询命中的面」上归一。
+ * 标签覆盖度：按动作/主题两面加权，只在「查询命中的面」上归一。
  * 质量面不参与权重（质量由 G 归一体现），但命中的质量标签仍记进 matchedTags。
  */
 function coverageOf(tags, queryTags) {
@@ -86,7 +85,7 @@ function matchedAndMissing(tags, queryTags) {
   const matched = []
   const missing = []
   // 顺序固定：动作 → 主题 → 对象 → 质量，便于稳定对比/测试。
-  for (const facet of ['action', 'topic', 'object', 'quality']) {
+  for (const facet of ['action', 'topic', 'quality']) {
     for (const name of queryTags[facet]) {
       if (tagSet.has(name.toLowerCase())) matched.push(name)
       else missing.push(name)
@@ -105,20 +104,17 @@ function matchedAndMissing(tags, queryTags) {
 export function rankByTags(store, intent, options = {}) {
   const queryTags = normalizeQueryTags(options.queryTags || extractQueryTags(intent))
   const limit = Math.max(1, Math.min(50, Math.trunc(Number(options.limit) || TAG_TOPN_DEFAULT)))
-  // 只有权重 > 0 的面才算「有加权查询」：对象面 0.32 起权重为 0，不能让它把全 0 分值伪装成排序结果。
+  // 只有权重 > 0 的面才算「有加权查询」：质量面永不加权，不能让它把全 0 分值伪装成排序结果。
   const weightedQuery = WEIGHTED_FACETS.some((facet) => TAG_FACET_WEIGHTS[facet] > 0 && queryTags[facet].length > 0)
   if (!weightedQuery) {
     return {
       queryTags,
       top: [],
       total: 0,
-      // 只命中不计权重的面（对象权重 0、质量面永不加权）时，不能说「没命中标签」。
-      note: (() => {
-        const zeroFacets = Object.keys(queryTags).filter((facet) => queryTags[facet].length > 0 && !(TAG_FACET_WEIGHTS[facet] > 0))
-        if (zeroFacets.length === 0) return '意图里没有命中动作/主题/对象标签，标签影子排序为空（只影响影子，不影响默认召回）。'
-        const labels = { object: '对象', quality: '质量' }
-        return `只命中了不计权重的${zeroFacets.map((facet) => labels[facet] || facet).join('/')}标签，加权查询为空（只影响影子，不影响默认召回）。`
-      })(),
+      // 只命中不计权重的质量面时，不能说「没命中标签」。
+      note: queryTags.quality.length > 0
+        ? '只命中了不计权重的质量标签，加权查询为空（只影响影子，不影响默认召回）。'
+        : '意图里没有命中动作/主题标签，标签影子排序为空（只影响影子，不影响默认召回）。',
     }
   }
   const rows = visibleExperiences(store)
@@ -223,7 +219,8 @@ export function shadowReport(dataDir) {
       const tags = Array.isArray(row.context) ? row.context : []
       if (tags.length === 0) coverage.noTags += 1
       const facets = new Set(tags.map((tag) => facetOf(tag)).filter((facet) => facet !== null))
-      if (facets.has('object') && facets.has('action')) coverage.objectAction += 1
+      // 0.37：object 面已删；同一字段改为统计「带动作面标签的经验数」，字段名保留兼容旧报表。
+      if (facets.has('action')) coverage.objectAction += 1
     }
     coverage.ratio = coverage.visible === 0 ? null : round4(coverage.objectAction / coverage.visible)
   } catch (error) {

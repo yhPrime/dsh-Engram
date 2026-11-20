@@ -627,13 +627,48 @@ export function listSkills(dataDir, options = {}) {
 const HINT_SKILLS_TTL_MS = 10000
 const hintSkillsCache = new Map()
 
+/**
+ * skills 树签名（0.37 P0）：根目录 mtime + 每个顶层子目录 mtime。
+ * 增删技能（含套件里加子技能）会改目录 mtime，所以签名一变就重扫；
+ * 只改 SKILL.md 正文不会改目录 mtime，这类陈旧由 TTL 兜底（内容侧的实时读取走 readSkillBySlug）。
+ */
+function skillsRootSignature(dataDir) {
+  try {
+    const root = skillsRootOf(dataDir)
+    const rootStat = fs.statSync(root)
+    let signature = `${Math.trunc(rootStat.mtimeMs)}`
+    let entries = []
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true })
+    } catch {
+      entries = []
+    }
+    for (const entry of entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))) {
+      if (!entry.isDirectory()) continue
+      try {
+        const stat = fs.statSync(path.join(root, entry.name))
+        signature += `|${entry.name}:${Math.trunc(stat.mtimeMs)}`
+      } catch {
+        signature += `|${entry.name}:?`
+      }
+    }
+    return signature
+  } catch {
+    return null
+  }
+}
+
 export function listSkillsCached(dataDir, options = {}) {
   const key = `${path.resolve(String(dataDir || ''))}|${options.onlyLocal === true ? 'local' : 'all'}`
   const hit = hintSkillsCache.get(key)
   const now = Date.now()
-  if (hit !== undefined && now - hit.at < HINT_SKILLS_TTL_MS) return hit.skills
+  const signature = skillsRootSignature(dataDir)
+  // 目录签名一致 → 命中（0.37 P0：导入新技能当次可见，不再等 10 秒）。
+  if (hit !== undefined && signature !== null && hit.signature === signature) return hit.skills
+  // 签名拿不到（目录不存在/读失败）时退回计时缓存，避免每次调用都重扫失败路径。
+  if (hit !== undefined && signature === null && now - hit.at < HINT_SKILLS_TTL_MS) return hit.skills
   const skills = listSkills(dataDir, options)
-  hintSkillsCache.set(key, { at: now, skills })
+  hintSkillsCache.set(key, { at: now, skills, signature })
   return skills
 }
 
@@ -642,6 +677,44 @@ export function clearSkillsHintCache(dataDir) {
   const prefix = `${path.resolve(String(dataDir || ''))}|`
   for (const key of [...hintSkillsCache.keys()]) {
     if (key.startsWith(prefix)) hintSkillsCache.delete(key)
+  }
+}
+
+/**
+ * 按技能树顶层目录分组（0.37 P1/P2 共用）。
+ *
+ * 组 = slug 的第一段；套件入口技能的 slug 没有斜杠（`ai-base-tools`），
+ * 只要存在 `ai-base-tools/...` 的子技能，就把它算进同名组（按磁盘目录直读会得到同样的结果）。
+ * 根下没有任何子技能的独立技能归「未分组」，与各组并列。
+ *
+ * @param {object[]} skills - `listSkills` / `listSkillsCached` 的返回
+ * @returns {{groups: {name: string, skills: object[]}[], ungrouped: object[]}}
+ */
+export function skillGroupsOf(skills) {
+  const list = Array.isArray(skills) ? skills : []
+  const slugs = list.map((skill) => String((skill && (skill.slug || skill.id)) || ''))
+  const groupNames = new Set()
+  for (const slug of slugs) {
+    const cut = slug.indexOf('/')
+    if (cut > 0) groupNames.add(slug.slice(0, cut))
+  }
+  const groups = new Map()
+  for (const name of [...groupNames].sort()) groups.set(name, [])
+  const ungrouped = []
+  for (let index = 0; index < list.length; index += 1) {
+    const slug = slugs[index]
+    const cut = slug.indexOf('/')
+    if (cut > 0) {
+      groups.get(slug.slice(0, cut)).push(list[index])
+    } else if (groupNames.has(slug)) {
+      groups.get(slug).push(list[index])
+    } else {
+      ungrouped.push(list[index])
+    }
+  }
+  return {
+    groups: [...groups.entries()].map(([name, items]) => ({ name, skills: items })),
+    ungrouped,
   }
 }
 
@@ -824,6 +897,7 @@ export function registerSkillGlobally(dataDir, slug, options = {}) {
   }
   skill.meta.globalRegistered = { path: target, at: new Date().toISOString(), mode }
   commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): register globally`)
+  clearSkillsHintCache(dataDir)
   return { slug: id, id, leaf, targetDir: target, mode, registered: true }
 }
 
@@ -862,6 +936,7 @@ export function unregisterSkillFromDsh(dataDir, slug) {
   }
   delete skill.meta.globalRegistered
   commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): unregister globally`)
+  clearSkillsHintCache(dataDir)
   return { slug: id, id, leaf, targetDir: target, removed, registered: false }
 }
 
@@ -902,6 +977,7 @@ export function updateSkillMeta(dataDir, slug, patch = {}) {
   if (patch.retired_at !== undefined) meta.retired_at = normalizeIsoDate(patch.retired_at)
   if (patch.retired_reason !== undefined) meta.retired_reason = patch.retired_reason === null ? null : String(patch.retired_reason || '').slice(0, 120)
   const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), meta, `skill(${slug}): meta`)
+  clearSkillsHintCache(dataDir)
   return {
     slug,
     typeName: meta.typeName,
@@ -927,6 +1003,7 @@ export function forgetSkill(dataDir, slug) {
   if (pathIsLink(skill.dir)) throw new Error(`拒绝删除链接：${slug}`)
   fs.rmSync(skill.dir, { recursive: true, force: true })
   const committed = commitSkills(dataDir, `skill(${skill.id}): forget`)
+  clearSkillsHintCache(dataDir)
   return { slug: skill.id, id: skill.id, deleted: true, unregistered, commit: committed }
 }
 
@@ -1077,6 +1154,7 @@ export function forgetSkillTree(dataDir, nodePath, options = {}) {
   if (pathIsLink(dir)) throw new Error(`拒绝删除链接：${id}`)
   fs.rmSync(dir, { recursive: true, force: true })
   const committed = commitSkills(dataDir, `skill(${id}): forget subtree (${members.length})`)
+  clearSkillsHintCache(dataDir)
   return { action: 'forget', path: id, deleted: true, total: members.length, unregistered, failed, commit: committed }
 }
 
@@ -1324,6 +1402,8 @@ export function createSkill(dataDir, draft) {
   const id = assertSafeRelPath(draft.id || draft.slug || slugify(draft.name))
   const locked = withSkillLock(dataDir, id, () => createSkillUnlocked(dataDir, { ...draft, id }))
   if (locked.busy === true) throw new Error(`技能正在被另一个进程写入：${id}`)
+  // 0.37 P0：写路径主动失效，导入/新建后当次可见（目录签名只覆盖到顶层，深层写入靠这一句）。
+  clearSkillsHintCache(dataDir)
   return locked.value
 }
 

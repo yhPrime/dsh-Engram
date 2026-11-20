@@ -11,8 +11,6 @@
  */
 
 import { createLiveSource, resolveLiveDataDir } from './live.js'
-import { readObjects } from '../kernel/objects.js'
-import { readFamilyRegistry, resolveFamilyRef } from '../kernel/family-registry.js'
 import { createMockSource } from './mock.js'
 import {
   FEEDBACK_ETA,
@@ -103,7 +101,6 @@ export const SETTINGS_SPEC = {
     { key: 'graphBloom', label: '泛光 bloom', type: 'boolean', tip: '给亮节点叠一层柔光，暗色主题下更明显；关掉更省绘制。' },
     { key: 'graphGlitch', label: '色散/毛刺', type: 'boolean', tip: '给高亮节点/连线加一点 RGB 分离的故障感；关掉更干净。' },
     { key: 'graphDust', label: '浮尘数量', type: 'number', hint: '0~240', tip: '背景里漂浮的尘埃粒子数量（0~240）；太吃性能就调低。' },
-    { key: 'graphObjects', label: '关系图对象层', type: 'boolean', default: false, hint: '默认关', tip: '打开后在图外圈画「对象 → 链 → 族」的只读图层。对象不参与召回，是过程记录；默认关闭，避免把两套语义混画。' },
   ],
   git: [
     { key: 'repoUrl', label: '远端仓库', type: 'string', hint: 'https://… 或 git@host:path 或本机绝对路径', tip: '经验库会以这个仓库为备份目标。https 推公开/私有仓库都行；地址里不要写账号密码，token 填在下面。' },
@@ -331,8 +328,7 @@ function totalsOfManifest(manifest, types, skills) {
 /** 概览（`/state` 的 data）：有 manifest.stats 时只读 manifest（P3-A），否则退回全量行。 */
 export function buildState(source) {
   const read = readOf(source)
-  const degraded = read.error !== undefined && read.error !== null
-  const manifest = !degraded && read.manifest !== null && typeof read.manifest === 'object' ? read.manifest : null
+  const manifest = read.manifest !== null && typeof read.manifest === 'object' ? read.manifest : null
   const storage = read.storage !== null && typeof read.storage === 'object' ? read.storage : null
   const skills = safeSkills(source)
   const bytes = Number(read.bytes) || (storage === null ? 0 : Number(storage.totalBytes) || 0)
@@ -355,7 +351,6 @@ export function buildState(source) {
     bytes,
     updatedAt: read.updatedAt === null || read.updatedAt === undefined ? '' : String(read.updatedAt),
     notice: String(read.notice || ''),
-    ...(read.error ? { storeError: read.error } : {}),
     ...(storage !== null ? { storage } : {}),
     ...(cold !== null ? { cold } : {}),
     feedbackEta: FEEDBACK_ETA,
@@ -414,13 +409,8 @@ export function buildExperiences(source, params) {
   if (query !== '') {
     const limit = numberParam(params && typeof params.get === 'function' ? params.get('limit') : null, 8, 50)
     if (source && typeof source.recall === 'function') {
-      try {
-        const recalled = source.recall({ intent: query, limit })
-        return { ...meta, ...recalled, query }
-      } catch (error) {
-        // 坏库检索不能 500：与列表态同口径，给空结果 + storeError（横幅在页面上显示）。
-        return { ...meta, rows: [], candidates: [], mode: 'unavailable', note: String((error && error.message) || error), storeError: meta.storeError || { code: 'store-unreadable', message: String((error && error.message) || error), file: String(read.file || '') }, query }
-      }
+      const recalled = source.recall({ intent: query, limit })
+      return { ...meta, ...recalled, query }
     }
     return { ...meta, ...recallOf(storeRead.store, query, limit) }
   }
@@ -765,7 +755,7 @@ export const GRAPH_SUMMARY_LIMIT_MAX = 1200
 function graphOptionsOf(params) {
   const get = (key) => (params && typeof params.get === 'function' ? params.get(key) : null)
   const summary = String(get('scope') || '').trim().toLowerCase() === 'summary'
-  return { summary, limit: summary ? graphLimitOf(get('limit')) : Infinity, objects: String(get('objects') || '') === '1' }
+  return { summary, limit: summary ? graphLimitOf(get('limit')) : Infinity }
 }
 
 function graphLimitOf(raw) {
@@ -959,39 +949,6 @@ export function buildGraph(source, params) {
     if (linked.length === 0 && !String(id).includes('/') && !rootLinked.has(`skill:${id}`)) edges.push({ source: 'root', target: `skill:${id}`, kind: 'derived', strength: 0.55 })
   }
   const suiteRoots = skillTree.filter((node) => node.kind === 'group' || node.skillCount > 1).length
-  // 对象层（默认关）：只读 objects.jsonl，画「对象 → 链 → 族」外圈；对象不参与召回。
-  let objectCount = 0
-  if (options.objects) {
-    const dataDir = String((read && read.dataDir) || '').trim()
-    if (dataDir !== '') {
-      try {
-        const list = readObjects(dataDir)
-        const registry = readFamilyRegistry(dataDir)
-        for (const obj of list) {
-          const objectKey = String(obj.id || '')
-          if (objectKey === '') continue // 脏行缺 id：整条对象不画，避免 object:/chain:# 悬空
-          const objectId = `object:${objectKey}`
-          nodes.push({ id: objectId, kind: 'object', label: String(obj.object || '对象'), weight: 0.6, chains: Array.isArray(obj.chains) ? obj.chains.length : 0 })
-          objectCount += 1
-          ;(Array.isArray(obj.chains) ? obj.chains : []).forEach((chain, chainIndex) => {
-            const chainId = `chain:${objectKey}#${chainIndex + 1}`
-            nodes.push({ id: chainId, kind: 'chain', label: `链 ${chainIndex + 1}`, weight: 0.35, parent: objectId })
-            edges.push({ source: objectId, target: chainId, kind: 'chain', strength: 0.7 })
-            const linked = new Set()
-            for (const step of Array.isArray(chain.steps) ? chain.steps : []) {
-              const ref = resolveFamilyRef(registry, step && step.familyId)
-              if (ref === null || ref.name === '') continue
-              const targetId = graphFamilyId(ref.name)
-              // 只连图上真的有的族节点；同一条链重复同一族只画一条边。
-              if (!families.has(targetId) || linked.has(targetId)) continue
-              linked.add(targetId)
-              edges.push({ source: chainId, target: targetId, kind: 'step', strength: 0.5 })
-            }
-          })
-        }
-      } catch { /* 对象库读坏不影响族图：对象层直接不出 */ }
-    }
-  }
   // degree 用一遍边表累加（O(N+E)）：前端画图不用再自己数邻居。
   const degree = new Map()
   for (const edge of edges) {
@@ -1012,7 +969,7 @@ export function buildGraph(source, params) {
     total: rows.length,
     truncated: keptRows.length < rows.length,
     byKind,
-    summary: { families: families.size, experiences: rows.length, skills: skills.length, suites: suiteRoots, objects: objectCount },
+    summary: { families: families.size, experiences: rows.length, skills: skills.length, suites: suiteRoots },
     updatedAt: String(read.updatedAt || ''),
   }
 }

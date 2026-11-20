@@ -247,12 +247,8 @@ export function createLiveSource(config = {}) {
           exists: snapshot.exists,
           bytes: snapshot.bytes,
           updatedAt: snapshot.updatedAt,
-          // /state 与 /state.storeError 用：坏库要同时给 notice 和结构化错误，不能只有文案。
-          error: snapshot.corrupt
-            ? { code: 'store-unreadable', message: String(snapshot.parseError || ''), file: String(snapshot.file || '') }
-            : null,
           notice: snapshot.corrupt
-            ? `经验库文件读不了：${snapshot.file ? `${snapshot.file}：` : ''}${snapshot.parseError}；已按空库显示。`
+            ? `经验库文件读不了：${snapshot.parseError}；已按空库显示。`
             : (snapshot.exists ? '' : `没有找到经验库文件：${file}（先跑一次 exp_record，或确认 dataDir 配置）`),
         }
       } catch (error) {

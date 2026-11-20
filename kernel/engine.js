@@ -273,7 +273,6 @@ export function createEngine(options = {}) {
       const usage = storageUsageOf(dataDir)
       const singleFile = path.join(dataDir, shardStore.LEGACY_SOURCE_FILE)
       const singleExists = statIsFile(singleFile)
-      const singleOccupied = fs.existsSync(singleFile)
       let manifest = null
       let corrupt = false
       let corruptFile = ''
@@ -286,66 +285,17 @@ export function createEngine(options = {}) {
         corruptFile = shardStore.manifestPath(dataDir)
         parseError = String((error && error.message) || error)
       }
-      // 路径存在但不是普通文件（目录/其它）：与读路径 EISDIR 同口径，不能静默当空库。
-      if (!corrupt && manifest === null && singleOccupied && !singleExists) {
-        corrupt = true
-        corruptFile = singleFile
-        parseError = `经验库路径被占用（不是普通文件）：${singleFile}`
-      }
-      // manifest 合法但 type id 重复：库已不可读（列表/图/写都会拒绝），快照也要给坏库信号。
-      if (!corrupt && manifest !== null) {
-        const seenIds = new Set()
-        let dupId = ''
-        for (const type of Array.isArray(manifest.types) ? manifest.types : []) {
-          if (type === null || typeof type !== 'object' || typeof type.id !== 'string') continue
-          // 与读路径（normalizeStore 按原始 id 判重）同口径：不 trim，否则 ' ty_x' 会被误判成重复。
-          const id = type.id
-          if (id === '') continue
-          if (seenIds.has(id)) { dupId = id; break }
-          seenIds.add(id)
-        }
-        if (dupId !== '') {
-          corrupt = true
-          corruptFile = shardStore.manifestPath(dataDir)
-          parseError = `经验库结构损坏：类型 id 重复（${dupId}）`
-        }
-      }
       // 老库（还没有分片）仍要像以前一样检查 exp-lib.json 是否可解析，坏库不能静默当空库。
       if (!corrupt && manifest === null && singleExists) {
         try {
-          const parsed = JSON.parse(fs.readFileSync(singleFile, 'utf8'))
-          // 合法 JSON 但结构不对（null / 数组 / experiences 非数组）同样算坏库，不能静默当空库。
-          const badTop = parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)
-          const badRows = !badTop && parsed.experiences !== undefined && parsed.experiences !== null && !Array.isArray(parsed.experiences)
-          const badTypes = !badTop && parsed.types !== undefined && parsed.types !== null && !Array.isArray(parsed.types)
-          let dupTypeId = ''
-          if (!badTop && Array.isArray(parsed.types)) {
-            const seen = new Set()
-            for (const type of parsed.types) {
-              const id = type !== null && typeof type === 'object' ? String(type.id || '') : ''
-              if (id === '') continue
-              if (seen.has(id)) { dupTypeId = id; break }
-              seen.add(id)
-            }
-          }
-          if (badTop || badRows || badTypes || dupTypeId !== '') {
-            corrupt = true
-            corruptFile = singleFile
-            parseError = badTop
-              ? `经验库结构损坏：${singleFile} 顶层应为对象，实际是 ${parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed}`
-              : badRows
-                ? `经验库结构损坏：${singleFile} 的 experiences 应为数组`
-                : badTypes
-                  ? `经验库结构损坏：${singleFile} 的 types 应为数组`
-                  : `经验库结构损坏：${singleFile} 的类型 id 重复：${dupTypeId}`
-          }
+          JSON.parse(fs.readFileSync(singleFile, 'utf8'))
         } catch (error) {
           corrupt = true
           corruptFile = singleFile
           parseError = String((error && error.message) || error)
         }
       }
-      const exists = manifest !== null || usage.fileCount > 0 || singleExists || singleOccupied
+      const exists = manifest !== null || usage.fileCount > 0 || singleExists
       return {
         dataDir,
         // 坏库时指向真正解析失败的文件（manifest 坏 → manifest.json；老库坏 → exp-lib.json）。

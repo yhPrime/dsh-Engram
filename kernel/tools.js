@@ -47,7 +47,7 @@ import {
   normalizeIsoDate,
   normalizeVolatility,
 } from './retrieval.js'
-import { readRecordsByIds, readShardRecordsOfTypes, recordShardWrite, taskIndexOf, writeTypeShards } from './shard-store.js'
+import { readFamilyByName, readRecordsByIds, readShardRecordsOfTypes, recordShardWrite, taskIndexOf, writeTypeShards } from './shard-store.js'
 import { findActiveSession, findRecordBinding, userMessageForRecord } from './session.js'
 import { measure, slimRecall, slimReceipt } from './token-budget.js'
 import { rankByTags } from './tag-rank.js'
@@ -56,7 +56,7 @@ import { pendingBrief } from './brief.js'
 import { summarizeUserEdits } from './artifact-diff.js'
 import { AUTO_ROUTE_MIN_SCORE, ensureClusters, routeCluster } from './cluster.js'
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
-import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillRuntimeOf, updateSkillMeta } from './skills.js'
+import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, listSkillsCached, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillGroupsOf, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
 import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
 import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
@@ -154,7 +154,7 @@ function reconcileFamilyTypeDirs(dataDir, store) {
 function flattenQueryTags(queryTags) {
   if (queryTags === null || typeof queryTags !== 'object') return []
   const out = []
-  for (const facet of ['action', 'topic', 'object', 'quality']) {
+  for (const facet of ['action', 'topic', 'quality']) {
     for (const name of Array.isArray(queryTags[facet]) ? queryTags[facet] : []) {
       if (typeof name === 'string' && name !== '' && !out.includes(name)) out.push(name)
     }
@@ -393,10 +393,6 @@ export function buildTools(defineTool, config = {}) {
         : (typeof args.context === 'string' && args.context.trim() !== '')
       const ctxCheck = validateTagSet(args.context)
       const lblCheck = validateTagSet(args.labels)
-      // 0.32：对象面标签不再参与标签体系（用户拍板）；写入时静默丢弃，只保留动作/主题/质量。
-      const dropObjectTags = (names) => (Array.isArray(names) ? names : []).filter((name) => facetOf(name) !== 'object')
-      ctxCheck.tags = dropObjectTags(ctxCheck.tags)
-      lblCheck.tags = dropObjectTags(lblCheck.tags)
       const allTags = [...ctxCheck.tags, ...lblCheck.tags]
         .filter((name, index, list) => list.findIndex((other) => other.toLowerCase() === name.toLowerCase()) === index)
       const rejectedTags = [...ctxCheck.rejected, ...lblCheck.rejected]
@@ -829,6 +825,8 @@ export function buildTools(defineTool, config = {}) {
     parameters: {
       intent: { type: 'string', description: '当前任务意图。写「对象+任务+关键约束」（如「给研学课 PPT 插一页（深蓝色调）」）；只写「再来一页」这种省略句会因相似度不足召回不到。用 skill 直接取技能时可省略。' },
       skill: { type: 'string', description: '可选：直接取这个技能（slug 或 id；可带 skill: 前缀，也可原样用目录条目名 engram:<slug>，两种前缀都剥）。给了就跳过检索，按本会话三态决定给全文还是复用回执；找不到返回 no-such-skill，不退回普通召回。' },
+      group: { type: 'string', description: '可选：按技能组取名字（组名 = skills/ 顶层目录名，如「动画」「ai-base-tools」；根下独立技能组名「未分组」）。返回组内技能名 + 一句话描述，不含正文；组不存在明确报错。' },
+      family: { type: 'string', description: '可选：按动作族取经验（族名见提示段「经验族」行，如「写断言」「未分族」）。只读该族分片、不扫全库；族内 >8 条按相似度排，否则按最近使用倒序直接给；族不存在明确报错。' },
       load: { type: 'boolean', description: '可选：true 时强制给全文（忽略复用态）。配合 skill 做「对不上锚点/压缩后重取」。' },
       limit: { type: 'number', description: '返回几条候选做法，默认 3；显式给就按给的值（≤8，簇内也不截到 4）。改稿/纠错要看「上次那条」时给 5~6。' },
       cluster: { type: 'string', description: '可选：直接指定簇（类型名或 id），跳过路由。' },
@@ -954,6 +952,99 @@ export function buildTools(defineTool, config = {}) {
           return payload
         })
       }
+      // 0.37 P2：按组取名字（L1）。只给名字与一句话，不给正文；正文走 {skill}。
+      const explicitGroup = args.group === undefined || args.group === null ? '' : String(args.group).trim()
+      if (explicitGroup !== '') {
+        const grouped = skillGroupsOf(listSkillsCached(dataDir, { onlyLocal: true }))
+        const wanted = explicitGroup.toLowerCase()
+        // 真实组优先：「未分组」本身是伪组名，若盘上恰好有同名目录，不能让伪组把它遮住（首轮健壮性抓到）。
+        const realGroup = grouped.groups.find((item) => item.name === explicitGroup)
+          || grouped.groups.find((item) => item.name.toLowerCase() === wanted)
+          || null
+        const pickedGroup = realGroup !== null
+          ? realGroup
+          : (explicitGroup === '未分组' || wanted === 'ungrouped'
+            ? { name: '未分组', skills: grouped.ungrouped }
+            : null)
+        if (pickedGroup === null) {
+          const names = [...grouped.groups.map((item) => item.name), '未分组'].join('、')
+          throw new Error(`没有这个技能组：${explicitGroup}（现有：${names}）`)
+        }
+        const rows = pickedGroup.skills.map((skill) => ({
+          name: String(skill.slug || skill.id || ''),
+          description: String(skill.description || '').replace(/\s+/gu, ' ').trim().slice(0, 80),
+        }))
+        const payload = {
+          mode: 'skill-group',
+          group: pickedGroup.name,
+          count: rows.length,
+          skills: rows,
+          note: '组内技能名与一句话描述（不含正文）。要用哪个就 exp_recall({skill:"<name>"}) 取正文。',
+        }
+        logUsage(dataDir, {
+          tool: 'exp_recall',
+          intent: String(args.intent || ''),
+          mode: 'skill-group',
+          group: pickedGroup.name,
+          skills: rows.length,
+          hit: rows.length > 0,
+          chars: measure(payload),
+        }, usageOptions)
+        return payload
+      }
+      // 0.37 P6：按动作族取经验（E1）。分片本来就按族存，只读那一个文件，不扫全库。
+      const explicitFamily = args.family === undefined || args.family === null ? '' : String(args.family).trim()
+      if (explicitFamily !== '') {
+        const manifest = readManifest(dataDir)
+        const rows = readFamilyByName(dataDir, explicitFamily)
+        const visibleRows = rows.filter((row) => !row.deleted_at && !row.superseded_by && !row.retired_at)
+        const familyLimit = Math.max(1, Math.min(8, Math.trunc(Number(args.limit) || 3)))
+        const FAMILY_RANK_THRESHOLD = 8
+        // 两个分支的候选形状必须一致（首轮白盒抓到的缺陷）：都扁平成 {id,intent,action,outcome,G,lastSeenAt}。
+        // rankExperiences 的候选把行字段包在 evidence[0] 里，扁平化时按「顶层优先、evidence 兜底」取。
+        const flatCandidate = (row) => {
+          const source = (Array.isArray(row.evidence) && row.evidence[0]) || {}
+          return {
+            id: row.id || source.id || '',
+            intent: row.intent !== undefined ? row.intent : (source.intent !== undefined ? source.intent : ''),
+            action: row.action !== undefined ? row.action : (source.action !== undefined ? source.action : ''),
+            outcome: row.outcome !== undefined ? row.outcome : source.outcome,
+            G: row.G !== undefined ? row.G : source.G,
+            lastSeenAt: row.lastSeenAt || row.ts || source.lastSeenAt || source.ts || '',
+          }
+        }
+        // 族内 >8 条才排序；没给 intent 时没有相似度可算，退回「最近使用倒序」（首轮黑盒抓到的 note 与行为不符）。
+        const wantRank = visibleRows.length > FAMILY_RANK_THRESHOLD && String(args.intent || '').trim() !== ''
+        const candidates = wantRank
+          ? (rankExperiences({ types: manifest !== null ? manifest.types : [], experiences: visibleRows }, String(args.intent || ''), familyLimit).candidates || [])
+            .map(flatCandidate)
+          : visibleRows
+            .slice()
+            .sort((left, right) => String(right.lastSeenAt || right.ts || '').localeCompare(String(left.lastSeenAt || left.ts || '')))
+            .slice(0, familyLimit)
+            .map(flatCandidate)
+        const payload = {
+          mode: 'family',
+          family: explicitFamily,
+          count: visibleRows.length,
+          candidates,
+          note: wantRank
+            ? '族内超过 8 条，按相似度排了前几条；要别的做法换 intent 或给 limit。'
+            : (visibleRows.length > FAMILY_RANK_THRESHOLD
+              ? '族内超过 8 条但没给 intent，按最近使用倒序给前几条；要相似度排序请带 intent。'
+              : '族内不足 8 条，按最近使用倒序直接给，没算相似度。'),
+        }
+        logUsage(dataDir, {
+          tool: 'exp_recall',
+          intent: String(args.intent || ''),
+          mode: 'family',
+          family: explicitFamily,
+          candidates: candidates.length,
+          hit: candidates.length > 0,
+          chars: measure(payload),
+        }, usageOptions)
+        return payload
+      }
       if (String(args.intent || '').trim() === '') {
         throw new Error('exp_recall 需要 intent（或用 skill 直接取某个技能）')
       }
@@ -988,16 +1079,9 @@ export function buildTools(defineTool, config = {}) {
       // 技能优先：高确定技能命中时只返回技能本身，不再列具体经验。
       // 只拿还没全局注册的技能：注册过的交给 DSH 当普通技能用，经验库不再排序它
       // cold 模式不参与技能匹配：查冷档就是查冷档，别被技能正文盖掉。
-      const skills = coldMode ? [] : listSkills(dataDir, { onlyLocal: true })
+      // 0.37 P0：走 mtime 签名缓存，28 个技能从 175ms 降到 <5ms；目录一变当次可见。
+      const skills = coldMode ? [] : listSkillsCached(dataDir, { onlyLocal: true })
       const pendingSkills = skills.filter((skill) => skill.meta.pendingCommit === true).length
-      const confidentHit = coldMode ? null : matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: true })
-      const overallHit = coldMode ? null : matchSkill(skills, String(args.intent || ''), { context: args.context, requireConfident: false, minSimilarity: TRIAL_MIN_SIMILARITY })
-      // 先算两种命中再决定用哪个：高确定命中可能只因为「候选池被置信过滤缩小」而赢，
-      // 例如问页码时池里只剩 pptx-existing-deck-edit；此时 overall 的 pptx-page-number(0.525)
-      // 明显更像，应该按「试用技能」给它，而不是错配给养熟的旧技能。
-      const overallClearlyBetter = overallHit !== null
-        && (confidentHit === null || (overallHit.skill.slug !== confidentHit.skill.slug && overallHit.score >= confidentHit.score))
-      const picked = overallClearlyBetter ? { hit: overallHit, trial: true } : (confidentHit !== null ? { hit: confidentHit, trial: false } : (overallHit !== null ? { hit: overallHit, trial: true } : null))
       const routing = coldMode || args.all === true
         ? 'off'
         : (config.routing === 'shadow' ? 'shadow' : config.routing === 'off' ? 'off' : 'on')
@@ -1105,14 +1189,14 @@ export function buildTools(defineTool, config = {}) {
         // on：自动标签走「对象→动作 软优先」（tagScore 按 IDF 加权，只加分不筛池），不再占用 contextMatch；
         // 显式 context 仍按老口径（调用方明确要情境优先，行为不变）。
         if (tagRankMode === 'on' && !explicitProvided) {
-          tagQuery = { object: queryFacets.object.slice(), action: queryFacets.action.slice() }
-          tagRankAppliedNow = tagQuery.object.length + tagQuery.action.length > 0
+          tagQuery = { action: queryFacets.action.slice() }
+          tagRankAppliedNow = tagQuery.action.length > 0
           rankContext = []
         } else {
           tagRankAppliedNow = tagRankMode === 'on' && mergedTags.length > 0
           if (tagRankMode === 'on') rankContext = mergedTags
         }
-        if (tagRankMode === 'shadow') tagRankShadow = { mode: 'shadow', queryTags: autoTags, object: queryFacets.object.length, action: queryFacets.action.length, explicit: explicitTags.length, merged: mergedTags.length }
+        if (tagRankMode === 'shadow') tagRankShadow = { mode: 'shadow', queryTags: autoTags, action: queryFacets.action.length, explicit: explicitTags.length, merged: mergedTags.length }
       }
       const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: rankContext, tagBonusOnly: tagRankAppliedNow && tagQuery !== null, tagQuery, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
       if (Array.isArray(recentRows)) rankOptions.recentRows = recentRows
@@ -1178,148 +1262,7 @@ export function buildTools(defineTool, config = {}) {
       const pending = config.pendingReceipt === false
         ? []
         : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item), edit: pendingEdit(item) }) }))
-      // 技能命中时不再吞掉经验候选：技能给正文，经验给参考（并列返回），
-      // 否则同一意图下刚写的经验会被技能模式完全遮住（验收时发现的读路径问题）。
-      if (picked !== null) {
-        const hit = picked.hit
-        const mode = picked.trial ? 'skill-trial' : 'skill'
-        const rawBody = String(hit.skill.body || '')
-        // 三态判定（0.21.0 P0）：首给/复用/重给；skillCatalog=false 时 decision=null，完全退回 0.20.9。
-        const skillCfg = catalogConfigOf(config)
-        const decision = skillCfg.enabled
-          ? skillGiveDecision({
-            sessionId: host.sessionId,
-            session: hostSessionObjectOf(exec),
-            slug: hit.skill.slug,
-            body: rawBody,
-            visible: visibleSeqsOf(exec),
-            load: args.load === true,
-            reuseReceipt: skillCfg.reuseReceipt,
-            maxGiven: skillCfg.maxSkills,
-          })
-          : null
-        const catalogUsage = skillCatalogUsageOf(host.sessionId, config)
-        // 复用命中只记 usage 行：绝不改 uses/lastUsedAt（uses === helped + hurt 是硬不变量）。
-        if (decision !== null && decision.state === 'reuse') {
-          const reuseRuntime = skillRuntimeOf(hit.skill)
-          const receipt = buildReuseReceipt({ slug: hit.skill.slug, entry: decision.entry, skillFile: reuseRuntime === null ? '' : reuseRuntime.skillFile })
-          logUsage(dataDir, {
-            tool: 'exp_recall',
-            intent: String(args.intent || ''),
-            mode: 'skill-reuse',
-            skill: hit.skill.slug,
-            hit: true,
-            reused: 'reuse',
-            reuseReason: decision.reason,
-            ...(host.sessionId === '' ? {} : { session: sessionHashOf(host.sessionId) }),
-            bodyHash: decision.bodyHash,
-            ...catalogUsage,
-            chars: measure(receipt),
-          }, usageOptions)
-          return receipt
-        }
-        // detail：按调用方 limit 返回（默认瘦身档只给 2 条）；技能正文另算。
-        const candidates = args.detail === true || config.slimRecall === false
-          ? (result.candidates || []).slice(0, recallLimit)
-          : (slimRecall(result, { limit: 2, detail: false }).candidates || [])
-        // 技能命中不代表经验候选相关：与普通路径同口径，用候选的 mean_similarity（拿不到再退回证据相似度）。
-        const similarityOf = (candidate) => (Number.isFinite(Number(candidate.mean_similarity))
-          ? Number(candidate.mean_similarity)
-          : Math.max(0, ...(candidate.evidence || []).map((evidence) => Number(evidence.similarity) || 0)))
-        const maxSimilarity = candidates.reduce((max, candidate) => Math.max(max, similarityOf(candidate)), 0)
-        const weakCandidates = candidates.length === 0 || maxSimilarity < 0.4
-        const relevanceGeneral = !weakCandidates && candidates.length > 0 && maxSimilarity < 0.5
-        const similarityText = String(Math.round(maxSimilarity * 10000) / 10000)
-        // 技能运行时：绝对路径 + 可直接执行的脚本命令；召回即可用，不要求先注册到全局。
-        const runtime = skillRuntimeOf(hit.skill)
-        // 正文给多少：默认全文（像正常技能一样让模型通读），只有显式 `skillBodyMode:'clip'`
-        // 或超过安全上限（默认 30000 字符）才裁剪；裁剪也保留末尾 Resources/脚本节。
-        const bodyMode = String(config.skillBodyMode || '').toLowerCase() === 'clip' ? 'clip' : 'full'
-        const bodyCap = bodyMode === 'clip'
-          ? 6000
-          : Math.max(6000, Number(config.skillBodyMaxChars) || 30000)
-        const clipped = clipSkillBody(rawBody, bodyCap)
-        const skillPayload = {
-          mode,
-          intent: String(args.intent || ''),
-          skill: {
-            id: hit.skill.slug,
-            name: hit.skill.name,
-            description: hit.skill.description,
-            body: clipped.truncated
-              ? `${clipped.text}\n…（正文过长已截断，共 ${rawBody.length} 字符；完整内容用 read 读 ${runtime !== null ? runtime.skillFile : '技能目录下的 SKILL.md'}）`
-              : clipped.text,
-            ...(clipped.truncated ? { bodyTruncated: true, bodyChars: rawBody.length } : {}),
-            runtime,
-            context: hit.skill.meta.context,
-            files: (hit.skill.meta.files || []).map((item) => item.path),
-            confidence: { ...hit.skill.meta.confidence, reason: confidenceReason(hit.skill.meta) },
-            score: Math.round(hit.score * 1000) / 1000,
-            // 自查依据：命中词。任务里明显无关却命中的技能，按错配处理。
-            match: {
-              matchedTerms: Array.isArray(hit.matchedTerms) ? hit.matchedTerms : [],
-              selfCheck: '先看 matchedTerms 与当前任务是否真的相关；明显无关说明这次是错配，换更具体的 intent 重试（例如把「页面动画」换成「CSS 过渡/帧预算/缓动曲线」），不要硬套这个技能。',
-            },
-          },
-          candidates,
-          // 技能命中也要带「最近做过」：否则上一轮刚记的教训在下次碰巧命中技能时完全看不到。
-          recent: Array.isArray(result.recent) ? result.recent.slice(0, 2) : [],
-          ...(weakCandidates || !result.brief ? {} : { brief: result.brief }),
-          cluster: result.route && result.route.fallback === false ? result.route.name : undefined,
-          pendingSkills: pendingSkills,
-          pending: pending.length > 0 ? pending : undefined,
-          verdicts: verdictSummary(verdictResults),
-          ...(weakCandidates ? { weak: true } : {}),
-          ...(weakCandidates || relevanceGeneral ? { topSimilarity: Math.round(maxSimilarity * 10000) / 10000 } : {}),
-          note: (picked.trial
-            ? '试用技能（未养熟）：先看 matchedTerms 是否相关，无关就换 intent 重试；相关则照做，用完 exp_feedback 回填。'
-            : '高确定技能：先看 matchedTerms，无关就是错配，换 intent 重试；成功用 exp_feedback 回填，遇阻记 skillId+blockedBy。')
-            + (weakCandidates && candidates.length === 0
-              ? ' 经验候选为空，别当参考。'
-              : (weakCandidates
-                ? ' 经验候选都不够相关（最高相似度低），别当参考。'
-                : (relevanceGeneral ? ` 候选相关度一般（${similarityText}），参考而非照抄。` : (candidates.length > 0 ? ' 下方候选可参考。' : ''))))
-            + (runtime !== null && runtime.scripts.length > 0 ? ` ${runtime.usage}` : ''),
-          ...(decision === null ? {} : {
-            give: { state: decision.state, reason: decision.reason },
-            ...(decision.reason === 'shadowed' ? { regiveNote: '上文版本可能已被压缩，以此为准。' } : {}),
-            ...(decision.reason === 'surface-unavailable' ? { regiveNote: '会话可见面读不到（宿主降级）：本次仍给全文，对不上锚点就 exp_recall({skill, load:true}) 重取。' } : {}),
-          }),
-        }
-        if (tagShadowEnabled) skillPayload.tagShadow = buildTagShadow(candidates)
-        // 0.25.0 P1：技能命中早退也要落 tagRankApplied，否则影子报表会少算技能召回那一部分。
-        const skillShadow = (tagShadowEnabled && skillPayload.tagShadow !== undefined) || tagRankShadow !== null
-          ? {
-            ...(tagShadowEnabled && skillPayload.tagShadow !== undefined
-              ? {
-                overlapAt5: skillPayload.tagShadow.overlapAt5,
-                tagTop: (skillPayload.tagShadow.tagTop || []).slice(0, 5).map((item) => item && item.id).filter((id) => typeof id === 'string' && id !== ''),
-                typeTop: (skillPayload.tagShadow.typeRoutingTop || []).slice(0, 5),
-              }
-              : {}),
-            ...(tagRankShadow !== null ? { tagRankApplied: tagRankShadow } : {}),
-          }
-          : null
-        logUsage(dataDir, {
-          tool: 'exp_recall',
-          intent: String(args.intent || ''),
-          mode,
-          skill: hit.skill.slug,
-          candidates: candidates.length,
-          hit: true,
-          marked: args.mark === true,
-          ...(decision === null ? {} : {
-            reused: decision.state,
-            reuseReason: decision.reason,
-            bodyHash: decision.bodyHash,
-            ...(host.sessionId === '' ? {} : { session: sessionHashOf(host.sessionId) }),
-            ...catalogUsage,
-          }),
-          ...(skillShadow === null ? {} : { shadow: skillShadow }),
-          chars: measure(skillPayload),
-        }, usageOptions)
-        return skillPayload
-      }      // 归纳提示（实验，2026-11-07）：同族样本够多时给一段原料让模型自己归纳；config.induction=false 可关。
+      // 归纳提示（实验，2026-11-07）：同族样本够多时给一段原料让模型自己归纳；config.induction=false 可关。
       if (config.induction !== false) {
         // 归纳只用「本次可见」的候选：提示里写的是「本次可见 N 条」，N 必须与返回条数一致。
         const induction = buildInduction(result.candidates, { minSamples: config.inductionMinSamples })
@@ -1874,7 +1817,6 @@ export function buildTools(defineTool, config = {}) {
         } else if (action === 'create') {
           const steps = buildSteps(args.chain, resolveFamily)
           const obj = createObject(objects, args.object, steps, { note: args.note })
-          if (registryDirty) { writeFamilyRegistry(dataDir, registry); registryDirty = false }
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, steps: steps.length }
         } else if (action === 'append') {
@@ -1886,14 +1828,12 @@ export function buildTools(defineTool, config = {}) {
           } else {
             for (const step of steps) at = appendToObject(obj, { chainIndex: args.chainIndex, stepPath: args.stepPath, step, note: args.note })
           }
-          if (registryDirty) { writeFamilyRegistry(dataDir, registry); registryDirty = false }
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, at }
         } else if (action === 'branch') {
           const obj = requireObject(args.object)
           const steps = buildSteps(args.steps, resolveFamily)
           const added = addBranch(obj, { chainIndex: args.chainIndex, stepPath: args.stepPath, when: args.when, steps, result: args.result })
-          if (registryDirty) { writeFamilyRegistry(dataDir, registry); registryDirty = false }
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, ...added }
         }

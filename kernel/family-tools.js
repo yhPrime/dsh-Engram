@@ -54,8 +54,6 @@ export function tagTree(rows) {
   const groups = snapshot && snapshot.groups ? snapshot.groups : snapshot
   const facets = {}
   for (const [facet, entries] of Object.entries(groups)) {
-    // 0.32：对象面退出标签体系，树里也不再给 object 分区。
-    if (facet === 'object') continue
     const parents = new Map()
     const add = (name) => {
       const parent = parentOfTag(name)
@@ -181,7 +179,6 @@ export function manageFamilies(store, action, args = {}) {
       throw new Error('族名太泛，请用「动词+对象」，例如 git 推送 / 跑 npm 测试')
     }
     if ([...name].length > FAMILY_NAME_MAX_CHARS) throw new Error(`族名最多 ${FAMILY_NAME_MAX_CHARS} 字`)
-    if (facetOf(name) === 'object') throw new Error('对象面标签不能当族名（对象不参与标签/分族）')
     if (/[\\/:*?"<>|]/.test(name) || /^\d+\.\d+/.test(name)) throw new Error('族名不能是路径/版本号')
     return name
   }

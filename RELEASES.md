@@ -638,6 +638,14 @@
 
 ## 当前发布
 
+- **v0.37.0（技能索引导航 + 经验按族取 + object 面物理删除；含 0.36 全部改动）**
+  - 技能从「排序找」改成「索引点」：`exp_recall({intent})` 不再返回技能（`matchSkill` 命中判定与 skill-trial 分支删除）；新增 `{group}` 按技能树顶层目录列名字（只给名字 + 一句话，不给正文），`{skill}` 点名取正文不变
+  - 经验按族取：新增 `exp_recall({family})`，只读该族一个分片（`readFamilyByName`），族内 >8 条才走相似度排序、否则按最近使用倒序；不扫全库
+  - 提示段：技能行从前 6 个名字改成按组计数（`ai-base-tools 8 / 动画 18 / 未分组 2（共 28）`），新增经验族行（top 10 + 还有 N）；真实库整段 287 字符（原 349），28 个技能全部可见
+  - 技能树缓存：`listSkillsCached` 改 skills 树 mtime 签名 + 写路径主动失效；`exp_recall` 接上后该段 175–248ms → 1.13ms
+  - object 面物理删除：`TAG_FACETS` 只剩 action/topic/quality，删除 15 条内建种子词（代码/PPT/Word/Excel/WPS/课件/任务卡/版式/插页/DSH插件/网页应用/Agent/智能体平台/脚本/DSH）；`inferTagFacet` 产物类词归 topic；`shadowReport.coverage.objectAction` 改为统计带动作面标签的经验数（字段名保留）
+  - 测试：新增 skill-group(6) / family-read(10) / recall-family(6) / iter-037 四测(68) 共 90 项；四轮迭代第一轮 6 缺陷修复后，第二/三轮零缺陷
+
 - **v0.36.1（四轮缺陷收口：关系图换族后的收口 + 对象页可用性 + 构建/契约修正）**
   - 关系图：带 : / % 的族名在「只看此族」下不再丢经验（客户端与服务端同一转义口径）；root→skill 的 root/derived 重复边去重（421 边 / root 出边 51）
   - 概览：/state.storage 补齐 layout/typeDirs/familyFiles/familyBytes/indexFiles/indexBytes，不再误报「仍是旧布局」

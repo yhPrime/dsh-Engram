@@ -36,7 +36,7 @@ import {
   stateOf,
   volatilityOf,
 } from './retrieval.js'
-import { listSkillsCached } from './skills.js'
+import { listSkillsCached, skillGroupsOf } from './skills.js'
 import { ensureClusters, refreshClusters, routeCluster, buildBrief } from './cluster.js'
 import { pendingBrief } from './brief.js'
 import { resolveEngramDataDir } from './settings.js'
@@ -356,9 +356,6 @@ function emptyStore() {
  */
 function normalizeStore(raw) {
   // 结构损坏不能静默降级成空库：空快照被下一次写回会覆盖原数据（对抗测试实测丢 2 条）。
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error(`经验库结构损坏：顶层应为对象，实际是 ${raw === null ? 'null' : Array.isArray(raw) ? 'array' : typeof raw}`)
-  }
   if (raw.experiences !== undefined && raw.experiences !== null && !Array.isArray(raw.experiences)) {
     throw new Error(`经验库结构损坏：experiences 应为数组，实际是 ${typeof raw.experiences}`)
   }
@@ -613,7 +610,6 @@ export function rebuildManifest(dataDir, options = {}) {
         const presentTypeIds = new Set(deduped.map((row) => String((row && row.typeId) || SYSTEM_TYPE.id)))
         presentTypeIds.add(SYSTEM_TYPE.id)
         for (const [id, name] of dirTypes) { presentTypeIds.add(id); if (name !== '' && !typeNames.has(id)) typeNames.set(id, name) }
-        const previousTypes = new Map((Array.isArray(options.types) ? options.types : []).filter((type) => type !== null && typeof type === 'object').map((type) => [String(type.id), type]))
         const previousTypeNames = new Map((Array.isArray(options.types) ? options.types : []).map((type) => [String(type && type.id), String(type && type.name || '')]))
         const rowTypeNames = new Map()
         for (const row of deduped) {
@@ -622,7 +618,6 @@ export function rebuildManifest(dataDir, options = {}) {
           if (id !== '' && name !== '' && !rowTypeNames.has(id)) rowTypeNames.set(id, name)
         }
         const restoredTypes = [...presentTypeIds].map((id) => ({
-          ...(previousTypes.get(id) || {}),
           id,
           name: id === SYSTEM_TYPE.id ? SYSTEM_TYPE.name : (typeNames.get(id) || previousTypeNames.get(id) || rowTypeNames.get(id) || id),
         }))
@@ -786,11 +781,7 @@ function readStoreUncached(dataDir) {
       }
     }
   } else {
-    const singlePath = storeFile(dataDir)
-    const raw = readJsonFile(singlePath, '经验库')
-    if (raw === null && fs.existsSync(singlePath)) {
-      throw new Error(`经验库结构损坏：${singlePath} 顶层是 null`)
-    }
+    const raw = readJsonFile(storeFile(dataDir), '经验库')
     store = raw === null ? emptyStore() : normalizeStore(raw)
   }
   // 簇是派生视图：每次读都从 types + 可见经验重算；manifest.clusters 只是给提示段/路由用的缓存。
@@ -1161,13 +1152,8 @@ function cleanupStaleTempFiles(dir, base) {
 export function migrateStore(dataDir) {
   return withStoreLock(dataDir, () => {
     if (readManifest(dataDir) !== null) return { migrated: false, reason: 'manifest-exists' }
-    const single = storeFile(dataDir)
-    const raw = readJsonFile(single, '经验库')
-    if (raw === null) {
-      // 文件存在但内容是 JSON null：不是「没有老库」，按结构损坏拦下，避免被当成空库迁走。
-      if (fs.existsSync(single)) throw new Error(`经验库结构损坏：${single} 顶层是 null`)
-      return { migrated: false, reason: 'no-legacy' }
-    }
+    const raw = readJsonFile(storeFile(dataDir), '经验库')
+    if (raw === null) return { migrated: false, reason: 'no-legacy' }
     const store = normalizeStore(raw)
     ensureClusters(store)
     const out = migrateToShards(dataDir, store)
@@ -2580,17 +2566,16 @@ export function tagCatalog(store, options = {}) {
  */
 export function tagRegistryView(store, options = {}) {
   const catalog = tagCatalog(store, { ...options, limit: Math.max(1, Math.min(200, Math.trunc(Number(options.limit) || 200))) })
-  // 0.32：对象面退出标签体系；API 也不再返回对象分组（对象另有他用，不在这里展示）。
+  // 0.37：object 面已物理删除，tagRegistryView 只返回 action/topic/quality 三组。
   const groups = { action: [], topic: [], quality: [], other: [] }
   for (const item of catalog) {
-    if (item.facet === 'object') continue
     const bucket = item.facet !== null && TAG_FACETS.includes(item.facet) ? item.facet : 'other'
     groups[bucket].push(item)
   }
   const snapshot = registrySnapshot()
-  const visibleFacets = snapshot.facets.filter((facet) => facet !== 'object')
-  const visibleLabels = Object.fromEntries(Object.entries(TAG_FACET_LABELS).filter(([facet]) => facet !== 'object'))
-  const visibleHints = Object.fromEntries(Object.entries(TAG_FACET_HINTS).filter(([facet]) => facet !== 'object'))
+  const visibleFacets = snapshot.facets
+  const visibleLabels = { ...TAG_FACET_LABELS }
+  const visibleHints = { ...TAG_FACET_HINTS }
   return {
     facets: visibleFacets,
     labels: visibleLabels,
@@ -3310,12 +3295,79 @@ export function renderHint(config = {}, maxCharacters = 900) {
   return renderHintSlim(config, maxCharacters)
 }
 
-/** 瘦身档：只留「怎么用 + 有几条 + 待判定 + 前几个技能」。 */
+/** 0.37 P1/P7：提示段两条索引行（L0 技能组 / E0 经验族）的单行与合计预算。 */
+const HINT_INDEX_LINE_CHARS = 120
+const HINT_INDEX_PAIR_CHARS = 260
+
+/** 按码点截断（不折行），截断处补省略号；超预算也不让调用方拿到更长的串。 */
+function clipHintText(text, limit) {
+  const chars = Array.from(String(text || ''))
+  const max = Math.max(0, Math.trunc(Number(limit) || 0))
+  if (chars.length <= max) return chars.join('')
+  if (max <= 1) return chars.slice(0, max).join('')
+  return `${chars.slice(0, max - 1).join('')}…`
+}
+
+/**
+ * L0（0.37 P1）：技能按组计数，如 `技能：ai-base-tools 8 / 动画 18 / 未分组 2（共 28）`。
+ * 组数 > 10 时降级成 `技能 12 组（共 200）`：组名多到列不下，先保证长度有界。
+ */
+function slimSkillLine(skills, limit = HINT_INDEX_LINE_CHARS) {
+  const grouped = skillGroupsOf(skills)
+  const groups = grouped.groups.map((group) => ({ name: group.name, count: group.skills.length }))
+  // 「未分组」是根下独立技能的伪组，与各组并列计数（计划书 §3.2）。
+  if (grouped.ungrouped.length > 0) groups.push({ name: '未分组', count: grouped.ungrouped.length })
+  if (groups.length === 0) return ''
+  const text = groups.length > 10
+    ? `技能 ${groups.length} 组（共 ${skills.length}）`
+    : `技能：${groups.map((group) => `${group.name} ${group.count}`).join(' / ')}（共 ${skills.length}）`
+  return clipHintText(text, limit)
+}
+
+/**
+ * E0（0.37 P7）：经验族目录，如 `经验族 47：未分族 166、写断言 21、…还有 37（共 329 条）`。
+ * 数据来自 `manifest.buckets`（每项 `{family, count}`，可重建缓存）；读不到 / buckets 为空 /
+ * 没有 family 列（旧扁平布局）时整行不出。按条数降序取 top 10，其余只报个数。
+ */
+function slimFamilyLine(dataDir, limit = HINT_INDEX_LINE_CHARS) {
+  const max = Math.max(0, Math.trunc(Number(limit) || 0))
+  if (max < 16) return ''
+  let manifest = null
+  try {
+    manifest = readManifestFile(dataDir)
+  } catch {
+    manifest = null
+  }
+  const buckets = manifest && Array.isArray(manifest.buckets) ? manifest.buckets : []
+  const counts = new Map()
+  for (const bucket of buckets) {
+    const family = String((bucket && bucket.family) || '').trim()
+    const count = Math.trunc(Number(bucket && bucket.count) || 0)
+    if (family === '' || count <= 0) continue
+    counts.set(family, (counts.get(family) || 0) + count)
+  }
+  if (counts.size === 0) return ''
+  const rows = [...counts.entries()].sort((left, right) => (right[1] - left[1]) || (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+  const total = rows.reduce((sum, row) => sum + row[1], 0)
+  // 先按 top 10 出；放不下就少列几个族（可读的截断），最后一招才硬截断。
+  let text = `经验族 ${rows.length} 个（共 ${total} 条）`
+  for (let take = Math.min(10, rows.length); take >= 1; take -= 1) {
+    const shown = rows.slice(0, take).map(([family, count]) => `${family} ${count}`)
+    const rest = rows.length - take
+    const line = `经验族 ${rows.length}：${shown.join('、')}${rest > 0 ? `、…还有 ${rest}` : ''}（共 ${total} 条）`
+    text = line
+    if (line.length <= max) return line
+  }
+  return clipHintText(text, max)
+}
+
+/** 瘦身档：只留「怎么用 + 有几条 + 待判定 + 技能组 / 经验族目录」。 */
 export function renderHintSlim(config = {}, maxCharacters = 1400) {
   const cap = Math.max(80, Math.trunc(Number(maxCharacters) || 1400))
+  const dataDir = resolveEngramDataDir(config)
   let store
   try {
-    store = readStoreForHint(resolveEngramDataDir(config))
+    store = readStoreForHint(dataDir)
   } catch {
     store = { types: [{ ...SYSTEM_TYPE }], experiences: [] }
   }
@@ -3330,29 +3382,22 @@ export function renderHintSlim(config = {}, maxCharacters = 1400) {
   }
   // 瘦身档的软上限：默认 118 字符（无 pending 时留出余量给技能名）；有 pending 时优先保证 pending 行。
   const softCap = Math.max(80, Math.min(cap, Math.trunc(Number(config.hintSlimChars) || 360)))
+  // 0.37 P1：L0 技能组计数。`hintSkills:false` 仍整体关掉技能行（配置键语义不变）。
+  let skillLine = ''
   if (!(config && config.hintSkills === false)) {
-    let skills = []
     try {
-      skills = listSkillsCached(resolveEngramDataDir(config), { onlyLocal: true })
-      skills = [...skills].sort((left, right) => (Number((right.meta || {}).order) || 0) - (Number((left.meta || {}).order) || 0))
+      skillLine = slimSkillLine(listSkillsCached(dataDir, { onlyLocal: true }))
     } catch {
-      skills = []
-    }
-    if (skills.length > 0) {
-      const names = []
-      for (const skill of skills.slice(0, 6)) {
-        const next = names.concat(skill.slug)
-        const line = `技能：${next.join('、')}（共 ${skills.length}）`
-        if (lines.join('\n').length + 1 + line.length > softCap) break
-        names.push(skill.slug)
-      }
-      if (names.length > 0) lines.push(`技能：${names.join('、')}（共 ${skills.length}）`)
-      else {
-        const countLine = `技能 ${skills.length} 个（命中即给正文）`
-        if (lines.join('\n').length + 1 + countLine.length <= softCap) lines.push(countLine)
-      }
+      skillLine = ''
     }
   }
+  // L0 + E0 合计 ≤260 字符（超了截断不折行），且仍受 slim 软上限约束：新行不把提示段撑长。
+  const indexRoom = Math.max(0, Math.min(HINT_INDEX_PAIR_CHARS, softCap - lines.join('\n').length - (skillLine === '' ? 0 : 1)))
+  const finalSkillLine = clipHintText(skillLine, Math.min(HINT_INDEX_LINE_CHARS, indexRoom))
+  const familyRoom = finalSkillLine === '' ? indexRoom : Math.max(0, indexRoom - finalSkillLine.length - 1)
+  const familyLine = slimFamilyLine(dataDir, Math.min(HINT_INDEX_LINE_CHARS, familyRoom))
+  if (finalSkillLine !== '') lines.push(finalSkillLine)
+  if (familyLine !== '') lines.push(familyLine)
   const text = lines.join('\n')
   return text.length > cap ? text.slice(0, Math.max(0, cap - 1)) : text
 }
