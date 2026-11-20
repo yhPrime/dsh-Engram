@@ -58,11 +58,12 @@ import { AUTO_ROUTE_MIN_SCORE, ensureClusters, routeCluster } from './cluster.js
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, listSkillsCached, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillGroupsOf, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
-import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, validateNewTagName, validateTagSet } from './tag-registry.js'
+import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, updateTagFacet, validateNewTagName, validateTagSet, validateDirectionForFamily, directionFamilyOf, remapDirectionFamily, wordlistUnreadable } from './tag-registry.js'
 import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
-import { manageFamilies, readCreatedFamilies, syncCreatedFamilies } from './family-tools.js'
-import { GENERIC_FAMILY_NAMES, normalizeFamilyName } from './family-name.js'
+import { manageFamilies, readCreatedFamilies, syncCreatedFamilies, validateFamilyName } from './family-tools.js'
+import { FAMILY_INVISIBLE_RE, GENERIC_FAMILY_NAMES, normalizeFamilyName, specificFamilyOf } from './family-name.js'
 import {
+  canonicalFamilyName,
   dropFamilyEntry,
   ensureFamilyEntry,
   familyIdByName,
@@ -165,6 +166,51 @@ function flattenQueryTags(queryTags) {
 
 function renderJson(_args, value) {
   return [{ type: 'text', text: JSON.stringify(value) }]
+}
+
+/** 0.38：回执/报错里回显用户输入要截断，别把 10 万字符原样撑爆回执。按码元截但在代理对边界退一格，不劈 emoji。 */
+function clipText(value, max = 60) {
+  const text = String(value === undefined || value === null ? '' : value)
+  if (text.length <= max) return text
+  let cut = max
+  if (cut > 0) {
+    const code = text.charCodeAt(cut - 1)
+    if (code >= 0xd800 && code <= 0xdbff) cut -= 1
+  }
+  return `${text.slice(0, cut)}…`
+}
+
+/**
+ * 0.38：合并/重记后若行里出现「不属于该族」的方向标签，摘掉并返回被摘清单（交给回执告警，不静默串族）。
+ * 只按行当前族校验；行没有族则不动。
+ */
+function pruneRowForeignDirections(row) {
+  if (!row || !Array.isArray(row.context)) return []
+  const family = normalizeFamilyName(row.family)
+  if (family === '') return []
+  const dropped = []
+  const kept = row.context.filter((tag) => {
+    const dirFamily = directionFamilyOf(tag)
+    if (dirFamily !== null && dirFamily !== '' && normalizeFamilyName(dirFamily) !== family) {
+      dropped.push(tag)
+      return false
+    }
+    return true
+  })
+  if (dropped.length > 0) row.context = kept
+  return dropped
+}
+
+/**
+ * 0.38：族是否已登记——有经验行挂在该族下，或 families.json 里有该名。
+ * 方向登记时用它挡「挂到从未登记的族」。
+ */
+function familyIsKnown(store, dataDir, rawFamily) {
+  const name = normalizeFamilyName(rawFamily)
+  if (name === '') return false
+  const rows = Array.isArray(store && store.experiences) ? store.experiences : []
+  if (rows.some((row) => normalizeFamilyName(row && row.family) === name)) return true
+  return readFamilyRegistry(dataDir).some((entry) => normalizeFamilyName(entry && entry.name) === name)
 }
 
 /** 可选时间字段：未给=null；给了但解析不了就明确报错，不能静默改走推算。 */
@@ -336,7 +382,7 @@ export function buildTools(defineTool, config = {}) {
 
   const record = defineTool({
     name: 'exp_record',
-    description: '记录一条工作经验（做法 + 结果）。同一做法会就地更新 hits，近似替换会写新条并标记旧条被取代。标签（context/labels，≤8）请凑出「至少 1 个动作 + 1 个主题」：动作如 提交/推送/校验/验收，主题如 研学课/课件/布局；0.37 起对象面已删除，别再打「代码/PPT/DSH插件」这类对象标签。只写大类会回 tagWarning。标签只写类型不写实例名（yxjd-explib 这类仓库名会被丢弃并记 tagsRejected）。',
+    description: '记录一条可复用的工作经验（做法 + 结果）。族=可复用动作模式（动词+对象，如 跑测试/写断言/git 推送），用 family 指定；方向标签=族内场景（如 写断言下的 契约断言/回归断言/探针先行），放 context/labels。同一做法就地更新 hits，近似替换写新条并标记旧条被取代。裸命令/裸工具名/单文件无技法编辑会被拒记——那是具体任务流水，改用 exp_object 记。标签只写类型不写实例名（仓库名等会被丢弃并记 tagsRejected）。',
     parameters: {
       intent: { type: 'string', required: true, description: '要做的任务/意图。' },
       action: { type: 'string', required: true, description: '采取的做法或方案名。' },
@@ -353,11 +399,11 @@ export function buildTools(defineTool, config = {}) {
       stepRewards: { type: 'array', description: '分步回报（数字数组）；整条记录时可用它代替单一 G。' },
       expectedOutcome: { type: 'string', enum: ['accepted', 'success', 'partial', 'unknown', 'failed', 'corrected', 'aborted'], description: '可选：做之前预期会怎样（结果词）。用于算预测误差。' },
       expectedG: { type: 'number', description: '可选：预期回报（-1..1），优先于 expectedOutcome。' },
-      context: { type: 'array', description: '可选：情境线索/次级分类（如产物/课程类型/工作区标签），≤8 个；召回时用于编码特异性匹配。' },
-      labels: { type: 'array', description: '可选：次级分类标签（≤8），与 context 合并；优先用 exp_type action=labels 列出的已有标签，已有无法满足才新建。' },
+      context: { type: 'array', description: '可选：方向/主题标签（≤8）。方向=族内场景（须是该族已登记方向，如 写断言→契约断言）；主题=场景/产物类型。召回时用于编码特异性匹配。' },
+      labels: { type: 'array', description: '可选：次级分类标签（≤8），与 context 合并；优先用 exp_type action=labels 列出的已有标签，已有无法满足才新建（方向标签新建须 facet=direction + family）。' },
       artifacts: { type: 'array', description: '可选：本次产物的路径（工作区相对路径，≤5）。给用户手改学习留锚点。' },
       dimensions: { type: 'array', description: '可选：能力维度（≤3 个短标签，如「布局」「语义理解」）；只存不校验。' },
-      family: { type: 'string', description: '可选：具体动作族（如 git 推送/跑 npm 测试/改 React 页面）；不填则落未分族。裸泛词（执行/其它动作/校验）会被拒。' },
+      family: { type: 'string', description: '可选：动作族=可复用动作模式（动词+对象，如 git 推送/跑测试/写断言）。不填则按动作标签/动作文本推导；对象词/裸泛词（执行/校验/代码）会被拒。建族前先 exp_family list 看有无近义族。' },
       force: { type: 'boolean', description: '可选：强制记录（覆盖记录门槛）。只在你确认这条经验重学成本高、但门槛误判时用。' },
       // 时效治理（0.20 P0）：全部可选；不填就是旧行为（读时按 semi 解释）。
       volatility: { type: 'string', enum: ['stable', 'semi', 'perishable'], description: '可选：易腐层。stable=偏好/硬约束，semi=判断原则（默认），perishable=具体步骤/命令/API。只影响召回降权与复核，不改 G。' },
@@ -376,6 +422,8 @@ export function buildTools(defineTool, config = {}) {
       return withStoreLock(dataDir, () => {
       // P3.5（task-9）：记录路径走 partial 读 + 定向写。manifest 是入口；老库（无 manifest）仍走全量。
       const manifest = readManifest(dataDir)
+      // 0.38 健壮性：写路径进方向校验前先按 dataDir 加载词表，冷启动（未召回）也能认到磁盘上已登记的方向。
+      try { ensureTagOverrides(dataDir) } catch { /* 坏词表按内建词走 */ }
       const host = hostSessionOf(exec)
       const hostCwd = host.cwd !== '' ? host.cwd : (config.cwd || process.cwd())
       // 标签写入规则（0.20.0 P0）：别名归一 + 命名校验 + 面覆盖。
@@ -401,6 +449,10 @@ export function buildTools(defineTool, config = {}) {
       // 放行：负面结果、多步（≥3 步或 ≥2 个命令分隔）、用户口径、force；拒记返回
       // { skipped, reason, suggestion }，不静默丢（计划书 §1）。
       const gateText = String(args.action || '')
+      // 0.38：outcome 非字符串（new String / 数组 / 带 toString 的对象）先按 typeof 拒，不靠 String() 强转后枚举兜底。
+      if (args.outcome !== undefined && args.outcome !== null && typeof args.outcome !== 'string') {
+        throw new Error('outcome 只能是字符串（accepted/success/partial/unknown/failed/corrected/aborted）')
+      }
       const gateOutcome = String(args.outcome || '').toLowerCase()
       const gateNegative = ['failed', 'corrected', 'partial', 'aborted'].includes(gateOutcome) || /(失败|报错|错误|被拒|不通过|不可用|error|failed|exception|超时|中断)/iu.test(String(args.note || ''))
       const gateSteps = gateText.split(/\s*(?:→|->|=>|；|;|\n|然后|接着)\s*/u).filter((part) => part.trim() !== '')
@@ -428,7 +480,60 @@ export function buildTools(defineTool, config = {}) {
           reason: familyGeneric
             ? '族名太泛，不能单独成为动作族'
             : '通用单步操作，模型本来就会，重学成本低',
-          suggestion: familyGeneric ? '改用「动词+对象」，例如 git 推送 / 跑 npm 测试 / 改 React 页面' : '只记失败、非显然、多步或用户口径；确需记录可传 force:true',
+          suggestion: familyGeneric ? '改用「动词+对象」，例如 git 推送 / 跑 npm 测试 / 改 React 页面' : '这是任务流水：这件任务怎么做的用 exp_object 记；可复用做法请写清技法，确需记录可传 force:true',
+        }
+      }
+
+      // 0.38：显式族名类型错误（数字/数组/对象）必须明确拒，不能静默当「没给」再按推导族落库。
+      if (args.family !== undefined && args.family !== null && typeof args.family !== 'string') {
+        return { skipped: true, reason: '族名必须是字符串', suggestion: 'family 传「动词+对象」的族名字符串；不需要族就别传 family' }
+      }
+      // 0.38：显式给了族名（哪怕全是空白/纯不可见）就不能静默当「没给」。
+      const familyProvided = typeof args.family === 'string' && args.family !== ''
+      // 用**原始**串校验（含不可见字符/BOM），不能先归一再校验——否则 BOM 会被 NFKC 吃掉、纯空白/纯 BOM 文案也会分叉。
+      if (familyProvided) {
+        try { validateFamilyName(args.family) } catch (error) {
+          return { skipped: true, reason: `族名不合法：${error.message}`, suggestion: '族名要是「动词+对象」的可复用动作模式；具体任务用 exp_object 记，不需要族就别传 family' }
+        }
+      }
+      // 0.38 P4：族名（显式/推导）必须过族名校验；force 只覆盖记录门槛，不覆盖族名合法性。
+      // 推导族名：显式 > 首个「非泛词」动作面标签 > specificFamilyOf(action)。泛词动作标签不当族。
+      const directionTags = allTags.filter((name) => facetOf(name) === 'direction')
+      let effectiveFamily = normalizedFamily
+      if (effectiveFamily === '') {
+        const actionTag = allTags.find((name) => facetOf(name) === 'action' && !GENERIC_FAMILY_NAMES.includes(normalizeFamilyName(name))) || ''
+        effectiveFamily = actionTag
+      }
+      if (effectiveFamily === '') effectiveFamily = specificFamilyOf(gateText)
+      if (effectiveFamily !== '') {
+        try { validateFamilyName(effectiveFamily) } catch (error) {
+          return { skipped: true, reason: `族名不合法：${error.message}`, suggestion: '族名要是「动词+对象」的可复用动作模式；具体任务用 exp_object 记' }
+        }
+      }
+      // 0.38：引用方向时校验「归属族匹配」（未登记的词按普通标签处理，不算方向）。
+      if (effectiveFamily !== '' && directionTags.length > 0) {
+        for (const name of directionTags) {
+          const dirFamily = directionFamilyOf(name)
+          if (dirFamily !== null && normalizeFamilyName(dirFamily) !== normalizeFamilyName(effectiveFamily)) {
+            return { skipped: true, reason: `方向「${name}」属于族「${dirFamily}」，与这条记录的族「${effectiveFamily}」不符`, suggestion: '方向只能用该族已登记的方向标签；先 exp_type label 用正确族登记' }
+          }
+        }
+      }
+      // 0.38：改名/合并后的旧族名并入当前族名（不复活成幽灵旧族）；方向错配已在上面按旧名拒掉。
+      if (effectiveFamily !== '') {
+        effectiveFamily = canonicalFamilyName(readFamilyRegistry(dataDir), effectiveFamily)
+      }
+      // 0.38 P1：对象流水拦截（拍板②）——裸单文件编辑 / 裸工具名命令，不是可复用做法。
+      // 负面/多步/用户口径/force 仍放行（与门槛一致）；清晰技法描述（哪怕短）不受影响。
+      // origin=auto 暂放行：自动记录默认关、P5 会改造成「多步→对象」，届时再收紧。
+      const gateBareFileEdit = /^(?:改|修改|编辑|更新|重构)\s+\S+\.[A-Za-z0-9]+$/u.test(gateText.trim())
+      const gateBareIdentifier = /^[A-Za-z][A-Za-z0-9_.\-]*$/u.test(gateText.trim())
+      const gateIsAuto = String(args.origin || '').toLowerCase() === 'auto'
+      if (args.force !== true && !gateIsAuto && !gateNegative && !gateUser && !gateMulti && (gateBareFileEdit || gateBareIdentifier)) {
+        return {
+          skipped: true,
+          reason: gateBareFileEdit ? '单文件编辑无技法，是任务流水不是可复用动作模式' : '裸工具名/命令，不是可复用做法',
+          suggestion: '这件任务怎么做的用 exp_object 记；可复用做法请写出技法（如「改 X 逻辑以解决 Y」），别只丢文件名/命令',
         }
       }
 
@@ -538,7 +643,8 @@ export function buildTools(defineTool, config = {}) {
         labels: lblGiven ? lblCheck.tags : undefined,
         // 0.27.0 族键：显式 family 优先，否则取第一个动作标签；没有动作标签 → 不写（落未分族）。
         // 只传显式 family；自动推导放在 store 建行时做（R4 缺陷：就在更新时不能拿推导值覆盖用户显式族）。
-        family: (typeof args.family === 'string' && args.family.trim() !== '') ? (normalizeFamilyName(args.family) || args.family.trim()) : undefined,
+        // 0.38：显式族名用已规范化+旧名归一的 effectiveFamily，别再用原始 args.family（否则旧名会复活成幽灵族）。
+        family: (typeof args.family === 'string' && args.family.trim() !== '') ? (effectiveFamily || normalizeFamilyName(args.family) || args.family.trim()) : undefined,
         skillId: args.skillId,
       }
       const upsertOptions = {
@@ -549,10 +655,17 @@ export function buildTools(defineTool, config = {}) {
         typeSimilarity: config.typeSimilarity,
         feedbackDecayDays: config.feedbackDecayDays,
       }
+      // 0.38：store 推导出的族名若是改名/合并前的旧名，并入当前族（显式族名已在 upsertInput.family 归一）。
+      const canonicalizeRowFamily = (row) => {
+        if (row === null || typeof row !== 'object' || typeof row.family !== 'string' || row.family === '') return
+        const canonicalFamily = canonicalFamilyName(readFamilyRegistry(dataDir), row.family)
+        if (canonicalFamily !== row.family) row.family = canonicalFamily
+      }
       const haveVerdicts = Array.isArray(args.verdicts) && args.verdicts.length > 0
       let verdictResults = []
       let pendingOut = { rows: [], skipped: [] }
       let result = null
+      let directionDropped = []
       let activeCount = 0
 
       // 快路径（task-9）：有 manifest 且不需要跨类型回填时，只读目标类型（+ pending 所在类型）的行，
@@ -639,6 +752,9 @@ export function buildTools(defineTool, config = {}) {
             // skipClusters：partial store 上重算簇没有意义（别的类型没有行），由 recordShardWrite 按
             // touched 类型重算（签名走 state 快速路径，成本很小）。
             result = upsertExperience(store, upsertInput, { ...upsertOptions, skipClusters: true })
+            // 0.38：重记/合并后摘掉跨族方向（先摘再写盘，保证落库就干净）。
+            directionDropped = pruneRowForeignDirections(result.experience)
+            canonicalizeRowFamily(result.experience)
             // 写回：touched = 读过的类型 + upsert 实际落到/新建的类型；每类都要给**全部行**（含墓碑）。
             const rowsByType = groupRowsByType(store.experiences)
             const touched = [...new Set([...loadedTypeIds, String(result.experience.typeId || targetTypeId)])]
@@ -685,6 +801,8 @@ export function buildTools(defineTool, config = {}) {
         // 待判定队列在写入本条之前取：刚记的这条不算「提醒过一次」，下一轮才出现。
         pendingOut = pendingTasks(store, 2, { pendingTtl: config.pendingTtl, sessionId, strict: config.autoBind !== false })
         result = upsertExperience(store, upsertInput, upsertOptions)
+        directionDropped = pruneRowForeignDirections(result.experience)
+        canonicalizeRowFamily(result.experience)
         writeStore(dataDir, store)
         activeCount = visibleExperiences(store).length
       }
@@ -744,16 +862,22 @@ export function buildTools(defineTool, config = {}) {
       const savedTags = normalizeContext(result.experience.context)
       const savedFacets = groupByFacet(savedTags)
       const savedMissingFacets = TAG_REQUIRED_FACETS.filter((facet) => savedFacets[facet].length === 0)
-      const overflowTags = allTags.filter((tag) => !savedTags.some((saved) => saved.toLowerCase() === tag.toLowerCase()))
-      const finalTagWarning = (ctxGiven || lblGiven)
-        ? [
-          ...savedMissingFacets.map((facet) => TAG_FACET_HINTS[facet]),
-          ...rejectedTags.map((item) => `已忽略「${item.value}」：${item.reason}`),
-          overflowTags.length > 0
-            ? `标签最多保留 ${TAG_MAX_COUNT} 个，已保留：${savedTags.join('、')}；被截断/丢弃：${overflowTags.join('、')}`
-            : '',
-        ].filter(Boolean).join('；')
-        : ''
+      const overflowTags = allTags.filter((tag) => !savedTags.some((saved) => saved.toLowerCase() === tag.toLowerCase())
+        && !directionDropped.some((dropped) => dropped.toLowerCase() === tag.toLowerCase()))
+      const directionWarn = directionDropped.map((tag) => `方向「${clipText(tag)}」不属于本经验的族「${clipText(result.experience && result.experience.family)}」，已摘除`)
+      // 0.38：整段告警限长，避免一次塞几十条超长标签把回执撑过 2KB。
+      const finalTagWarning = clipText([
+        ...directionWarn,
+        ...((ctxGiven || lblGiven)
+          ? [
+            ...savedMissingFacets.map((facet) => TAG_FACET_HINTS[facet]),
+            ...rejectedTags.slice(0, 4).map((item) => `已忽略「${clipText(item.value)}」：${clipText(item.reason, 120)}`),
+            overflowTags.length > 0
+              ? `标签最多保留 ${TAG_MAX_COUNT} 个，已保留：${clipText(savedTags.join('、'), 120)}；被截断/丢弃：${clipText(overflowTags.slice(0, 5).join('、'), 120)}`
+              : '',
+          ]
+          : []),
+      ].filter(Boolean).join('；'), 900)
       const pending = config.pendingReceipt === false
         ? []
         : pendingOut.rows.map((item) => ({ id: item.id, brief: pendingBrief(item, { quote: pendingQuote(item), edit: pendingEdit(item) }) }))
@@ -789,7 +913,7 @@ export function buildTools(defineTool, config = {}) {
         pending: pending.length > 0 ? pending : undefined,
         // 标签：归一后的清单 + 被丢弃的原文 + 缺面提示。模型看到 tagWarning 就能当场补一个动作标签。
         tags: savedTags.length > 0 ? savedTags : undefined,
-        tagsRejected: rejectedTags.length > 0 ? rejectedTags.map((item) => item.value) : undefined,
+        tagsRejected: rejectedTags.length > 0 ? rejectedTags.slice(0, 4).map((item) => clipText(item.value, 200)) : undefined,
         tagWarning: finalTagWarning === '' ? undefined : finalTagWarning,
         ...(skillResult === null ? {} : { skill: skillResult }),
         ...(skillWarning === null ? {} : { skillWarning }),
@@ -994,6 +1118,8 @@ export function buildTools(defineTool, config = {}) {
         return payload
       }
       // 0.37 P6：按动作族取经验（E1）。分片本来就按族存，只读那一个文件，不扫全库。
+      // 0.38：族名非字符串明确拒（只读路径也不静默强转）。
+      if (args.family !== undefined && args.family !== null && typeof args.family !== 'string') throw new Error('族名必须是字符串（family）')
       const explicitFamily = args.family === undefined || args.family === null ? '' : String(args.family).trim()
       if (explicitFamily !== '') {
         const manifest = readManifest(dataDir)
@@ -1005,13 +1131,26 @@ export function buildTools(defineTool, config = {}) {
         // rankExperiences 的候选把行字段包在 evidence[0] 里，扁平化时按「顶层优先、evidence 兜底」取。
         const flatCandidate = (row) => {
           const source = (Array.isArray(row.evidence) && row.evidence[0]) || {}
+          // 排序分支的候选字段可能包在 evidence 里；按 id 回原始行兜底，保证 family/context/lastSeenAt 不丢。
+          const rowId = row.id !== undefined && row.id !== '' ? row.id : source.id
+          const original = rowId ? visibleRows.find((item) => item.id === rowId) : undefined
+          const pick = (key) => {
+            if (row[key] !== undefined) return row[key]
+            if (original !== undefined && original[key] !== undefined) return original[key]
+            return source[key]
+          }
+          const context = pick('context')
+          const family = pick('family')
           return {
             id: row.id || source.id || '',
             intent: row.intent !== undefined ? row.intent : (source.intent !== undefined ? source.intent : ''),
             action: row.action !== undefined ? row.action : (source.action !== undefined ? source.action : ''),
             outcome: row.outcome !== undefined ? row.outcome : source.outcome,
             G: row.G !== undefined ? row.G : source.G,
-            lastSeenAt: row.lastSeenAt || row.ts || source.lastSeenAt || source.ts || '',
+            lastSeenAt: pick('lastSeenAt') || pick('ts') || '',
+            // 0.38：按族召回要能看出「哪一族、哪个方向」，否则调用方拿不到复用线索。
+            family: family !== undefined && family !== '' ? family : explicitFamily,
+            ...(Array.isArray(context) && context.length > 0 ? { context, tags: context } : {}),
           }
         }
         // 族内 >8 条才排序；没给 intent 时没有相似度可算，退回「最近使用倒序」（首轮黑盒抓到的 note 与行为不符）。
@@ -1531,7 +1670,9 @@ export function buildTools(defineTool, config = {}) {
       id: { type: 'string', description: 'assign 时的经验 id（exp_recall 证据里的 id）。' },
       // 不叫 description：与 JSON Schema 的 description 关键字同名，provider 严格校验会误读。
       typeDescription: { type: 'string', description: 'create/rename 时可选写描述（≤120 字）。' },
-      facet: { type: 'string', enum: [...TAG_FACETS], description: `label 时给**新标签**指定面（已登记标签不用给）：${TAG_FACETS.map((key) => `${key}=${TAG_FACET_LABELS[key]}`).join('、')}。新标签会登记进 .exp/tag-registry.json。` },
+      facet: { type: 'string', enum: [...TAG_FACETS], description: `label 时给**新标签**指定面（已登记标签不用给）：${TAG_FACETS.map((key) => `${key}=${TAG_FACET_LABELS[key]}`).join('、')}。新标签会登记进 .exp/tag-registry.json。direction=族内场景方向，必须配 family。` },
+      family: { type: 'string', description: 'label 登记 direction（方向）标签时必填：这个方向属于哪个动作族（族须已存在）。方向是族内场景短名词（如 写断言→契约断言/回归断言/探针先行），不收自由文本。' },
+      labels: { type: 'array', description: 'label 时要加到该经验上的标签名（数组）：已登记的直接用；未登记的须配 facet（登记新标签）。' },
       tagDescription: { type: 'string', description: 'label 登记新标签时的说明（≤120 字，给人看，不是标签本身）。' },
     },
     output: { schema: OUTPUT_SCHEMA, render: renderJson },
@@ -1539,6 +1680,8 @@ export function buildTools(defineTool, config = {}) {
       const dataDir = dataDirOf()
       return withStoreLock(dataDir, () => {
       const manifest = readManifest(dataDir)
+      // 0.38 健壮性：label 前先按 dataDir 加载词表，冷启动（真新进程）也能认到磁盘上已登记的方向/标签。
+      try { ensureTagOverrides(dataDir) } catch { /* 坏词表按内建词走 */ }
       const action = String(args.action || '').trim()
       if (action === 'label') {
         const store = readStore(dataDir)
@@ -1553,26 +1696,76 @@ export function buildTools(defineTool, config = {}) {
         for (const raw of wanted) {
           const check = validateNewTagName(raw)
           if (!check.ok) {
-            problems.push(`「${raw}」${check.reason}`)
+            problems.push(`「${clipText(raw, 40)}」${clipText(check.reason, 120)}`)
             continue
           }
           if (!resolved.some((name) => name.toLowerCase() === check.name.toLowerCase())) resolved.push(check.name)
         }
         if (problems.length > 0) {
-          const error = new Error(`标签不合规：${problems.join('；')}`)
+          // 0.38：只回显前几条并截断，避免一次塞 100 条超长标签把报错撑到几百 KB。
+          const shown = problems.slice(0, 5).join('；')
+          const more = problems.length > 5 ? `；等 ${problems.length} 项不合规` : ''
+          const error = new Error(`标签不合规：${clipText(shown, 1000)}${more}`)
           error.code = 'invalid'
           throw error
         }
-        // 未登记的新标签必须指定面（计划书 §5.2 / §8.1-4），登记进 .exp/tag-registry.json 后立即可用。
+        // 0.38：新标签的面/归属族、方向归属校验、标签上限——全部校验通过再写盘（拒收不留半写）。
         const unknown = resolved.filter((name) => facetOf(name) === null)
-        if (unknown.length > 0) {
-          const facet = String(args.facet || '').trim()
-          if (!TAG_FACETS.includes(facet)) {
-            const error = new Error(`新标签 ${unknown.map((name) => `「${name}」`).join('')} 必须指定面：facet 取 ${TAG_FACETS.map((key) => `${key}(${TAG_FACET_LABELS[key]})`).join(' / ')}`)
+        const facet = String(args.facet || '').trim()
+        // 0.38：label 指定 facet=direction 时，已登记成别的面（写入即登记常先记成 topic）的标签要纠正成方向，
+        // 不能静默丢面；也不能直接报错（调用方明确要登记方向）。
+        const reFacet = facet === 'direction'
+          ? resolved.filter((name) => {
+            const existingFacet = facetOf(name)
+            return existingFacet !== null && existingFacet !== 'direction'
+          })
+          : []
+        // 0.38：归属族名非字符串明确拒，别 String() 强转后拿去登记方向。
+        if (args.family !== undefined && args.family !== null && typeof args.family !== 'string') {
+          const error = new Error('方向归属族必须是非空字符串（family）')
+          error.code = 'invalid'
+          throw error
+        }
+        // 0.38：用原始串校验（含不可见字符/BOM）——String().trim() 会把首尾 BOM 吃掉，导致六入口口径不一致。
+        // 纯空白（无不可见符）留给下面报「必须给 family」；纯不可见符（如 U+FEFF）走校验器的「族名不能为空」。
+        if (typeof args.family === 'string' && args.family !== '') {
+          const plainBlank = args.family.trim() === '' && !FAMILY_INVISIBLE_RE.test(args.family)
+          if (!plainBlank) validateFamilyName(args.family)
+        }
+        const labelFamily = String(args.family || '').trim()
+        if (unknown.length > 0 && !TAG_FACETS.includes(facet)) {
+          const error = new Error(`新标签 ${unknown.map((name) => `「${name}」`).join('')} 必须指定面：facet 取 ${TAG_FACETS.map((key) => `${key}(${TAG_FACET_LABELS[key]})`).join(' / ')}`)
+          error.code = 'invalid'
+          throw error
+        }
+        // 0.38：方向标签（新登记，或把已登记成 topic 的词纠正成方向）都必须带合法且已登记的族归属（拍板⑤）。
+        if (facet === 'direction' && (unknown.length > 0 || reFacet.length > 0)) {
+          if (labelFamily === '') {
+            const error = new Error('登记方向标签必须给 family（这个方向属于哪个动作族）')
             error.code = 'invalid'
             throw error
           }
-          for (const name of unknown) saveTagOverride(dataDir, { name, facet, description: args.tagDescription })
+          validateFamilyName(labelFamily)
+          if (!familyIsKnown(store, dataDir, labelFamily)) {
+            const error = new Error(`方向归属族「${labelFamily}」未登记：先用该族记一条经验，或 exp_family create 登记族`)
+            error.code = 'invalid'
+            throw error
+          }
+        }
+        // 方向归属族必须与经验行族一致（已登记方向 + 本次要登记的新方向都算）。
+        const rowFamily = normalizeFamilyName(row.family)
+        const dirFamilyOfResolved = (name) => {
+          if (facetOf(name) === 'direction') return directionFamilyOf(name)
+          if ((unknown.includes(name) || reFacet.includes(name)) && facet === 'direction') return labelFamily
+          return null
+        }
+        for (const name of resolved) {
+          const dirFamily = dirFamilyOfResolved(name)
+          if (dirFamily !== null && rowFamily !== '' && normalizeFamilyName(dirFamily) !== rowFamily) {
+            const error = new Error(`方向「${name}」属于族「${dirFamily}」，与这条经验的族「${rowFamily}」不符`)
+            error.code = 'invalid'
+            throw error
+          }
         }
         const merged = [...new Set([...existing, ...resolved])]
         if (merged.length > 8) {
@@ -1580,6 +1773,10 @@ export function buildTools(defineTool, config = {}) {
           error.code = 'invalid'
           throw error
         }
+        // 全部校验通过，才登记新标签（拒收不留词表半写）。
+        for (const name of unknown) saveTagOverride(dataDir, { name, facet, description: args.tagDescription, family: facet === 'direction' ? labelFamily : '' })
+        // 0.38：把已登记成非方向的词纠正成方向（label 明确指定 facet=direction）。
+        for (const name of reFacet) updateTagFacet(dataDir, { name, facet: 'direction', family: labelFamily })
         row.context = normalizeContext(merged)
         writeStore(dataDir, store)
         const check = validateTagSet(row.context)
@@ -1673,7 +1870,7 @@ export function buildTools(defineTool, config = {}) {
 
   const familyTool = defineTool({
     name: 'exp_family',
-    description: '管理动作族（0.33）：list 列出真实存在的族 / create 校验并登记新族（首次写入时落盘）/ rename 改名 / merge 合并 / assign 把经验指派到族 / delete 仅允许空族。族名 1–12 字短名词，对象面标签不能当族名。',
+    description: '管理动作族（族=可复用动作模式，动词+对象）：list 列出真实存在的族 / create 校验并登记新族 / rename 改名 / merge 合并 / assign 把经验指派到族 / delete 仅允许空族。建族前先 list 看有无近义族，有就复用或 merge，别重复造。对象词（代码/课件）与裸泛词（执行/校验）不能当族名。具体任务怎么做用 exp_object，不进族。',
     parameters: {
       action: { type: 'string', enum: ['list', 'create', 'rename', 'merge', 'assign', 'delete'], required: true, description: '要执行的动作。' },
       family: { type: 'string', description: 'create 的族名；rename/delete 的旧族名；assign 的目标族名。' },
@@ -1688,6 +1885,13 @@ export function buildTools(defineTool, config = {}) {
       return withStoreLock(dataDir, () => {
         const action = String(args.action || '').trim()
         const registry = readFamilyRegistry(dataDir)
+        // 0.38 健壮性：assign 摘方向前先加载词表，冷启动也能认出磁盘上已登记的方向。
+        try { ensureTagOverrides(dataDir) } catch { /* 坏词表按内建词走 */ }
+        // 0.38：词表不可读（坏 JSON / 被目录占用）时改族会断掉方向归属（迁不了也告不出），
+        // 先修复词表再 rename/merge，别把行改成新族、方向还挂旧族。
+        if ((action === 'rename' || action === 'merge') && wordlistUnreadable(dataDir)) {
+          throw new Error('词表不可读（tag-registry.json 是坏 JSON 或被目录占用）：先修复词表再改族，否则方向归属会断')
+        }
         // 0.35：删族前先看对象链是否还引用它（定稿 §10-3：拒删）。
         if (action === 'delete') {
           const name = normalizeFamilyName(args.family)
@@ -1698,9 +1902,20 @@ export function buildTools(defineTool, config = {}) {
           }
         }
         const store = readStore(dataDir)
-        const { result, changed } = manageFamilies(store, action, args)
+        // 0.38：create/assign 的目标族名先把旧名归一到当前族名，别把旧名复活成幽灵族（同一 id 出现两次）。
+        let managedArgs = args
+        let retiredNote = ''
+        if ((action === 'create' || action === 'assign') && typeof args.family === 'string') {
+          const canonical = canonicalFamilyName(registry, args.family)
+          if (canonical !== normalizeFamilyName(args.family)) {
+            retiredNote = `族名「${clipText(args.family)}」已并入「${clipText(canonical)}」`
+            managedArgs = { ...args, family: canonical }
+          }
+        }
+        const { result, changed } = manageFamilies(store, action, managedArgs)
         if (changed) writeStore(dataDir, store)
-        syncCreatedFamilies(dataDir, action, args, result)
+        syncCreatedFamilies(dataDir, action, managedArgs, result)
+        if (retiredNote !== '') result.note = result.note ? `${result.note}；${retiredNote}` : retiredNote
         // 族稳定 id 跟着 rename/merge 走：rename 只改 name，merge 把来源 id 记进目标别名。
         const beforeRegistry = JSON.stringify(registry)
         try {
@@ -1722,6 +1937,23 @@ export function buildTools(defineTool, config = {}) {
           throw new Error(`族 id 注册表同步失败：${error && error.message ? error.message : error}`)
         }
         if (JSON.stringify(registry) !== beforeRegistry) writeFamilyRegistry(dataDir, registry)
+        // 0.38：族改名/合并后同步迁移方向归属（否则合法方向会被判跨族拒记）。
+        if (action === 'rename') {
+          remapDirectionFamily(dataDir, [[args.family, result.target || args.newName || '']])
+        } else if (action === 'merge') {
+          const mergeTarget = result.target || args.newName || ''
+          remapDirectionFamily(dataDir, (Array.isArray(args.names) ? args.names : []).map((name) => [name, mergeTarget]))
+        }
+        // 词表文件被目录占用时读不到方向，迁移会静默 0 条——回执要明确告警，别让调用方以为迁了。
+        if ((action === 'rename' || action === 'merge') && wordlistUnreadable(dataDir)) {
+          result.directionWarning = '词表不可读（tag-registry.json 不是文件），方向归属未迁移；先修复词表文件再重试'
+        }
+        // 0.38：assign 到另一族时摘掉了跨族方向——回执明确点出摘了哪些，不静默丢标签。
+        if (action === 'assign' && Array.isArray(result.droppedDirections) && result.droppedDirections.length > 0) {
+          const dropped = result.droppedDirections
+          result.droppedDirections = dropped.slice(0, 10).map((name) => clipText(name, 40))
+          result.directionWarning = `指派到族「${clipText(result.target, 40)}」时摘除了不属于该族的方向：${result.droppedDirections.join('、')}`
+        }
         if (action === 'list' && Array.isArray(result.families)) {
           for (const family of readCreatedFamilies(dataDir)) {
             if (!result.families.some((item) => item.family === family)) result.families.push({ family, count: 0 })
@@ -1732,6 +1964,10 @@ export function buildTools(defineTool, config = {}) {
             if (id !== '') item.id = id
           }
         }
+        // 0.38：超长来源族名/名单/目标名进回执前截断（避免 10 万字符撑爆回执）。
+        if (Array.isArray(result.sources)) result.sources = result.sources.slice(0, 20).map((name) => clipText(name, 40))
+        if (typeof result.target === 'string') result.target = clipText(result.target, 40)
+        if (typeof result.family === 'string') result.family = clipText(result.family, 40)
         return result
       })
     },
@@ -1739,12 +1975,12 @@ export function buildTools(defineTool, config = {}) {
 
   const objectTool = defineTool({
     name: 'exp_object',
-    description: '对象链（0.35）：记录「这一件具体工作按什么顺序做完」。对象名 + 1..n 条链（每条 1..n 步，每步一个动作族）；某步失败可在该步下挂分支换一组动作。create 建对象+首条链 / append 追一条新链或补一步 / branch 给 failed 步骤挂分支 / show 读对象（族 id 解析成当前名）/ list 清单 / delete 删对象。不参与召回与排序；具体做法仍记 exp_record。',
+    description: '对象链：记录「这一件具体任务按什么顺序做完」。对象名 + 1..n 条链，每条 1..n 步，每步=方向标签+动作族（family 必填且须已登记；direction 可选但给了必须是该族已登记方向）；某步失败可在该步下挂分支换一组动作。create 建对象+首条链 / append 追链或补步 / branch 给 failed 步骤挂分支 / show 读对象 / list 清单 / delete 删对象。不参与召回与排序；可复用的做法/原则/踩坑记 exp_record，别把任务流水塞进经验。',
     parameters: {
       action: { type: 'string', enum: ['create', 'append', 'branch', 'show', 'list', 'delete'], required: true, description: '要执行的动作。' },
       object: { type: 'string', description: 'create 的对象名（1–40 字）；其余动作传对象名或 ob_ id。' },
-      chain: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'create/append 的步骤数组：[{ family: "跑 npm 测试", note: "可选", outcome: "failed" }]；family 必填，note 可选。' },
-      steps: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'branch 的动作组，与 chain 同形状。' },
+      chain: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'create/append 的步骤数组：[{ family: "跑测试", direction: "回归断言", note: "可选", outcome: "failed" }]；family 必填（须已登记族），direction 可选（给了须是该族已登记方向），note 可选。' },
+      steps: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'branch 的动作组，与 chain 同形状（family 必填、direction 可选受控）。' },
       chainIndex: { type: 'number', description: '从 1 起。append 指向已有链；branch 必填（要用作补步时对象+链一次写）。' },
       stepPath: { type: 'array', items: { type: 'number' }, description: '从 1 起：[步骤] 定位主干步骤；[步骤, 分支, 步骤] 定位分支里的步骤。branch 必填；append 补进分支时给偶数路径 [步骤, 分支]。' },
       when: { type: 'string', description: 'branch 必填：撞上什么具体意外（报错信息 / 环境不对），不要只写「失败」。' },
@@ -1760,12 +1996,24 @@ export function buildTools(defineTool, config = {}) {
       }
       return withStoreLock(dataDir, () => {
         const registry = readFamilyRegistry(dataDir)
+        // 0.38 健壮性：对象步方向校验前先加载词表，冷启动也能认到磁盘上已登记的方向。
+        try { ensureTagOverrides(dataDir) } catch { /* 坏词表按内建词走 */ }
         let registryDirty = false
         const resolveFamily = (name) => {
+          // 0.38：先对原始族名做完整校验（含不可见字符），再按归一名查 id——已登记的族也要校验，
+          // 否则带 BOM 的「写\ufeff断言」会被归一成「写断言」静默复用。
+          validateFamilyName(name)
+          // 0.38：旧族名（改名/合并前）由 familyIdByName 的 retired 命中直接解析到新族 id，不重建旧族。
           const id = familyIdByName(registry, name)
           if (id !== '') return id
           registryDirty = true
           return ensureFamilyEntry(registry, name)
+        }
+        // 0.38：方向解析器——必须是该族已登记的方向标签（拍板⑤），否则抛错。
+        const resolveDirection = (familyName, direction) => {
+          const check = validateDirectionForFamily(direction, familyName)
+          if (!check.ok) throw new Error(check.reason)
+          return check.name
         }
         const hintViews = (obj) => promotionHints(obj).map((hint) => ({
           ...hint,
@@ -1777,7 +2025,7 @@ export function buildTools(defineTool, config = {}) {
         const objects = readObjects(dataDir)
         const requireObject = (key) => {
           const found = findObject(objects, key)
-          if (found === null) throw new Error(`没有这个对象：${String(key || '').trim() || '(空)'}；先 create`)
+          if (found === null) throw new Error(`没有这个对象：${clipText(String(key || '').trim() || '(空)', 40)}；先 create`)
           return found
         }
         let result = null
@@ -1816,13 +2064,13 @@ export function buildTools(defineTool, config = {}) {
           writeObjects(dataDir, objects)
           result = { action, deleted: obj.object, id: obj.id, remaining: objects.length }
         } else if (action === 'create') {
-          const steps = buildSteps(args.chain, resolveFamily)
+          const steps = buildSteps(args.chain, resolveFamily, { resolveDirection })
           const obj = createObject(objects, args.object, steps, { note: args.note })
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, steps: steps.length }
         } else if (action === 'append') {
           const obj = requireObject(args.object)
-          const steps = buildSteps(args.chain, resolveFamily)
+          const steps = buildSteps(args.chain, resolveFamily, { resolveDirection })
           let at = null
           if (args.chainIndex === undefined || args.chainIndex === null || String(args.chainIndex).trim() === '') {
             at = appendChain(obj, steps, { note: args.note })
@@ -1833,7 +2081,7 @@ export function buildTools(defineTool, config = {}) {
           result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, at }
         } else if (action === 'branch') {
           const obj = requireObject(args.object)
-          const steps = buildSteps(args.steps, resolveFamily)
+          const steps = buildSteps(args.steps, resolveFamily, { resolveDirection })
           const added = addBranch(obj, { chainIndex: args.chainIndex, stepPath: args.stepPath, when: args.when, steps, result: args.result })
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, ...added }

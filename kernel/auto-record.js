@@ -23,6 +23,7 @@ import { findSessionFile } from './chat-save.js'
 import { readSessionEvents, sessionCwd, userMessagesAfterTurn, userMessagesOfSession } from './session.js'
 import { resolveEngramDataDir } from './settings.js'
 import { ensureTagOverrides, extractQueryTags, facetOf } from './tag-registry.js'
+import { specificFamilyOf } from './family-name.js'
 
 /** 这些工具不构成「做完的活」：只读、记忆自身、流程控制。 */
 const NON_DELIVER_TOOLS = new Set([
@@ -293,6 +294,63 @@ export function autoTagsOf({ intent, process, artifacts, cwd, tools, dataDir } =
   return tags.slice(0, 6)
 }
 
+/** 多步→对象 的默认步数门槛（可被 config.autoRecordObjectMinSteps 覆盖；拍板④阈值不钉死）。 */
+export const DEFAULT_OBJECT_MIN_STEPS = 3
+
+/**
+ * 0.38 P5：判定一回合该走「对象链」还是「经验」。
+ * 交付动作数 ≥ objectMinSteps → 多步任务 → object；否则单步可复用 → experience。
+ * 纯函数；自动记录默认关，本分流只在开启后生效。
+ * @returns {'object'|'experience'}
+ */
+export function classifyAutoTurn(tools, { objectMinSteps = DEFAULT_OBJECT_MIN_STEPS } = {}) {
+  const list = (Array.isArray(tools) ? tools : []).filter((tool) => tool && typeof tool.name === 'string')
+  const delivered = list.filter((tool) => isDeliverTool(tool.name))
+  const min = Number.isFinite(Number(objectMinSteps)) && Number(objectMinSteps) >= 1 ? Math.trunc(Number(objectMinSteps)) : DEFAULT_OBJECT_MIN_STEPS
+  return delivered.length >= min ? 'object' : 'experience'
+}
+
+/** 单个交付工具 → 动作文本（用来推导族）。 */
+function toolActionText(tool) {
+  const args = tool && tool.args && typeof tool.args === 'object' ? tool.args : {}
+  const name = String((tool && tool.name) || '')
+  if (typeof args.command === 'string' && args.command.trim() !== '') return args.command.trim()
+  if (typeof args.path === 'string' && args.path.trim() !== '') return `改 ${args.path.trim()}`
+  return name
+}
+
+/**
+ * 0.38 P5：多步回合 → exp_object create 入参（每步=推导出的动作族；方向自动记录给不出，留空）。
+ * 推不出族的步骤跳过；没有可用步骤返回 null（回退经验/不记）。对象名取意图截断，重名由调用方兜底。
+ * @returns {object|null}
+ */
+export function buildAutoObject({ sessionId, turn, cwd, intent, tools, objectMinSteps }) {
+  const text = String(intent || '').trim()
+  if (!isRecordableIntent(text)) return null
+  const list = (Array.isArray(tools) ? tools : []).filter((tool) => tool && typeof tool.name === 'string')
+  if (list.some((tool) => tool.name === 'exp_record' || tool.name === 'exp_object')) return null
+  const delivered = list.filter((tool) => isDeliverTool(tool.name))
+  if (classifyAutoTurn(list, { objectMinSteps }) !== 'object') return null
+  const chain = []
+  for (const tool of delivered) {
+    if (chain.length >= 20) break
+    const family = specificFamilyOf(toolActionText(tool))
+    if (family === '') continue
+    const step = { family }
+    const note = clipByCodePoint(toolActionText(tool), 120)
+    if (note !== '') step.note = note
+    if (tool.isError === true) step.outcome = 'failed'
+    chain.push(step)
+  }
+  if (chain.length === 0) return null
+  return {
+    action: 'create',
+    object: clipByCodePoint(text, 40),
+    chain,
+    note: clipByCodePoint(`[auto] turn ${turn} session ${sessionId}，${delivered.length} 次交付动作`, 200),
+  }
+}
+
 /**
  * 纯函数：根据一回合的工具序列生成 exp_record 入参。
  * @returns {object|null} null = 不该自动记
@@ -358,7 +416,7 @@ export function intentOfTurn(events, turn) {
  * 钩子本体：在 plugin.apply 里注册到 `tools/result` 与 `agent/turn-stopping`。
  * @param {{config: object, record: object, audit: (config: object, line: string) => void}} deps
  */
-export function createAutoRecorder({ config, record, audit }) {
+export function createAutoRecorder({ config, record, object = null, audit }) {
   const buffers = new Map()
   const handled = new Set()
 
@@ -417,6 +475,17 @@ export function createAutoRecorder({ config, record, audit }) {
       const events = readSessionEvents(file)
       const intent = intentOfTurn(events, turn)
       const cwd = sessionCwd(events)
+      // 0.38 P5：多步任务 → 对象链（需 object 工具且分流判定为 object）；否则单步 → 经验。默认关时整段不执行。
+      const objectMinSteps = config.autoRecordObjectMinSteps
+      if (object !== null && classifyAutoTurn(tools, { objectMinSteps }) === 'object') {
+        const objArgs = buildAutoObject({ sessionId, turn, cwd, intent, tools, objectMinSteps })
+        if (objArgs !== null) {
+          const objExec = { agent: { id: sessionId, session: { header: { cwd } } } }
+          await object.execute(objArgs, objExec)
+          audit(config, `auto-object: turn ${turn} session ${sessionId} (${objArgs.chain.length} 步)`)
+          return
+        }
+      }
       const args = buildAutoRecord({ sessionId, turn, cwd, intent, tools, dataDir: dataDirOf() })
       if (args === null) return
       const exec = { agent: { id: sessionId, session: { header: { cwd: args.cwd } } } }

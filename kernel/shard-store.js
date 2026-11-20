@@ -569,6 +569,12 @@ export function readShardRecords(dataDir, manifest, options = {}) {
  * @param {string} family 族名（trim 后精确匹配；找不到再做一次大小写不敏感匹配）
  * @returns {object[]} 该族全部记录
  */
+/** 0.38：报错里回显族名要截断（按码点，不劈代理对），别把 10 万字符入参原样塞进错误。 */
+function clipErrName(value, max = 60) {
+  const points = Array.from(String(value === undefined || value === null ? '' : value))
+  return points.length > max ? `${points.slice(0, max).join('')}…` : points.join('')
+}
+
 export function readFamilyByName(dataDir, family) {
   const wanted = String(family === undefined || family === null ? '' : family).trim()
   if (wanted === '') throw new Error('族名不能为空')
@@ -581,8 +587,11 @@ export function readFamilyByName(dataDir, family) {
     bucket = buckets.find((item) => String(item.family).toLowerCase() === lower)
   }
   if (bucket === undefined) {
-    const sample = buckets.slice(0, 5).map((item) => String(item.family)).join('、')
-    throw new Error(`没有这个族：${wanted}${sample === '' ? '' : `（现有如：${sample}）`}`)
+    // 老桶布局的 bucket 没有 family（是 undefined）：不能把 undefined 拼进文案，也不能原样回显超长入参。
+    const names = buckets.map((item) => String((item && item.family) === undefined || (item && item.family) === null ? '' : item.family)).filter((name) => name !== '')
+    const hint = names.length === 0 ? '；当前库不是按族分片（老桶布局），先迁移或 ensureDefaultTypes 再按族取' : ''
+    const sample = names.slice(0, 5).join('、')
+    throw new Error(`没有这个族：${clipErrName(wanted)}${sample === '' ? '' : `（现有如：${clipErrName(sample, 120)}）`}${hint}`)
   }
   const bucketFile = anchoredBucketFile(bucket)
   const file = resolveBucketPath(dataDir, bucketFile)
@@ -1783,6 +1792,26 @@ function mergeRecent(previousRecent, touched, computedByType) {
  * @param {object[]} [payload.pending] 待判定索引（传了才更新）
  */
 
+/** 0.38：flat 布局读某族文件（所有分片）里的全部行；读不到返回 []，坏文件交给读路径报错。 */
+function readFlatFamilyRows(dir, family) {
+  const rows = []
+  const root = path.join(dir, LIBRARY_DIR)
+  let names = []
+  try { names = fs.readdirSync(root) } catch { return rows }
+  const base = path.basename(familyRelPath('', family, 0, dir)) // <族~hash>.jsonl
+  const stem = base.replace(/\.jsonl$/i, '')
+  for (const name of names) {
+    if (!name.toLowerCase().endsWith('.jsonl')) continue
+    if (name !== `${stem}.jsonl` && !name.startsWith(`${stem}.`)) continue
+    try {
+      const file = path.join(root, name)
+      const read = readBucketRows(file, `${LIBRARY_DIR}/${name}`) || []
+      for (const row of read) rows.push(row)
+    } catch { /* 坏分片交给读路径报错 */ }
+  }
+  return rows
+}
+
 /** 分族布局的局部写：只重写 touched 类型的族文件，未触及的类型原样保留。 */
 function writeTypeFamilyShards(dataDir, manifest, payload) {
   const dir = String(dataDir || '')
@@ -1805,10 +1834,63 @@ function writeTypeFamilyShards(dataDir, manifest, payload) {
   const protectedOtherFiles = new Set(untouched.map((bucket) => String(bucket && bucket.file || '')).filter(Boolean))
   const keepByType = new Map()
   const written = []
+  const writtenFiles = new Set()
   const pendingWrites = []
   const indexJobs = []
   const staleBaks = []
   const typeNames = new Map((Array.isArray(payload.types) ? payload.types : manifest.types).map((type) => [String(type && type.id), String(type && type.name || '')]))
+  // 0.38：把「写一个族文件」抽成 emitFamily，flat 与非 flat 共用同一套分片/去重逻辑。
+  const emitFamily = (typeId, family, familyRows, keep) => {
+    let chunk = []
+    let chunkIndex = 0
+    let bytes = 0
+    const flush = () => {
+      if (chunk.length === 0) return
+      const rel = familyRelPath(typeId, family, chunkIndex, dir)
+      const text = bucketTextOf(chunk)
+      const hash = contentHash(text)
+      const before = previousByName.get(rel)
+      if (before === undefined || before.hash !== hash || !fs.existsSync(path.join(dir, rel))) pendingWrites.push({ rel, text })
+      keep.add(path.basename(rel))
+      writtenFiles.add(rel)
+      written.push({ file: rel, typeId, family, count: chunk.length, bytes: Buffer.byteLength(text, 'utf8'), latestTs: latestTsOf(chunk), hash })
+      chunk = []
+      bytes = 0
+      chunkIndex += 1
+    }
+    for (const row of familyRows) {
+      const rowBytes = Buffer.byteLength(JSON.stringify(row), 'utf8') + 1
+      if (chunk.length > 0 && bytes + rowBytes > MAX_BUCKET_BYTES) flush()
+      chunk.push(row)
+      bytes += rowBytes
+    }
+    flush()
+  }
+  if (flatLayout) {
+    // flat：族文件与 typeId 无关，必须按族聚合「所有 touched 类型」的行，并保留磁盘上未触及类型的同族行，
+    // 否则同族跨 typeId 时后写覆盖前写，丢旧行、根索引重复登记。
+    const flatGroups = new Map()
+    for (const typeId of touched) {
+      const rows = Array.isArray(rowsByType[typeId])
+        ? rowsByType[typeId].filter((row) => row !== null && typeof row === 'object' && !Array.isArray(row))
+        : []
+      for (const row of rows) {
+        const family = familyOf(row)
+        if (!flatGroups.has(family)) flatGroups.set(family, [])
+        flatGroups.get(family).push(row)
+      }
+    }
+    fs.mkdirSync(path.join(dir, LIBRARY_DIR), { recursive: true })
+    const keep = new Set()
+    const primaryType = touched[0] || ''
+    for (const [family, touchedRows] of [...flatGroups.entries()].sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))) {
+      const foreign = readFlatFamilyRows(dir, family).filter((row) => row !== null && typeof row === 'object' && row.typeId && !touchedLower.has(String(row.typeId).toLowerCase()))
+      const seen = new Set(touchedRows.map((row) => row && row.id).filter(Boolean))
+      const rows = [...touchedRows, ...foreign.filter((row) => row && row.id && !seen.has(row.id))]
+      emitFamily(primaryType, family, rows, keep)
+    }
+    keepByType.set('__flat__', keep)
+  } else {
   for (const typeId of touched) {
     const guardDir = familyDirOf(dir, typeId)
     if (fs.existsSync(guardDir) && !isTypeDirInsideLibrary(path.join(dir, LIBRARY_DIR), guardDir)) {
@@ -1823,39 +1905,15 @@ function writeTypeFamilyShards(dataDir, manifest, payload) {
       if (!groups.has(family)) groups.set(family, [])
       groups.get(family).push(row)
     }
-    const typeDir = flatLayout ? path.join(dir, LIBRARY_DIR) : familyDirOf(dir, typeId)
+    const typeDir = familyDirOf(dir, typeId)
     fs.mkdirSync(typeDir, { recursive: true })
     const keep = new Set()
     for (const [family, familyRows] of [...groups.entries()].sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))) {
-      let chunk = []
-      let chunkIndex = 0
-      let bytes = 0
-      const flush = () => {
-        if (chunk.length === 0) return
-        const rel = familyRelPath(typeId, family, chunkIndex, dir)
-        const text = bucketTextOf(chunk)
-        const hash = contentHash(text)
-        const before = previousByName.get(rel)
-        if (before === undefined || before.hash !== hash || !fs.existsSync(path.join(dir, rel))) pendingWrites.push({ rel, text })
-        keep.add(path.basename(rel))
-        written.push({ file: rel, typeId, family, count: chunk.length, bytes: Buffer.byteLength(text, 'utf8'), latestTs: latestTsOf(chunk), hash })
-        chunk = []
-        bytes = 0
-        chunkIndex += 1
-      }
-      for (const row of familyRows) {
-        const rowBytes = Buffer.byteLength(JSON.stringify(row), 'utf8') + 1
-        if (chunk.length > 0 && bytes + rowBytes > MAX_BUCKET_BYTES) flush()
-        chunk.push(row)
-        bytes += rowBytes
-      }
-      flush()
+      emitFamily(typeId, family, familyRows, keep)
     }
     keepByType.set(typeId, keep)
     // touched 类型里本次没产出的旧族文件删掉（族改成别的 / 清空）
     // R11 缺陷：GC 必须在隔离之前跑，否则 rename 保留的老 mtime 会让 .bak 在提交前被 GC 掉，失败无法回滚。
-    // flat：所有类型共享 library 根，不能按单个类型 GC（会误删其它类型的族文件），统一在循环后做一次。
-    if (!flatLayout) {
     cleanupStaleTemps(typeDir)
     let names = []
     try { names = fs.readdirSync(typeDir) } catch { names = [] }
@@ -1874,11 +1932,11 @@ function writeTypeFamilyShards(dataDir, manifest, payload) {
       for (const item of staleBaks) { try { fs.renameSync(item.bakPath, item.stalePath) } catch { /* 恢复失败也继续 */ } }
       throw error
     }
-    }
     // R11 缺陷：隔离出来的 .bak 在提交前不能被 GC（mtime 老会被误删），这里不再调用 cleanupStaleTemps。
     const createdBefore = (() => { try { return JSON.parse(fs.readFileSync(path.join(typeDir, '_index.json'), 'utf8')).created === true } catch { return false } })()
     // R8 缺陷：_index 必须最后写（数据文件→_index→manifest 的提交顺序）；否则强杀在 _index 之后会留下「新索引 + 旧文件」。
     indexJobs.push({ typeId, entries: written.filter((entry) => entry.typeId === typeId), createdBefore })
+  }
   }
   if (flatLayout) {
     // 一次性 GC：保留所有类型本次写出的族文件，删除根下陈旧 .jsonl。
@@ -1904,7 +1962,8 @@ function writeTypeFamilyShards(dataDir, manifest, payload) {
     }
     for (const item of flatBaks) { try { fs.unlinkSync(item.bakPath) } catch { /* 留给 GC */ } }
     indexJobs.length = 0
-    indexJobs.push({ typeId: '', entries: [...untouched, ...written], createdBefore: false })
+    // 0.38：同一族文件只能登记一次——written 取代 untouched 里同文件的旧桶（否则 count 翻倍、readStore 报损坏）。
+    indexJobs.push({ typeId: '', entries: [...untouched.filter((bucket) => !writtenFiles.has(String(bucket && bucket.file || ''))), ...written], createdBefore: false })
   }
   // R9 缺陷：把 _type/_index 也并入同一事务（数据文件+索引一起提交），_index 写失败时整体回滚。
   for (const job of indexJobs) pendingWrites.push(...familyIndexFiles(dir, job.typeId, typeNames.get(job.typeId) || '', job.entries, job.createdBefore))
@@ -1977,7 +2036,7 @@ function writeTypeFamilyShards(dataDir, manifest, payload) {
     ...manifest,
     types: nextTypes,
     clusters: Array.isArray(payload.clusters) ? payload.clusters : manifest.clusters,
-    buckets: [...untouched, ...written].sort((left, right) => (
+    buckets: [...untouched.filter((bucket) => !writtenFiles.has(String(bucket && bucket.file || ''))), ...written].sort((left, right) => (
       (typeOrder.get(String(left.typeId)) ?? Number.MAX_SAFE_INTEGER) - (typeOrder.get(String(right.typeId)) ?? Number.MAX_SAFE_INTEGER)
       || (left.file < right.file ? -1 : left.file > right.file ? 1 : 0)
     )),
@@ -2960,15 +3019,18 @@ export function writeFamilyShards(dataDir, store, previousManifest = null, optio
     const typeEntries = entries.filter((entry) => String(entry.typeId).toLowerCase() === typeId.toLowerCase())
     const createdBefore = (() => { try { return JSON.parse(fs.readFileSync(path.join(typeDir, '_index.json'), 'utf8')).created === true } catch { return false } })()
     // 分类=档案柜（终口径）：types 里声明的分类即使 0 行也保留目录与 _type/_index。
-    if (typeEntries.length === 0 && knownTypeIds.has(typeId)) { pendingWritesFull.push(...familyIndexFiles(dir, typeId, typeNames.get(typeId) || '', [], createdBefore)); continue }
+    // flat 布局根 _index.json 只写一次（见循环后），这里不再按 typeId 写，否则某个 0 行的 typeId 会把整份根索引清空。
+    if (typeEntries.length === 0 && knownTypeIds.has(typeId)) { if (!flat) pendingWritesFull.push(...familyIndexFiles(dir, typeId, typeNames.get(typeId) || '', [], createdBefore)); continue }
 
 
     if (typeEntries.length === 0) {
       if (typeDir.startsWith(libraryRoot + path.sep)) dirsToRemoveFull.push(typeDir)
       continue
     }
-    pendingWritesFull.push(...familyIndexFiles(dir, typeId, typeNames.get(typeId) || '', typeEntries, createdBefore))
+    if (!flat) pendingWritesFull.push(...familyIndexFiles(dir, typeId, typeNames.get(typeId) || '', typeEntries, createdBefore))
   }
+  // flat 布局：所有族都在 library 根，根 _index.json 用全量 entries 写一次。
+  if (isFlatLayout(dir)) pendingWritesFull.push(...familyIndexFiles(dir, '', '', entries, false))
   // R3 缺陷：全量写以当前 store 为准，清扫不属于本次结果的分类目录（幽灵目录/去重后变空的目录）。
   // 隐藏目录（.git/.locks/.trash 等）不是分类，跳过（R7-D1：不能把它们当族文件读，也不能删）。
   const typeDirNames = new Set([...canonicalTypeIds].map((typeId) => safeTypeDirName(typeId).toLowerCase()))

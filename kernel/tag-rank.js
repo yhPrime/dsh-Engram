@@ -12,7 +12,7 @@
  */
 import { lifecycleOf } from './retrieval.js'
 import { canonicalTag, readStore, readUsage, visibleExperiences } from './store.js'
-import { ensureTagOverrides, extractQueryTags, facetOf, TAG_FACETS } from './tag-registry.js'
+import { ensureTagOverrides, extractQueryTags, facetOf } from './tag-registry.js'
 
 /** 面权重（总和 1）：动作 > 主题。0.37：object 面已删除。 */
 export const TAG_FACET_WEIGHTS = Object.freeze({ action: 0.55, topic: 0.30 })
@@ -31,7 +31,7 @@ function round4(value) {
 /** 把任意来源的 queryTags 归成固定三面；别名统一成规范名，去重。 */
 function normalizeQueryTags(input) {
   const out = { action: [], topic: [], quality: [] }
-  for (const facet of TAG_FACETS) {
+  for (const facet of ['action', 'topic', 'quality']) {
     const list = Array.isArray(input && input[facet]) ? input[facet] : []
     for (const value of list) {
       const name = canonicalTag(value)

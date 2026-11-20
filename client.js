@@ -486,9 +486,9 @@ window.__ModuleLoader__.load({
      * 标签面（0.20.0 P0）：与 kernel/tag-registry.js 的 TAG_FACET_LABELS 对齐。
      * UI 只负责「按面分组展示 + 缺面提示」，面的真相在服务端词表（GET /tag-registry）。
      */
-    const TAG_FACET_ORDER = ['action', 'topic', 'quality', 'other']
+    const TAG_FACET_ORDER = ['action', 'direction', 'topic', 'quality', 'other']
     // 0.37：object 面已在 kernel 物理删除，UI 常量同步去掉，否则详情页会提示「缺对象」。
-    const TAG_FACET_LABELS = { action: '动作/任务', topic: '主题/场景', quality: '质量/异常', other: '其他已用标签' }
+    const TAG_FACET_LABELS = { action: '动作/任务', direction: '方向/场景', topic: '主题/场景', quality: '质量/异常', other: '其他已用标签' }
     const TAG_FACET_HINTS = {
       action: '再补一个动作标签，例如 提交/推送/校验/验收',
     }
@@ -505,10 +505,11 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    /** 缺哪些必填面：0.32 起对象面退出标签体系，只剩动作面必填。 */
-    function missingTagFacets(tags, groups) {
+    /** 缺哪些必填面：0.38 起动作由族承担，标签不再强制任何面（required 由服务端词表给，默认空）。 */
+    function missingTagFacets(tags, groups, required) {
       const list = Array.isArray(tags) ? tags : []
-      return ['action'].filter((facet) => !list.some((name) => tagFacetOf(name, groups) === facet))
+      const req = Array.isArray(required) ? required : []
+      return req.filter((facet) => !list.some((name) => tagFacetOf(name, groups) === facet))
     }
 
     /** 组的并集：词表里所有标签（已选/未选都要能点）。 */
@@ -541,7 +542,7 @@ window.__ModuleLoader__.load({
         }
         setDraft('')
       }
-      const missing = missingTagFacets(value, groups)
+      const missing = missingTagFacets(value, groups, view && Array.isArray(view.required) ? view.required : [])
       const known = new Set(TAG_FACET_ORDER.flatMap((facet) => tagEntriesOf(groups, facet).map((item) => item.name)))
       return h('div', { className: 'eng-tagpicker' },
         h('div', { className: 'eng-tag-selected' },
@@ -562,8 +563,9 @@ window.__ModuleLoader__.load({
         h('div', { className: 'eng-tag-groups' }, TAG_FACET_ORDER.filter((facet) => facet !== 'other' ? true : tagEntriesOf(groups, 'other').length > 0).map((facet) => {
           const entries = tagEntriesOf(groups, facet)
           if (entries.length === 0 && facet !== 'action') return null
-          const required = facet === 'action'
-          return h('details', { key: facet, className: 'eng-tag-group', open: required || facet === 'topic' },
+          const requiredFacets = view && Array.isArray(view.required) ? view.required : []
+          const required = requiredFacets.includes(facet)
+          return h('details', { key: facet, className: 'eng-tag-group', open: required || facet === 'topic' || facet === 'direction' },
             h('summary', { className: 'eng-tag-group-title' }, TAG_FACET_LABELS[facet], required ? h('span', { className: 'eng-req-mark' }, ' 必填至少 1 个') : null, h('span', { className: 'eng-muted' }, ` · ${entries.length}`)),
             h('div', { className: 'eng-tag-chips' }, entries.length === 0
               ? h('span', { className: 'eng-muted' }, '还没有可用标签')
@@ -1738,8 +1740,10 @@ window.__ModuleLoader__.load({
       const rowTagGroups = TAG_FACET_ORDER
         .map((facet) => [facet, rowTags.filter((name) => facetOfRowTag(name) === facet)])
         .filter(([, names]) => names.length > 0)
-      // 0.37：object 面已删，详情只检查动作面。
-      const rowMissing = rowTags.length === 0 ? [] : ['action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
+      // 0.38：动作由族承担——有族就不再报「缺动作」；无族时才按老口径查动作面。
+      const rowFamily = String(row.family || '').trim()
+      const hasFamily = rowFamily !== '' && rowFamily !== '未分族'
+      const rowMissing = hasFamily || rowTags.length === 0 ? [] : ['action'].filter((facet) => !rowTags.some((name) => facetOfRowTag(name) === facet))
       const copyJson = () => {
         try {
           if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(JSON.stringify(data, null, 2))
@@ -2083,7 +2087,7 @@ window.__ModuleLoader__.load({
       const registry = useLoad(useCallback(() => request('/tag-registry'), []))
       const tagGroups = registry.data && registry.data.groups ? registry.data.groups : null
       const pickedTags = form.context.split(/[,，]/).map((item) => item.trim()).filter(Boolean)
-      const missingFacets = missingTagFacets(pickedTags, tagGroups || {})
+      const missingFacets = missingTagFacets(pickedTags, tagGroups || {}, registry.data && Array.isArray(registry.data.required) ? registry.data.required : [])
       useEffect(() => {
         try { sessionStorage.setItem('eng:record-draft', JSON.stringify(form)) } catch { /* 隐私模式忽略 */ }
       }, [form])
@@ -2156,7 +2160,7 @@ window.__ModuleLoader__.load({
             h(Field, { key: 'action', label: '做法', wide: true }, h('input', { className: 'eng-input', value: form.action, onChange: update('action'), placeholder: '可复用的具体做法' })),
             h(Field, { key: 'outcome', label: '结果' }, h('select', { className: 'eng-select', value: form.outcome, onChange: update('outcome') }, Object.keys(OUTCOMES).map((key) => h('option', { key, value: key }, OUTCOMES[key][0])))),
             h(Field, { key: 'family', label: '族（可选，留空落未分族）' }, h('input', { className: 'eng-input', value: form.family, onChange: update('family'), placeholder: '写课件' })),
-            h(Field, { key: 'context', label: `标签（至少 1 个动作，≤${TAG_LIMIT} 个）`, wide: true, hint: '标签只写类型不写实例名：写 DSH插件，不写 DSH-Engram；项目名放 intent/artifacts' },
+            h(Field, { key: 'context', label: `标签（方向/主题，≤${TAG_LIMIT} 个）`, wide: true, hint: '动作由族表达；标签写方向/主题（方向须是该族已登记场景，如 写断言→契约断言）；只写类型不写实例名：写 DSH插件，不写 DSH-Engram' },
               h(TagPicker, {
                 view: registry.data || null,
                 value: pickedTags,
@@ -6156,6 +6160,7 @@ window.__ModuleLoader__.load({
               typeof props.onOpenFamily === 'function' && step.family !== '(族已删除)'
                 ? h('button', { type: 'button', className: 'eng-subnav-item', onClick: () => props.onOpenFamily(step.family) }, step.family || '未命名族')
                 : (step.family || '未命名族')),
+            step.direction ? h(Badge, { tone: 'muted' }, `方向 · ${step.direction}`) : null,
             failed ? h(Badge, { tone: 'bad' }, '失败') : null,
             step.aliasOf ? h('span', { className: 'eng-muted' }, `由旧族合并而来（已并入「${step.family}」）`) : null,
             step.note ? h('span', { className: 'eng-muted' }, step.note) : null),

@@ -57,6 +57,7 @@ import {
   registrySnapshot,
 } from './tag-registry.js'
 import { derivedFamilyOf, representativesOf } from './family-tools.js'
+import { specificFamilyOf, isGenericFamilyName } from './family-name.js'
 import {
   AVG_RECORD_BYTES,
   CACHE_MAX_BYTES,
@@ -1895,6 +1896,8 @@ export function upsertExperience(store, input, options = {}) {
       applyExpectation(duplicate)
     }
     // R4 缺陷：重记时显式 family 必须生效（允许把已有经验重新归档）。
+    // R4 缺陷：重记时显式 family 必须生效（允许把已有经验重新归档）。
+    // 方向清理不在这里做：由 exp_record 在 upsert 之后统一摘「不属于该族」的方向并写进 tagWarning（不漏告警）。
     if (typeof input.family === 'string' && input.family.trim() !== '') duplicate.family = input.family.trim().slice(0, 200)
     if (input.context !== undefined) duplicate.context = context
     if (labels.length > 0) duplicate.context = normalizeContext([...(Array.isArray(duplicate.context) ? duplicate.context : []), ...labels])
@@ -2007,11 +2010,12 @@ export function upsertExperience(store, input, options = {}) {
     expectedG: expectedG,
     predictionError: expectedG === null ? null : round4(computedG - expectedG),
     context: normalizeContext([...context, ...labels]),
-    // 族键：显式 family 优先；否则取 context 里第一个动作面标签（与 exp_record 口径一致）。
+    // 族键：显式 family 优先；否则取 context 里第一个动作面标签；再否则从动作文本推导（0.38 P2）。
     // 不在这里截断族名（文件名侧有 40 码点 + 哈希尾缀，R4 缺陷：60 字截断会把两个长族名合并）。
     ...(() => {
       const explicitFamily = typeof input.family === 'string' && input.family.trim() !== '' ? input.family.trim() : ''
-      const derivedFamily = explicitFamily !== '' ? explicitFamily : (normalizeContext([...context, ...labels]).find((tag) => facetOf(tag) === 'action') || '')
+      const byActionTag = normalizeContext([...context, ...labels]).find((tag) => facetOf(tag) === 'action' && !isGenericFamilyName(tag)) || ''
+      const derivedFamily = explicitFamily !== '' ? explicitFamily : (byActionTag !== '' ? byActionTag : specificFamilyOf(action))
       return derivedFamily === '' ? {} : { family: derivedFamily.slice(0, 200) }
     })(),
     ...(typeof input.skillId === 'string' && input.skillId.trim() !== '' ? { skillId: input.skillId.trim() } : {}),
@@ -2553,6 +2557,8 @@ export function tagCatalog(store, options = {}) {
         status: info === null ? 'unregistered' : info.status,
         description: info === null ? '' : info.description,
         source: info === null ? 'used' : info.source,
+        // 0.38：方向条目要带归属族，GET /tag-registry 的选择器/目录才能显示「哪个族的方向」。
+        ...(info !== null && info.facet === 'direction' ? { family: info.family || '' } : {}),
       }
     })
     .filter((item) => item.count >= minCount || keep.has(item.name))
@@ -2566,8 +2572,8 @@ export function tagCatalog(store, options = {}) {
  */
 export function tagRegistryView(store, options = {}) {
   const catalog = tagCatalog(store, { ...options, limit: Math.max(1, Math.min(200, Math.trunc(Number(options.limit) || 200))) })
-  // 0.37：object 面已物理删除，tagRegistryView 只返回 action/topic/quality 三组。
-  const groups = { action: [], topic: [], quality: [], other: [] }
+  // 0.38：新增 direction（族内场景）分组；object 面仍不在。
+  const groups = { action: [], direction: [], topic: [], quality: [], other: [] }
   for (const item of catalog) {
     const bucket = item.facet !== null && TAG_FACETS.includes(item.facet) ? item.facet : 'other'
     groups[bucket].push(item)

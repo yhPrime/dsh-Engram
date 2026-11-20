@@ -236,13 +236,14 @@
 {
   "ok": true,
   "data": {
-    "facets": ["action", "topic", "quality"],
-    "labels": { "action": "动作/任务", "topic": "主题/场景", "quality": "质量/异常", "other": "其他已用标签" },
+    "facets": ["action", "direction", "topic", "quality"],
+    "labels": { "action": "动作/任务", "direction": "方向/场景", "topic": "主题/场景", "quality": "质量/异常", "other": "其他已用标签" },
     "hints": { "action": "再补一个动作标签，例如 提交/推送/校验/验收" },
-    "required": ["action"],
+    "required": [],
     "emptyFacets": [],
     "groups": {
       "action": [ { "name": "提交", "facet": "action", "core": true, "count": 0, "description": "git commit、表单提交…", "status": "active", "source": "core" } ],
+      "direction": [ { "name": "契约断言", "facet": "direction", "family": "写断言", "core": false, "count": 3, "description": "按宿主契约写断言", "status": "active", "source": "user" } ],
       "topic": [], "quality": [], "other": []
     },
     "total": 47,
@@ -254,6 +255,7 @@
 - `core: true`：0 次使用也返回（种子词例外，计划书 §5.2）；用户标签使用 <2 次不返回。
 - `other`：词表里没有面的历史一次性标签（旧数据兼容，读得到但不算「对象/动作」）。
 - 别名归一在服务端完成：`DSH-Engram` 读成 `DSH插件`，`EigenFlux` 读成 `智能体平台`（都只作隐藏别名，不再作为规范标签出现在词表里）。
+- **0.38 direction 面**：族内场景方向（如 `写断言` 下的 `契约断言/回归断言/探针先行`），条目带 `family` 归属位；方向只能由数据按族登记（`exp_type label` facet=direction + family），没有内建 core。`required` 为 `[]`——动作由族承担，标签不再强制任何面。
 
 ### `GET /objects`
 
@@ -275,7 +277,7 @@
             "at": "2026-11-19T09:00:00.000Z",
             "note": "可选",
             "steps": [
-              { "family": "改标签页", "note": "可选" },
+              { "family": "改标签页", "direction": "契约断言", "note": "可选" },
               {
                 "family": "跑 npm 测试",
                 "outcome": "failed",
@@ -306,6 +308,7 @@
 | `available` | live 且数据目录可读为 `true`；mock / 未配置 / 读失败为 `false`（附 `error`），此时 `total=0`、`objects=[]` |
 | `chains` | 1..n 条链（同一对象的多件工作）；每条链 `steps` 1..n 步，按发生顺序 |
 | `steps[].family` | 当前族名；该族被合并时另带 `aliasOf`（旧族 id），族已删且无别名时 `family="(族已删除)"` 并带 `familyId` |
+| `steps[].direction` | 0.38：该步的方向标签（族内场景，如 `契约断言`）；可选，缺省不写。受控——必须是该族已登记方向 |
 | `steps[].outcome` | 只有 `failed` / `skipped` 会写；缺省＝`ok` |
 | `steps[].branches` | 只挂在 `failed` 步上；0..n 条，可嵌套（深度上限 3）；`when` 为当时撞上的具体意外 |
 | `steps[].branches[].result` | 只有 `aborted` 会写（放弃收工）；缺省＝`recovered`（接回主干） |

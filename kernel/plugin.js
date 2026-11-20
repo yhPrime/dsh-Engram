@@ -68,7 +68,8 @@ export async function apply(ctx, rawConfig = {}) {
   const tools = createTools(config, defineTool)
   // 自动记录钩子（0.24.1）：回合收尾时把交付过程落成 pending 经验；**默认关闭**，`autoRecord: true` 才开。
   const recordTool = tools.find((tool) => tool.name === 'exp_record') || null
-  const recorder = recordTool === null ? null : createAutoRecorder({ config, record: recordTool, audit })
+  const objectTool = tools.find((tool) => tool.name === 'exp_object') || null
+  const recorder = recordTool === null ? null : createAutoRecorder({ config, record: recordTool, object: objectTool, audit })
   // 单会话技能目录（0.21.1 P1）：pre-step 按可见面判目录在不在，被压缩遮罩就整份补发。
   // 启动自检只探「宿主会话面能力」；真正的运行时探测在钩子里，缺失就降级 + 写审计，绝不抛错。
   const catalogHook = createSkillCatalogHook({

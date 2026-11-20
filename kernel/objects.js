@@ -14,7 +14,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 
-import { normalizeFamilyName } from './family-name.js'
+import { FAMILY_INVISIBLE_RE, normalizeFamilyName } from './family-name.js'
+import { validateFamilyName } from './family-tools.js'
 import { resolveFamilyRef } from './family-registry.js'
 
 export const OBJECTS_FILE = 'objects.jsonl'
@@ -129,20 +130,48 @@ export function assertNoDuplicate(list, name) {
 }
 
 /** 工具入参 steps → 存储步骤；resolveFamily(name) 返回族 id。 */
-export function buildSteps(rawList, resolveFamily) {
+/**
+ * @param {Array} rawList 步骤数组 [{family, direction?, note?, outcome?}]
+ * @param {(familyName:string)=>string} resolveFamily 族名 → 族 id
+ * @param {{resolveDirection?: (familyName:string, direction:string)=>string, requireDirection?: boolean}} [options]
+ *   resolveDirection：返回规范化方向名，非法则 throws（0.38 由调用方接 validateDirectionForFamily）。
+ *   requireDirection：true 时每一步必须带 direction（exp_object 工具走 true）。
+ */
+export function buildSteps(rawList, resolveFamily, options = {}) {
   const list = Array.isArray(rawList) ? rawList : []
-  if (list.length === 0) throw new Error('steps 至少要有 1 步（[{family, note}]）')
+  if (list.length === 0) throw new Error('steps 至少要有 1 步（[{family, direction, note}]）')
+  const { resolveDirection = null, requireDirection = false } = options
   return list.map((item) => {
     const source = item !== null && typeof item === 'object' && !Array.isArray(item) ? item : { family: item }
+    if (source.family !== undefined && source.family !== null && typeof source.family !== 'string') throw new Error('每一步的族名必须是字符串（[{ family, direction, note }]）')
+    // 0.38：非空字符串族名先过 validateFamilyName（含不可见/泛词/长度），与其它入口同文案；
+    // 纯空白（无不可见符）留给下面报「每一步都要有族名」；纯不可见符（如 U+FEFF）走校验器的「族名不能为空」。
+    if (typeof source.family === 'string' && source.family !== '') {
+      const plainBlank = source.family.trim() === '' && !FAMILY_INVISIBLE_RE.test(source.family)
+      if (!plainBlank) validateFamilyName(source.family)
+    }
     const familyName = normalizeFamilyName(source.family)
-    if (familyName === '') throw new Error('每一步都要有族名：steps: [{ family, note }]')
+    if (familyName === '') throw new Error('每一步都要有族名：steps: [{ family, direction, note }]')
+    // 0.38：方向先解析（旧族名+旧方向时优先报「方向不属于该族」，而不是先报族名退休）。
+    const rawDirection = String(source.direction === undefined || source.direction === null ? '' : source.direction).trim()
+    let directionValue
+    if (rawDirection === '') {
+      if (requireDirection) throw new Error('每一步都要有方向标签：steps: [{ family, direction, note }]；方向用 exp_type label 登记（facet=direction + family）')
+    } else {
+      if (typeof resolveDirection !== 'function') throw new Error('这一步带了 direction，但没有提供方向解析器')
+      directionValue = resolveDirection(familyName, rawDirection)
+    }
     const step = { familyId: resolveFamily(familyName) }
+    if (directionValue !== undefined) step.direction = directionValue
     const note = clipNote(source.note)
     if (note !== '') step.note = note
-    if (source.outcome !== undefined && source.outcome !== null && String(source.outcome).trim() !== '') {
-      const outcome = String(source.outcome).trim()
-      if (!OUTCOMES.includes(outcome)) throw new Error(`outcome 只能是 ${OUTCOMES.join(' / ')}`)
-      if (outcome !== 'ok') step.outcome = outcome
+    if (source.outcome !== undefined && source.outcome !== null) {
+      if (typeof source.outcome !== 'string') throw new Error(`对象步的 outcome 只能是 ${OUTCOMES.join(' / ')}（收到非字符串）`)
+      const outcome = source.outcome.trim()
+      if (outcome !== '') {
+        if (!OUTCOMES.includes(outcome)) throw new Error(`outcome 只能是 ${OUTCOMES.join(' / ')}`)
+        if (outcome !== 'ok') step.outcome = outcome
+      }
     }
     return step
   })
@@ -325,6 +354,7 @@ function stepView(step, registry) {
     out.family = ref.name
     if (ref.aliasOf !== null) out.aliasOf = ref.aliasOf
   }
+  if (step.direction !== undefined && step.direction !== '') out.direction = step.direction
   if (step.note !== undefined && step.note !== '') out.note = step.note
   if (step.outcome !== undefined && step.outcome !== '') out.outcome = step.outcome
   if (Array.isArray(step.branches) && step.branches.length > 0) {

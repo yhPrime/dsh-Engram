@@ -4,8 +4,8 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { canonicalRegisteredName, facetOf, registrySnapshot } from './tag-registry.js'
-import { FAMILY_NAME_MAX_CHARS, isGenericFamilyName, normalizeFamilyName } from './family-name.js'
+import { canonicalRegisteredName, directionFamilyOf, facetOf, registrySnapshot } from './tag-registry.js'
+import { FAMILY_INVISIBLE_RE, FAMILY_NAME_MAX_CHARS, isGenericFamilyName, normalizeFamilyName } from './family-name.js'
 
 /**
  * 0.37：object 面已从词表物理删除（TAG_FACETS 只剩 action/topic/quality），
@@ -17,6 +17,38 @@ export const LEGACY_OBJECT_TAGS = new Set([
   '课件', '任务卡', '版式', '插页', 'dsh插件', '网页应用', 'agent', '智能体平台', '脚本',
   'dsh', '关系图', '经验库',
 ])
+
+/**
+ * 0.38：族名唯一校验入口（族 = 可复用动作模式，「动词+对象」）。
+ * `exp_family` / `exp_object` / `exp_record` 三条建族路径共用，堵住「绕过校验自动建族」的口子。
+ * 合法返回规范化族名；非法抛错。纯函数，不写盘。
+ */
+export function validateFamilyName(raw) {
+  if (raw === undefined || raw === null) throw new Error('族名不能为空')
+  // 0.38：非字符串族名（数组/对象/数字）明确拒，别 String() 强转成族名。
+  if (typeof raw !== 'string') throw new Error('族名必须是字符串')
+  // 0.38：可见/不可见判定要兼顾两类：NFKC 能合成的组合重音（cafe\u0301→café，合法放行）与
+  // 「归一后仍留着」的隐形字符（U+FE0F、零宽、填充符，拒）。所以先归一，再按归一结果与原始串两路判。
+  const name = normalizeFamilyName(raw)
+  if (name === '') throw new Error('族名不能为空')
+  if (!/[\p{L}\p{N}]/u.test(name)) throw new Error('族名不能为空')
+  // 归一后仍带组合附着符（U+FE0F / 汉字+组合重音；被 NFKC 合成掉的拉丁重音不算）→ 拒。
+  if (/\p{M}/u.test(name)) throw new Error('族名不能含组合/不可见字符')
+  // 原始串里的格式/填充符：NFKC 会把 \ufeff 之类直接吃掉（归一后查不到），所以查 raw。
+  if (FAMILY_INVISIBLE_RE.test(raw)) throw new Error('族名不能含零宽/不可见字符')
+  if (name === '未分族') throw new Error('「未分族」是保留族名，不能创建/改名/指派')
+  // 0.37：object 面已在词表里删除，facetOf 认不出对象词，改用字面表兜住——
+  // 否则「代码」「课件」这类纯对象词会绕过校验变成族名（族名必须是「动词+对象」）。
+  if (LEGACY_OBJECT_TAGS.has(name.toLowerCase())) {
+    throw new Error('对象词不能当族名，请用「动词+对象」，例如 写脚本 / 改代码 / 跑测试')
+  }
+  if (isGenericFamilyName(name)) {
+    throw new Error('族名太泛，请用「动词+对象」，例如 git 推送 / 跑 npm 测试')
+  }
+  if ([...name].length > FAMILY_NAME_MAX_CHARS) throw new Error(`族名最多 ${FAMILY_NAME_MAX_CHARS} 字`)
+  if (/[\\/:*?"<>|]/.test(name) || /^v?\d+(?:\.\d+)*$/iu.test(name)) throw new Error('族名不能是路径/版本号')
+  return name
+}
 
 /** 动作面标签 → 父级（UI 分组用；不影响召回）。 */
 export const TAG_PARENT_MAP = Object.freeze({
@@ -182,22 +214,7 @@ export function manageFamilies(store, action, args = {}) {
     const raw = row !== null && typeof row === 'object' && typeof row.family === 'string' ? row.family : ''
     return normalizeFamilyName(raw) || '未分族'
   }
-  const checkName = (raw) => {
-    const name = normalizeFamilyName(raw)
-    if (name === '') throw new Error('族名不能为空')
-    if (name === '未分族') throw new Error('「未分族」是保留族名，不能创建/改名/指派')
-    // 0.37：object 面已在词表里删除，facetOf 不再能认出对象词，改用字面表兜住——
-    // 否则「代码」「课件」这类纯对象词会绕过校验变成族名（族名必须是「动词+对象」）。
-    if (LEGACY_OBJECT_TAGS.has(name.toLowerCase())) {
-      throw new Error('对象词不能当族名，请用「动词+对象」，例如 写脚本 / 改代码 / 跑测试')
-    }
-    if (isGenericFamilyName(name)) {
-      throw new Error('族名太泛，请用「动词+对象」，例如 git 推送 / 跑 npm 测试')
-    }
-    if ([...name].length > FAMILY_NAME_MAX_CHARS) throw new Error(`族名最多 ${FAMILY_NAME_MAX_CHARS} 字`)
-    if (/[\\/:*?"<>|]/.test(name) || /^\d+\.\d+/.test(name)) throw new Error('族名不能是路径/版本号')
-    return name
-  }
+  const checkName = validateFamilyName
   const rowsOf = (family) => rows.filter((row) => familyOfRow(row) === family)
   if (action === 'list' || action === '' || action === undefined) {
     const counts = new Map()
@@ -216,6 +233,9 @@ export function manageFamilies(store, action, args = {}) {
     return { changed: false, result: { family, created: !exists, materialized: false, note: exists ? '族已存在' : '已登记；首次 exp_record.family 写入时落盘' } }
   }
   if (action === 'rename' || action === 'merge') {
+    // 0.38：来源族名非字符串明确拒，别 String()/normalize 强转成族名。
+    if (action === 'rename' && typeof args.family !== 'string') throw new Error('来源族名必须是字符串')
+    if (action === 'merge' && Array.isArray(args.names) && args.names.some((name) => typeof name !== 'string')) throw new Error('来源族名必须是字符串')
     const target = checkName(action === 'rename' ? args.newName : (args.newName || args.family))
     const sources = action === 'rename'
       ? [normalizeFamilyName(args.family)]
@@ -242,17 +262,33 @@ export function manageFamilies(store, action, args = {}) {
     const ids = new Set(Array.isArray(args.ids) ? args.ids.map(String) : [])
     const sourceId = String(args.sourceId || '')
     let changed = 0
+    const droppedDirections = []
     for (const row of rows) {
       if ((ids.size > 0 && ids.has(String(row.id))) || (sourceId !== '' && String(row.sourceId || '') === sourceId)) {
         row.family = target
         row.actionFamily = target
+        // 0.38：指派到新族时，方向标签若不属于新族就摘掉（族键按 normalizeFamilyName 归一后比较，同族/别名族不摘）。
+        const tags = Array.isArray(row.context) ? row.context : []
+        const kept = tags.filter((tag) => {
+          const dirFamily = directionFamilyOf(tag)
+          return dirFamily === null || dirFamily === '' || normalizeFamilyName(dirFamily) === normalizeFamilyName(target)
+        })
+        if (kept.length !== tags.length) {
+          const keptLower = new Set(kept.map((tag) => String(tag).toLowerCase()))
+          for (const tag of tags) {
+            if (!keptLower.has(String(tag).toLowerCase())) droppedDirections.push(String(tag))
+          }
+          row.context = kept
+        }
         changed += 1
       }
     }
     if (changed === 0) throw new Error('没有匹配的经验可指派')
-    return { changed: true, result: { action, target, changed } }
+    return { changed: true, result: { action, target, changed, droppedDirections: [...new Set(droppedDirections)] } }
   }
   if (action === 'delete') {
+    // 0.38：来源族名非字符串明确拒。
+    if (typeof args.family !== 'string') throw new Error('族名必须是字符串')
     // 删除是「清理旧宽族」的合法出口：来源族名允许是泛词（推送/校验…），只做空名与保留名校验；
     // 目标语义才是「必须具体」，所以 create/rename/assign 走 checkName。
     const family = normalizeFamilyName(args.family)

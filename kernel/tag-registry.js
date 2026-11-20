@@ -12,6 +12,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
+import { normalizeFamilyName } from './family-name.js'
 
 /** 标签最长字符数（短名词）。旧规则同样是 12，这里只集中一处。 */
 export const TAG_MAX_CHARS = 12
@@ -21,14 +23,29 @@ export const TAG_MAX_COUNT = 8
 export const TAG_RECOMMEND_MIN = 2
 export const TAG_RECOMMEND_MAX = 6
 
-/** 三个面。顺序即 UI 分组顺序。0.37：object 面已退休并物理删除。 */
-export const TAG_FACETS = ['action', 'topic', 'quality']
+/** 0.38：回执/告警里回显标签名要截断，别把 10 万字符的输入原样撑爆回执。按码元截但在代理对边界退一格，不劈 emoji。 */
+function clipTag(value, max = 60) {
+  const text = String(value === undefined || value === null ? '' : value)
+  if (text.length <= max) return text
+  let cut = max
+  if (cut > 0) {
+    const code = text.charCodeAt(cut - 1)
+    if (code >= 0xd800 && code <= 0xdbff) cut -= 1
+  }
+  return `${text.slice(0, cut)}…`
+}
+
+/** 四个面。顺序即 UI 分组顺序。0.37：object 面已退休并物理删除。0.38：新增 direction（族内场景）。 */
+export const TAG_FACETS = ['action', 'direction', 'topic', 'quality']
+/** 参与意图抽取/召回打分的面（direction 是族内场景，不参与意图抽取）。 */
+const RANK_FACETS = ['action', 'topic', 'quality']
 
 /** 用户覆盖文件（相对数据根）：只放手动登记的新标签，内建词不写这里。 */
 export const TAG_REGISTRY_FILE = 'tag-registry.json'
 
 export const TAG_FACET_LABELS = {
   action: '动作/任务',
+  direction: '方向/场景',
   topic: '主题/场景',
   quality: '质量/异常',
   other: '其他已用标签',
@@ -39,9 +56,11 @@ export const TAG_FACET_HINTS = {
   action: '再补一个动作标签，例如 提交/推送/校验/验收',
 }
 
-/** 面 → 是否必填。对象与动作必填，主题与质量可选。 */
-// 0.32：对象面退出标签体系（用户拍板），只要求动作面。
-export const TAG_REQUIRED_FACETS = ['action']
+/**
+ * 面 → 是否必填。
+ * 0.38：动作语义由「族」承担，标签只表达方向/主题内容，不再强制动作面（拍板①）。
+ */
+export const TAG_REQUIRED_FACETS = []
 
 /**
  * 种子词表。
@@ -141,11 +160,27 @@ const BY_ALIAS = new Map()
 
 /** 已加载的用户覆盖（`.exp/tag-registry.json`）所在的根；'' = 还没加载。 */
 let overridesDir = ''
+/** 上次加载时词表文件的内容指纹（长度+sha1）；用来发现别的进程改过词表、需要重载（同 mtime 也能发现）。 */
+let overridesSignature = ''
 /** 用户覆盖的条目（与 SEED 同形），按规范名。 */
 let overrideEntries = []
 
 function indexPath(dataDir) {
   return path.join(String(dataDir || '.'), TAG_REGISTRY_FILE)
+}
+
+/** 读词表原文（不存在/读不了返回 ''）。 */
+function readOverridesRaw(dir) {
+  try {
+    return fs.readFileSync(indexPath(dir), 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+/** 内容指纹：长度 + sha1。缓存重载判据不能只看 mtime——外部可能用 utimes 保持 mtime 不变而改内容。 */
+function overridesSignatureOf(raw) {
+  return `${raw.length}:${createHash('sha1').update(raw).digest('hex')}`
 }
 
 function indexFrom(entries) {
@@ -160,6 +195,8 @@ function indexFrom(entries) {
       core: entry.core === true,
       status: entry.status === 'pending' ? 'pending' : 'active',
       source: entry.source === 'user' ? 'user' : 'core',
+      // 0.38：direction 面带族归属（这个方向属于哪个动作族）；其余面为空串。
+      family: typeof entry.family === 'string' ? entry.family : '',
     }
     BY_NAME.set(item.name, item)
     if (!BY_ALIAS.has(item.name.toLowerCase())) BY_ALIAS.set(item.name.toLowerCase(), item.name)
@@ -173,12 +210,20 @@ function indexFrom(entries) {
 
 indexFrom(SEED.map((entry) => ({ ...entry, source: 'core' })))
 
-/** 把 `.exp/tag-registry.json` 的用户覆盖并进索引。同一目录只读一次。 */
+/**
+ * 把 `.exp/tag-registry.json` 的用户覆盖并进索引。
+ * 同一目录：内容指纹没变才跳过；变了（别的进程改过词表）就重载——否则长驻进程会拿旧缓存判定，错摘/放行方向。
+ * 用内容指纹而不是 mtime：外部可能 utimes 保持 mtime 不变而改内容。
+ */
 export function ensureTagOverrides(dataDir) {
   const dir = String(dataDir || '').trim()
-  if (dir === '' || dir === overridesDir) return false
+  if (dir === '') return false
+  const raw = readOverridesRaw(dir)
+  const signature = overridesSignatureOf(raw)
+  if (dir === overridesDir && signature === overridesSignature) return false
   overridesDir = dir
-  overrideEntries = readTagOverrides(dir)
+  overridesSignature = signature
+  try { overrideEntries = parseTagOverrides(raw) } catch { overrideEntries = [] }
   indexFrom([
     ...SEED.map((entry) => ({ ...entry, source: 'core' })),
     // 用户覆盖不能改内建词的面（内建在前，同名的用户条目后被 Map.set 覆盖？——不，这里用「内建优先」顺序：
@@ -188,23 +233,28 @@ export function ensureTagOverrides(dataDir) {
   return true
 }
 
+/** 解析词表原文（坏 JSON 会抛；调用方决定当空还是当「不可读」）。 */
+function parseTagOverrides(raw) {
+  const parsed = JSON.parse(raw)
+  const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed && parsed.tags) ? parsed.tags : [])
+  return list
+    .map((item) => ({
+      name: String(item && item.name || '').trim(),
+      facet: String(item && item.facet || '').trim(),
+      description: String(item && item.description || '').trim(),
+      aliases: Array.isArray(item && item.aliases) ? item.aliases.map(String) : [],
+      family: String(item && item.family || '').trim(),
+      core: false,
+      status: 'active',
+      source: 'user',
+    }))
+    .filter((item) => item.name !== '' && TAG_FACETS.includes(item.facet))
+}
+
 /** 读用户覆盖（坏文件当空，不让词表把面板拖垮）。 */
 export function readTagOverrides(dataDir) {
   try {
-    const raw = fs.readFileSync(indexPath(dataDir), 'utf8')
-    const parsed = JSON.parse(raw)
-    const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed && parsed.tags) ? parsed.tags : [])
-    return list
-      .map((item) => ({
-        name: String(item && item.name || '').trim(),
-        facet: String(item && item.facet || '').trim(),
-        description: String(item && item.description || '').trim(),
-        aliases: Array.isArray(item && item.aliases) ? item.aliases.map(String) : [],
-        core: false,
-        status: 'active',
-        source: 'user',
-      }))
-      .filter((item) => item.name !== '' && TAG_FACETS.includes(item.facet))
+    return parseTagOverrides(readOverridesRaw(String(dataDir || '')))
   } catch {
     return []
   }
@@ -214,13 +264,17 @@ export function readTagOverrides(dataDir) {
  * 登记一个用户标签（手动新增时必须带面）。
  * 写盘用「临时文件 + rename」，与 store 的写盘手法一致，绝不直接覆盖。
  */
-export function saveTagOverride(dataDir, { name, facet, description = '', aliases = [] } = {}) {
+export function saveTagOverride(dataDir, { name, facet, description = '', aliases = [], family = '' } = {}) {
   const dir = String(dataDir || '').trim()
   const cleanName = String(name || '').trim()
   const cleanFacet = String(facet || '').trim()
+  const cleanFamily = String(family || '').trim()
   if (dir === '') throw new Error('没有数据目录，无法登记标签')
   if (cleanName === '') throw new Error('标签名不能为空')
   if (!TAG_FACETS.includes(cleanFacet)) throw new Error(`标签面必须是 ${TAG_FACETS.join(' / ')} 之一`)
+  // 0.38：方向是族内场景，必须指明归属族（拍板⑤）；其余面不带族。
+  if (cleanFacet === 'direction' && cleanFamily === '') throw new Error('方向标签必须指明归属族（family）')
+  if (cleanFacet !== 'direction' && cleanFamily !== '') throw new Error('只有方向标签能带族归属（family）')
   const current = readTagOverrides(dir)
   if (current.some((item) => item.name.toLowerCase() === cleanName.toLowerCase())) {
     throw new Error(`标签「${cleanName}」已经登记过`)
@@ -228,16 +282,23 @@ export function saveTagOverride(dataDir, { name, facet, description = '', aliase
   if (SEED.some((item) => item.name.toLowerCase() === cleanName.toLowerCase())) {
     throw new Error(`标签「${cleanName}」是内建词，不需要再登记`)
   }
-  const next = [...current, { name: cleanName, facet: cleanFacet, description: String(description || '').slice(0, 120), aliases: aliases.map(String).slice(0, 8) }]
+  const next = [...current, { name: cleanName, facet: cleanFacet, description: String(description || '').slice(0, 120), aliases: aliases.map(String).slice(0, 8), ...(cleanFacet === 'direction' ? { family: normalizeFamilyName(cleanFamily) } : {}) }]
   const text = `${JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), tags: next }, null, 2)}\n`
   const file = indexPath(dir)
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(temp, text, 'utf8')
-  fs.renameSync(temp, file)
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(temp, text, 'utf8')
+    fs.renameSync(temp, file)
+  } catch (error) {
+    // 0.38 健壮性：写失败（如路径被目录占用）要清掉临时文件，并给可读业务错误而不是裸 EPERM。
+    try { fs.unlinkSync(temp) } catch { /* 临时文件不存在就算了 */ }
+    throw new Error(`词表写入失败：${file} 路径不可写（可能被目录占用或无权限），已清理临时文件`)
+  }
   // 立刻生效：不用等下一次 ensureTagOverrides（同一个进程里 UI 马上要看到）。
   overrideEntries = readTagOverrides(dir)
   overridesDir = dir
+  overridesSignature = overridesSignatureOf(readOverridesRaw(dir))
   indexFrom([
     ...SEED.map((entry) => ({ ...entry, source: 'core' })),
     ...overrideEntries.filter((entry) => !SEED.some((seed) => seed.name.toLowerCase() === String(entry.name || '').toLowerCase())),
@@ -245,9 +306,107 @@ export function saveTagOverride(dataDir, { name, facet, description = '', aliase
   return { name: cleanName, facet: cleanFacet }
 }
 
+/**
+ * 0.38：改一个已登记标签的面（label 显式指定 facet=direction 时，纠正「写入即登记」先记成 topic 的方向词）。
+ * 未登记 / 非法面 / 非方向带族 一律业务错误。
+ */
+export function updateTagFacet(dataDir, { name, facet, family = '' } = {}) {
+  const dir = String(dataDir || '').trim()
+  const cleanName = String(name || '').trim()
+  const cleanFacet = String(facet || '').trim()
+  const cleanFamily = String(family || '').trim()
+  if (dir === '') throw new Error('没有数据目录，无法改标签面')
+  if (cleanName === '') throw new Error('标签名不能为空')
+  if (!TAG_FACETS.includes(cleanFacet)) throw new Error(`标签面必须是 ${TAG_FACETS.join(' / ')} 之一`)
+  if (cleanFacet === 'direction' && cleanFamily === '') throw new Error('方向标签必须指明归属族（family）')
+  if (cleanFacet !== 'direction' && cleanFamily !== '') throw new Error('只有方向标签能带族归属（family）')
+  const current = readTagOverrides(dir)
+  const index = current.findIndex((item) => item.name.toLowerCase() === cleanName.toLowerCase())
+  if (index < 0) throw new Error(`标签「${cleanName}」未登记，不能改面`)
+  const next = current.map((item, at) => (at === index
+    ? { ...item, facet: cleanFacet, ...(cleanFacet === 'direction' ? { family: normalizeFamilyName(cleanFamily) } : { family: '' }) }
+    : item))
+  const text = `${JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), tags: next }, null, 2)}\n`
+  const file = indexPath(dir)
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(temp, text, 'utf8')
+    fs.renameSync(temp, file)
+  } catch (error) {
+    try { fs.unlinkSync(temp) } catch { /* 临时文件不存在就算了 */ }
+    throw new Error(`词表写入失败：${file} 路径不可写（可能被目录占用或无权限），已清理临时文件`)
+  }
+  overrideEntries = readTagOverrides(dir)
+  overridesDir = dir
+  overridesSignature = overridesSignatureOf(readOverridesRaw(dir))
+  indexFrom([
+    ...SEED.map((entry) => ({ ...entry, source: 'core' })),
+    ...overrideEntries.filter((entry) => !SEED.some((seed) => seed.name.toLowerCase() === String(entry.name || '').toLowerCase())),
+  ])
+  return { name: cleanName, facet: cleanFacet }
+}
+
+/**
+ * 0.38：族改名/合并后，把 direction 条目的归属族从旧名迁到新名。
+ * @param {Array<[string,string]>} mappings [旧族名, 新族名] 列表
+ * @returns {{moved:number}}
+ */
+export function remapDirectionFamily(dataDir, mappings) {
+  const dir = String(dataDir || '').trim()
+  if (dir === '') return { moved: 0 }
+  const file = indexPath(dir)
+  // 族名按 normalizeFamilyName 归一后匹配：行/注册表用的是规范化族键，原始串（内部空格/大小写）不能直接比。
+  const pairs = (Array.isArray(mappings) ? mappings : [])
+    .map((pair) => [normalizeFamilyName(pair && pair[0]), normalizeFamilyName(pair && pair[1])])
+    .filter(([from, to]) => from !== '' && to !== '' && from !== to)
+  if (pairs.length === 0) return { moved: 0 }
+  const current = readTagOverrides(dir)
+  let moved = 0
+  const next = current.map((item) => {
+    if (item.facet !== 'direction') return item
+    const key = normalizeFamilyName(item.family)
+    const hit = pairs.find(([from]) => from === key)
+    if (hit === undefined) return item
+    moved += 1
+    return { ...item, family: hit[1] }
+  })
+  if (moved === 0) return { moved: 0 }
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`
+  const text = `${JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), tags: next }, null, 2)}\n`
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(temp, text, 'utf8')
+    fs.renameSync(temp, file)
+  } catch (error) {
+    try { fs.unlinkSync(temp) } catch { /* 忽略 */ }
+    throw new Error(`方向归属迁移写盘失败：${file} 路径不可写（可能被目录占用或无权限），已清理临时文件`)
+  }
+  overrideEntries = readTagOverrides(dir)
+  overridesDir = dir
+  overridesSignature = overridesSignatureOf(readOverridesRaw(dir))
+  indexFrom([
+    ...SEED.map((entry) => ({ ...entry, source: 'core' })),
+    ...overrideEntries.filter((entry) => !SEED.some((seed) => seed.name.toLowerCase() === String(entry.name || '').toLowerCase())),
+  ])
+  return { moved }
+}
+
+/** 0.38：词表文件存在但不是普通文件（被目录占用等）→ true；不存在 → false。 */
+export function wordlistUnreadable(dataDir) {
+  const dir = String(dataDir || '').trim()
+  if (dir === '') return false
+  let stat
+  try { stat = fs.statSync(indexPath(dir)) } catch { return false } // 文件不存在 = 词表为空，算可读
+  if (!stat.isFile()) return true // 被目录占用等
+  // 文件在但 JSON 坏了也当「不可读」：否则 rename/merge 静默以为方向迁移成功。
+  try { parseTagOverrides(readOverridesRaw(dir)); return false } catch { return true }
+}
+
 /** 测试用：把索引重置回内建词。 */
 export function resetTagOverridesForTests() {
   overridesDir = ''
+  overridesSignature = ''
   overrideEntries = []
   indexFrom(SEED.map((entry) => ({ ...entry, source: 'core' })))
 }
@@ -313,6 +472,8 @@ export function describeTag(value) {
     source: entry.source === 'user' ? 'user' : 'core',
     aliases: entry.aliases.slice(),
     aliased: target !== String(value === undefined || value === null ? '' : value).trim(),
+    // 0.38：方向条目要带归属族，GET /tag-registry 的 tagCatalog/groups.direction 才能显示「哪个族的方向」。
+    ...(entry.facet === 'direction' ? { family: entry.family || '' } : {}),
   }
 }
 
@@ -372,14 +533,14 @@ export function validateTagSet(values) {
     rejected,
     facets,
     missing,
-    warning: [warning, ...rejected.map((item) => `已忽略「${item.value}」：${item.reason}`)].filter(Boolean).join('；'),
+    warning: [warning, ...rejected.map((item) => `已忽略「${clipTag(item.value)}」：${clipTag(item.reason, 120)}`)].filter(Boolean).join('；'),
     ok: missing.length === 0 && rejected.length === 0,
   }
 }
 
 /** 按面分组；未登记的进 other。名字保持调用方顺序。 */
 export function groupByFacet(values) {
-  const out = { action: [], topic: [], quality: [], other: [] }
+  const out = { action: [], direction: [], topic: [], quality: [], other: [] }
   for (const value of Array.isArray(values) ? values : []) {
     const name = String(value === undefined || value === null ? '' : value).trim()
     if (name === '') continue
@@ -405,7 +566,7 @@ export function extractQueryTags(intent) {
   const text = String(intent === undefined || intent === null ? '' : intent).replace(/\s+/gu, ' ').trim().toLowerCase()
   if (text === '') return queryTags
   for (const entry of BY_NAME.values()) {
-    const facet = TAG_FACETS.includes(entry.facet) ? entry.facet : null
+    const facet = RANK_FACETS.includes(entry.facet) ? entry.facet : null
     if (facet === null) continue
     const terms = [entry.name, ...entry.aliases]
       .map((term) => String(term || '').replace(/\s+/gu, ' ').trim().toLowerCase())
@@ -414,7 +575,7 @@ export function extractQueryTags(intent) {
     if (!queryTags[facet].some((name) => name.toLowerCase() === entry.name.toLowerCase())) queryTags[facet].push(entry.name)
   }
   // 同面的重叠词只留更具体的那个：意图里相邻的包含关系只保留长词，避免覆盖率被多余查询词拉低。
-  for (const facet of TAG_FACETS) {
+  for (const facet of RANK_FACETS) {
     const list = queryTags[facet]
     queryTags[facet] = list.filter((name, index) => !list.some((other, otherIndex) => (
       otherIndex !== index && other.toLowerCase() !== name.toLowerCase() && other.toLowerCase().includes(name.toLowerCase())
@@ -425,7 +586,7 @@ export function extractQueryTags(intent) {
 
 /** 词表快照（给 `/tag-registry` 与测试用）。含用户覆盖条目。 */
 export function registrySnapshot() {
-  const groups = { action: [], topic: [], quality: [] }
+  const groups = { action: [], direction: [], topic: [], quality: [] }
   for (const entry of BY_NAME.values()) {
     const bucket = groups[entry.facet]
     if (bucket === undefined) continue
@@ -437,6 +598,7 @@ export function registrySnapshot() {
       status: entry.status === 'pending' ? 'pending' : 'active',
       aliases: Array.isArray(entry.aliases) ? entry.aliases.slice() : [],
       source: entry.source === 'user' ? 'user' : 'core',
+      ...(entry.facet === 'direction' ? { family: entry.family || '' } : {}),
     })
   }
   return {
@@ -447,4 +609,44 @@ export function registrySnapshot() {
     groups,
     overrideDir: overridesDir,
   }
+}
+
+/** direction 标签的归属族；不是 direction 返回 null。 */
+export function directionFamilyOf(value) {
+  const target = aliasTarget(value)
+  const entry = target === null ? null : BY_NAME.get(target)
+  if (entry === undefined || entry === null || entry.facet !== 'direction') return null
+  return entry.family || ''
+}
+
+/** 某族下已登记的方向标签名（族键按 normalizeFamilyName 归一后比较）。 */
+export function directionsOfFamily(family) {
+  const want = normalizeFamilyName(family)
+  if (want === '') return []
+  const names = []
+  for (const entry of BY_NAME.values()) {
+    if (entry.facet === 'direction' && normalizeFamilyName(entry.family) === want) names.push(entry.name)
+  }
+  return names
+}
+
+/**
+ * 校验一个方向能否用于某族：必须是已登记 direction 标签 + 归属族匹配（拍板⑤）。
+ * family 为空时只校验「是已登记方向」。
+ * @returns {{ok: boolean, name: string, reason: string}}
+ */
+export function validateDirectionForFamily(value, family) {
+  const raw = String(value === undefined || value === null ? '' : value).replace(/\s+/gu, ' ').trim()
+  const fam = String(family || '').trim()
+  if (raw === '') return { ok: false, name: '', reason: '方向不能为空' }
+  const target = aliasTarget(raw)
+  if (target === null) return { ok: false, name: raw, reason: '方向必须是已登记的方向标签（先用 exp_type label 登记，facet=direction + family）' }
+  const entry = BY_NAME.get(target)
+  if (entry === undefined || entry === null || entry.facet !== 'direction') {
+    return { ok: false, name: target, reason: `「${target}」不是方向标签` }
+  }
+  if (fam !== '' && normalizeFamilyName(entry.family) !== normalizeFamilyName(fam)) {
+    return { ok: false, name: target, reason: `方向「${target}」属于族「${entry.family || '(未归属)'}」，不属于「${fam}」` }
+  }
+  return { ok: true, name: target, reason: '' }
 }
