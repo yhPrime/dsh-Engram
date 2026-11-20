@@ -732,8 +732,9 @@ export function scanShards(dataDir) {
  */
 export function shardsMismatch(dataDir, manifest) {
   if (manifest === null || manifest === undefined) return true
-  // manifest 丢了 layout 但磁盘是 flat：也要按族文件核对，否则 0 桶 manifest 会被当成「一致」永远空库。
-  if (manifest.layout === FAMILY_LAYOUT || manifest.layout === FLAT_LAYOUT || ((manifest.layout === undefined || manifest.layout === null || manifest.layout === '') && isFlatLayout(dataDir))) return familyShardsMismatch(dataDir, manifest)
+  // 磁盘是 flat（根层族文件、无类型目录）时，manifest 的 layout 只是可能过期的缓存：
+  // 不论写着 family / legacy / 缺失，都按族文件核对并自愈（否则 0 桶 manifest 永远读 0）。
+  if (manifest.layout === FAMILY_LAYOUT || manifest.layout === FLAT_LAYOUT || isFlatLayout(dataDir)) return familyShardsMismatch(dataDir, manifest)
   const dirBuckets = bucketsPath(dataDir)
   const entries = new Map()
   for (const bucket of manifest.buckets) {
@@ -2728,16 +2729,25 @@ export const LIBRARY_DIR = 'library'
 /** 0.33：单层族布局（library/<族~hash>.jsonl）。 */
 export function isFlatLayout(dataDir) {
   const dir = String(dataDir || '')
+  let rootFiles = false
+  let typeDirs = false
+  try {
+    for (const name of fs.readdirSync(path.join(dir, LIBRARY_DIR))) {
+      if (name.toLowerCase().endsWith('.jsonl')) rootFiles = true
+      else if (/^ty_/i.test(name)) {
+        try { if (fs.statSync(path.join(dir, LIBRARY_DIR, name)).isDirectory()) typeDirs = true } catch { /* 忽略 */ }
+      }
+    }
+  } catch { /* 没有 library */ }
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'))
     if (manifest.layout === FLAT_LAYOUT) return true
-    if (manifest.layout === FAMILY_LAYOUT) return false
+    // manifest 说 family，但磁盘只有根层族文件、没有类型目录：实际是 flat（降级/合并写错 layout）。
+    if (manifest.layout === FAMILY_LAYOUT) return rootFiles && !typeDirs
   } catch { /* manifest 丢失/损坏：按磁盘形态判断 */ }
   // manifest 丢 layout（被降级/合并丢失）时，library 根层的族文件就是 flat 的事实证据；
   // 不认这一条会把 51 个族文件当「没有分片」，重建出空 schema-2 manifest 把整库读成 0 条。
-  try {
-    return fs.readdirSync(path.join(dir, LIBRARY_DIR)).some((name) => name.toLowerCase().endsWith('.jsonl'))
-  } catch { return false }
+  return rootFiles && !typeDirs
 }
 export const UNFILED_FAMILY = '未分族'
 export const FAMILY_SCHEMA = 3
@@ -3267,6 +3277,8 @@ export function familyLayoutPresent(dataDir) {
  * 「两套布局同时在」一律优先旧 buckets（旧数据完整，且避免半迁移被当成新布局读空）。
  */
 export function resolveLayout(dataDir, manifest) {
+  // 磁盘形态优先：flat 库即使 manifest 被写成 family/legacy 也按 flat 自愈。
+  if (isFlatLayout(dataDir)) return 'family'
   if (manifest !== null && manifest !== undefined && (manifest.layout === FAMILY_LAYOUT || manifest.layout === FLAT_LAYOUT)) return 'family'
   if (manifest !== null && manifest !== undefined && typeof manifest.layout === 'string' && manifest.layout !== '') return 'legacy'
   // manifest 不可用（丢失/损坏）时：

@@ -701,3 +701,9 @@ pm test 在 release 分支全绿
   - writeTypeFamilyShards：flat 定向写前并回磁盘上未触及类型的行、按 rel 合并 touched 类型，修复同族跨类型互相覆盖丢行；manifest buckets 按 file 去重
   - rebuildManifest 恢复类型时保留原类型对象的 description/source，不再只剩 id/name
   - 回归：flat 同族跨类型写两条都在；空桶 manifest 自愈读回；外部追加行被吸收且布局保持 family-flat
+
+- **v0.36.10（flat 自愈兜底：layout 变体）**
+  - isFlatLayout 改为磁盘形态优先：manifest 写 family 但只有根层族文件、无类型目录时仍判 flat
+  - shardsMismatch 对磁盘 flat 的库一律按族文件核对；resolveLayout 同样以磁盘形态优先
+  - 效果：manifest 被降级成 layout=family / legacy / 空 + 0 桶时，读也能自愈回 family-flat，不再读 0 条
+  - 回归：三种 layout 变体 + 0 桶本均自愈；flat-layout 6/6、test:ui、npm test 全绿
