@@ -3257,8 +3257,8 @@ window.__ModuleLoader__.load({
       useRefreshEvent(data.reload)
       const facets = data.data ? data.data.facets || {} : {}
       const total = data.data ? Number(data.data.total) || 0 : 0
-      const labels = { action: '动作', topic: '主题', quality: '质量' }
-      const hasAny = ['action', 'topic', 'quality'].some((facet) => (facets[facet] || []).some((group) => (group.children || []).length > 0))
+      const labels = { direction: '方向', topic: '主题', quality: '质量' }
+      const hasAny = ['direction', 'topic', 'quality'].some((facet) => (facets[facet] || []).some((group) => (group.children || []).length > 0))
       const childOf = (child) => {
         const percent = Math.round((child.coverage || 0) * 100)
         return h('div', { key: child.name, style: { display: 'grid', gridTemplateColumns: 'minmax(80px, 160px) minmax(0, 1fr) 56px', gap: 8, alignItems: 'center', marginBottom: 2 } },
@@ -3283,7 +3283,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '标签分级只用于展示与补族规则；对象面已退出标签体系（另有他用）。共 ' + total + ' 条可见经验。'),
         data.loading && !hasAny ? h(Skeleton, { rows: 5 }) : null,
         !data.loading && !hasAny ? h(Empty, null, '还没有可统计的标签') : null,
-        ['action', 'topic', 'quality'].map(facetOf))
+        ['direction', 'topic', 'quality'].map(facetOf))
     }
 
     function Usage() {

@@ -37,6 +37,12 @@ function clipTag(value, max = 60) {
 
 /** 四个面。顺序即 UI 分组顺序。0.37：object 面已退休并物理删除。0.38：新增 direction（族内场景）。 */
 export const TAG_FACETS = ['action', 'direction', 'topic', 'quality']
+
+/**
+ * 0.40：对外可见/可登记的面 = 三面。action 面只保留在词表内部（供 facetOf 识别，
+ * 让 exp_record 剥 action 标签的兜底照常工作），不再展示、不再登记新词。
+ */
+export const TAG_VISIBLE_FACETS = ['direction', 'topic', 'quality']
 /** 参与意图抽取/召回打分的面（direction 是族内场景，不参与意图抽取）。 */
 const RANK_FACETS = ['action', 'topic', 'quality']
 
@@ -267,11 +273,13 @@ export function readTagOverrides(dataDir) {
 export function saveTagOverride(dataDir, { name, facet, description = '', aliases = [], family = '' } = {}) {
   const dir = String(dataDir || '').trim()
   const cleanName = String(name || '').trim()
+  // 0.40：facet 非字符串明确拒（别 String() 把 ['topic'] 强转成 'topic'）。
+  if (facet !== undefined && facet !== null && typeof facet !== 'string') throw new Error('标签面必须是字符串')
   const cleanFacet = String(facet || '').trim()
   const cleanFamily = String(family || '').trim()
   if (dir === '') throw new Error('没有数据目录，无法登记标签')
   if (cleanName === '') throw new Error('标签名不能为空')
-  if (!TAG_FACETS.includes(cleanFacet)) throw new Error(`标签面必须是 ${TAG_FACETS.join(' / ')} 之一`)
+  if (!TAG_VISIBLE_FACETS.includes(cleanFacet)) throw new Error(`标签面必须是 ${TAG_VISIBLE_FACETS.join(' / ')} 之一；action 面已收敛（族即动作，族内场景用 direction）`)
   // 0.38：方向是族内场景，必须指明归属族（拍板⑤）；其余面不带族。
   if (cleanFacet === 'direction' && cleanFamily === '') throw new Error('方向标签必须指明归属族（family）')
   if (cleanFacet !== 'direction' && cleanFamily !== '') throw new Error('只有方向标签能带族归属（family）')
@@ -313,11 +321,13 @@ export function saveTagOverride(dataDir, { name, facet, description = '', aliase
 export function updateTagFacet(dataDir, { name, facet, family = '' } = {}) {
   const dir = String(dataDir || '').trim()
   const cleanName = String(name || '').trim()
+  // 0.40：facet 非字符串明确拒（同 saveTagOverride）。
+  if (facet !== undefined && facet !== null && typeof facet !== 'string') throw new Error('标签面必须是字符串')
   const cleanFacet = String(facet || '').trim()
   const cleanFamily = String(family || '').trim()
   if (dir === '') throw new Error('没有数据目录，无法改标签面')
   if (cleanName === '') throw new Error('标签名不能为空')
-  if (!TAG_FACETS.includes(cleanFacet)) throw new Error(`标签面必须是 ${TAG_FACETS.join(' / ')} 之一`)
+  if (!TAG_VISIBLE_FACETS.includes(cleanFacet)) throw new Error(`标签面必须是 ${TAG_VISIBLE_FACETS.join(' / ')} 之一；action 面已收敛（族即动作，族内场景用 direction）`)
   if (cleanFacet === 'direction' && cleanFamily === '') throw new Error('方向标签必须指明归属族（family）')
   if (cleanFacet !== 'direction' && cleanFamily !== '') throw new Error('只有方向标签能带族归属（family）')
   const current = readTagOverrides(dir)

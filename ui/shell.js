@@ -42,7 +42,7 @@ import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/
 import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
 import { shadowReport } from '../kernel/tag-rank.js'
 import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
-import { validateTagSet } from '../kernel/tag-registry.js'
+import { ensureTagOverrides, validateTagSet } from '../kernel/tag-registry.js'
 import { backfillFamilies, derivedFamilyOf, manageFamilies, readCreatedFamilies, representativesOf, syncCreatedFamilies, tagTree, visibleRowsOf } from '../kernel/family-tools.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
 import { pollDeviceFlow, startDeviceFlow } from '../kernel/github-device.js'
@@ -1102,6 +1102,10 @@ export async function handleRequest(req, res, source, deps = {}) {
     }
     if (route === '/tag-tree') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')
+      // 0.40：冷启动先按 live dataDir 加载词表，/tag-tree 与 /tag-registry 同口径。
+      const read = readOf(active)
+      const dataDir = active !== null && active.mode === 'live' ? String(read.dataDir || '').trim() : ''
+      try { if (dataDir !== '') ensureTagOverrides(dataDir) } catch { /* 坏词表按内建词走 */ }
       const store = storeOf(active)
       return json(res, 200, { ok: true, data: tagTree(visibleRowsOf(store)) })
     }

@@ -4,7 +4,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { canonicalRegisteredName, directionFamilyOf, directionsByFamily, directionsOfFamily, facetOf, registrySnapshot } from './tag-registry.js'
+import { canonicalRegisteredName, directionFamilyOf, directionsByFamily, directionsOfFamily, facetOf, registrySnapshot, TAG_VISIBLE_FACETS } from './tag-registry.js'
 import { FAMILY_INVISIBLE_RE, FAMILY_NAME_MAX_CHARS, isGenericFamilyName, normalizeFamilyName } from './family-name.js'
 import { cjkBigrams, stateSimilarity, tokenize } from './kernel.js'
 
@@ -96,28 +96,13 @@ export function validateFamilyName(raw) {
   return name
 }
 
-/** 动作面标签 → 父级（UI 分组用；不影响召回）。 */
-export const TAG_PARENT_MAP = Object.freeze({
-  提交: '交付',
-  推送: '交付',
-  注册: '交付',
-  沉淀: '沉淀',
-  技能沉淀: '沉淀',
-  校验: '校验',
-  验收: '校验',
-  恢复: '维护',
-  分类: '整理',
-  编写: '产出',
-})
-
 export const TAG_PARENT_OTHER = '其它'
 
-/** 标签的父级：动作面按语义分组，其它面以面名作父级；未登记词归「其它」。 */
+/** 0.40：父级只按面名分（action 面已收敛，不再有「交付/沉淀/校验」父组）。未登记词归「其它」。 */
 export function parentOfTag(value) {
   const name = canonicalRegisteredName(value) || String(value === undefined || value === null ? '' : value).trim()
   if (name === '') return TAG_PARENT_OTHER
   const facet = facetOf(name)
-  if (facet === 'action') return TAG_PARENT_MAP[name] || '其它动作'
   if (facet === null) return TAG_PARENT_OTHER
   return facet
 }
@@ -143,6 +128,8 @@ export function tagTree(rows) {
   const groups = snapshot && snapshot.groups ? snapshot.groups : snapshot
   const facets = {}
   for (const [facet, entries] of Object.entries(groups)) {
+    // 0.40：只出对外三面（direction/topic/quality），action 面不再展示。
+    if (!TAG_VISIBLE_FACETS.includes(facet)) continue
     const parents = new Map()
     const add = (name) => {
       const parent = parentOfTag(name)

@@ -58,7 +58,7 @@ import { AUTO_ROUTE_MIN_SCORE, ensureClusters, routeCluster } from './cluster.js
 import { resolveEngramDataDir, readRuntimeEnv, mergeRuntimeEnv } from './settings.js'
 import { applySkillObstacle, applySkillOutcome, attachSkillFiles, buildReuseReceipt, catalogConfigOf, clipSkillBody, confidenceReason, createSkill, deriveSkillDraft, listSkills, listSkillsCached, matchSkill, readSkillBySlug, resolveSkillId, sessionHashOf, sessionIdOfAgent, skillCatalogUsageOf, skillGiveDecision, skillGroupsOf, skillRuntimeOf, updateSkillMeta } from './skills.js'
 // 标签词表（0.20.0 P0）：写入侧的面校验与命名规则都在 registry，工具层只负责「什么时候用哪条规则」。
-import { TAG_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, updateTagFacet, validateNewTagName, validateTagSet, validateDirectionForFamily, directionFamilyOf, remapDirectionFamily, wordlistUnreadable } from './tag-registry.js'
+import { TAG_FACETS, TAG_VISIBLE_FACETS, TAG_FACET_HINTS, TAG_FACET_LABELS, TAG_MAX_COUNT, TAG_REQUIRED_FACETS, facetOf, groupByFacet, inferTagFacet, saveTagOverride, updateTagFacet, validateNewTagName, validateTagSet, validateDirectionForFamily, directionFamilyOf, remapDirectionFamily, wordlistUnreadable } from './tag-registry.js'
 import { familyOf, hasFamilyLayout, markFamilyTypeCreated, removeFamilyTypeDir, syncFamilyTypeName } from './shard-store.js'
 import { manageFamilies, readCreatedFamilies, searchFamiliesByBuckets, syncCreatedFamilies, validateFamilyName } from './family-tools.js'
 import { FAMILY_INVISIBLE_RE, GENERIC_FAMILY_NAMES, normalizeFamilyName, specificFamilyOf } from './family-name.js'
@@ -1692,7 +1692,7 @@ export function buildTools(defineTool, config = {}) {
       id: { type: 'string', description: 'assign 时的经验 id（exp_recall 证据里的 id）。' },
       // 不叫 description：与 JSON Schema 的 description 关键字同名，provider 严格校验会误读。
       typeDescription: { type: 'string', description: 'create/rename 时可选写描述（≤120 字）。' },
-      facet: { type: 'string', enum: [...TAG_FACETS], description: `label 时给**新标签**指定面（已登记标签不用给）：${TAG_FACETS.map((key) => `${key}=${TAG_FACET_LABELS[key]}`).join('、')}。新标签会登记进 .exp/tag-registry.json。direction=族内场景方向，必须配 family。` },
+      facet: { type: 'string', enum: [...TAG_VISIBLE_FACETS], description: `label 时给**新标签**指定面（已登记标签不用给）：${TAG_VISIBLE_FACETS.map((key) => `${key}=${TAG_FACET_LABELS[key]}`).join('、')}。新标签会登记进 .exp/tag-registry.json。direction=族内场景方向，必须配 family；action 面已收敛（族即动作）。` },
       family: { type: 'string', description: 'label 登记 direction（方向）标签时必填：这个方向属于哪个动作族（族须已存在）。方向是族内场景短名词（如 写断言→契约断言/回归断言/探针先行），不收自由文本。' },
       labels: { type: 'array', description: 'label 时要加到该经验上的标签名（数组）：已登记的直接用；未登记的须配 facet（登记新标签）。' },
       tagDescription: { type: 'string', description: 'label 登记新标签时的说明（≤120 字，给人看，不是标签本身）。' },
@@ -1733,6 +1733,12 @@ export function buildTools(defineTool, config = {}) {
         }
         // 0.38：新标签的面/归属族、方向归属校验、标签上限——全部校验通过再写盘（拒收不留半写）。
         const unknown = resolved.filter((name) => facetOf(name) === null)
+        // 0.40：facet 非字符串明确拒（别 String() 把 ['topic'] 强转成 'topic'）。
+        if (args.facet !== undefined && args.facet !== null && typeof args.facet !== 'string') {
+          const error = new Error('facet 必须是字符串（direction / topic / quality）')
+          error.code = 'invalid'
+          throw error
+        }
         const facet = String(args.facet || '').trim()
         // 0.38：label 指定 facet=direction 时，已登记成别的面（写入即登记常先记成 topic）的标签要纠正成方向，
         // 不能静默丢面；也不能直接报错（调用方明确要登记方向）。
@@ -1757,8 +1763,17 @@ export function buildTools(defineTool, config = {}) {
           if (!plainBlank) validateFamilyName(args.family)
         }
         const labelFamily = String(args.family || '').trim()
-        if (unknown.length > 0 && !TAG_FACETS.includes(facet)) {
-          const error = new Error(`新标签 ${unknown.map((name) => `「${name}」`).join('')} 必须指定面：facet 取 ${TAG_FACETS.map((key) => `${key}(${TAG_FACET_LABELS[key]})`).join(' / ')}`)
+        // 0.40：facet 只要传了就必须是可见面——action 一律拒（哪怕标签已登记，不能把 action 词写回 context）。
+        if (facet !== '' && !TAG_VISIBLE_FACETS.includes(facet)) {
+          const facetHint = facet === 'action' ? '（action 面已收敛：族即动作，族内场景用 direction）' : ''
+          const error = new Error(`facet 取 ${TAG_VISIBLE_FACETS.map((key) => `${key}(${TAG_FACET_LABELS[key]})`).join(' / ')}${facetHint}`)
+          error.code = 'invalid'
+          throw error
+        }
+        if (unknown.length > 0 && !TAG_VISIBLE_FACETS.includes(facet)) {
+          // 0.40：action 面已收敛，不能把它列成合法面；传 action 时给迁移提示。
+          const facetHint = String(facet || '') === 'action' ? '（action 面已收敛：族即动作，族内场景用 direction）' : ''
+          const error = new Error(`新标签 ${unknown.map((name) => `「${name}」`).join('')} 必须指定面：facet 取 ${TAG_VISIBLE_FACETS.map((key) => `${key}(${TAG_FACET_LABELS[key]})`).join(' / ')}${facetHint}`)
           error.code = 'invalid'
           throw error
         }
@@ -1791,7 +1806,8 @@ export function buildTools(defineTool, config = {}) {
             throw error
           }
         }
-        const merged = [...new Set([...existing, ...resolved])]
+        // 0.40：手动 label 也不得把 action 面标签写回 context（与 exp_record 剥 action 标签同口径）。
+        const merged = [...new Set([...existing, ...resolved])].filter((name) => facetOf(name) !== 'action')
         if (merged.length > 8) {
           const error = new Error('标签最多 8 个，请先删掉一些旧标签')
           error.code = 'invalid'
