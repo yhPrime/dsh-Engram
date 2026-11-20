@@ -1874,6 +1874,7 @@ export function buildTools(defineTool, config = {}) {
         } else if (action === 'create') {
           const steps = buildSteps(args.chain, resolveFamily)
           const obj = createObject(objects, args.object, steps, { note: args.note })
+          if (registryDirty) { writeFamilyRegistry(dataDir, registry); registryDirty = false }
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, steps: steps.length }
         } else if (action === 'append') {
@@ -1885,12 +1886,14 @@ export function buildTools(defineTool, config = {}) {
           } else {
             for (const step of steps) at = appendToObject(obj, { chainIndex: args.chainIndex, stepPath: args.stepPath, step, note: args.note })
           }
+          if (registryDirty) { writeFamilyRegistry(dataDir, registry); registryDirty = false }
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, chains: obj.chains.length, at }
         } else if (action === 'branch') {
           const obj = requireObject(args.object)
           const steps = buildSteps(args.steps, resolveFamily)
           const added = addBranch(obj, { chainIndex: args.chainIndex, stepPath: args.stepPath, when: args.when, steps, result: args.result })
+          if (registryDirty) { writeFamilyRegistry(dataDir, registry); registryDirty = false }
           writeObjects(dataDir, objects)
           result = { action, id: obj.id, object: obj.object, ...added }
         }

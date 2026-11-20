@@ -298,7 +298,8 @@ export function createEngine(options = {}) {
         let dupId = ''
         for (const type of Array.isArray(manifest.types) ? manifest.types : []) {
           if (type === null || typeof type !== 'object' || typeof type.id !== 'string') continue
-          const id = type.id.trim()
+          // 与读路径（normalizeStore 按原始 id 判重）同口径：不 trim，否则 ' ty_x' 会被误判成重复。
+          const id = type.id
           if (id === '') continue
           if (seenIds.has(id)) { dupId = id; break }
           seenIds.add(id)

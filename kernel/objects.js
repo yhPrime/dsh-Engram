@@ -57,6 +57,8 @@ export function readObjects(dataDir) {
     text = fs.readFileSync(objectsFile(dataDir), 'utf8')
   } catch (error) {
     if (error && error.code === 'ENOENT') return []
+    // 路径被目录占用时别抛裸 EISDIR：和坏行一样点名对象库文件，排查时能定位。
+    if (error && error.code === 'EISDIR') throw new Error(`对象库损坏：${OBJECTS_FILE} 是目录（EISDIR）`)
     throw error
   }
   const out = []

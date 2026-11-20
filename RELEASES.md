@@ -714,3 +714,9 @@ pm test 在 release 分支全绿
 
 - **v0.36.12（安装包内带上 p95 汇总脚本）**
   - package.json files 与 build-release 增加 tools/graph-perf-report.mjs，安装后可直接 node tools/graph-perf-report.mjs 或 npm run graph:report
+
+- **v0.36.13（低危收口：对象库错误与写序）**
+  - objects.jsonl 是目录时报「对象库损坏：objects.jsonl 是目录（EISDIR）」，不再裸抛 EISDIR
+  - exp_object create/append/branch 先写 families 注册表再写 objects.jsonl：注册表写失败不留半成品对象
+  - manifest 类型 id 判重与读路径同口径（不 trim），避免「/state 报坏库、列表能读」
+  - 回归：对象库 EISDIR 点名、注册表失败无半成品；object-chain 13/13、test:ui、npm test 全绿
