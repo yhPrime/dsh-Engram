@@ -707,3 +707,7 @@ pm test 在 release 分支全绿
   - shardsMismatch 对磁盘 flat 的库一律按族文件核对；resolveLayout 同样以磁盘形态优先
   - 效果：manifest 被降级成 layout=family / legacy / 空 + 0 桶时，读也能自愈回 family-flat，不再读 0 条
   - 回归：三种 layout 变体 + 0 桶本均自愈；flat-layout 6/6、test:ui、npm test 全绿
+
+- **v0.36.11（P3 读数工具）**
+  - 新增 tools/graph-perf-report.mjs：只读 ~/.dsh/engram/graph-perf.jsonl，按节点规模输出 p50/p95/最差/fps；npm run graph:report
+  - 有历史读数时先给基线（旧库 278 节点 p95 12.52ms），当前 415 节点版本仍需重启后重新采
