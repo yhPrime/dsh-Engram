@@ -91,6 +91,13 @@ window.__ModuleLoader__.load({
   /* 密度（默认舒适档；compact 覆盖块紧跟其后） */
   --eng-row-h: 36px; --eng-row-py: 8px; --eng-card-pad: var(--eng-s-4);
   --eng-ctrl-h: 32px; --eng-gap: var(--eng-s-4); --eng-block-gap: var(--eng-s-5);
+  --eng-spark-h: 52px;
+  /* 层级阶梯：数值只在这里出现，样式里一律走 token（0.43 D5）。
+     低→高：表头吸顶 → 画布详情卡 → 画布角落浮层 → 吸顶页头 → 抽屉/全屏 → 模态 → toast */
+  --eng-z-sticky: 1; --eng-z-card: 2; --eng-z-float: 3;
+  --eng-z-top: 5; --eng-z-overlay: 6; --eng-z-modal: 60; --eng-z-toast: 2147483000;
+  /* 遮罩 */
+  --eng-scrim: rgba(0, 0, 0, .34);
   /* 主按钮文字色：JS 按强调色亮度覆写；默认白字（蓝底） */
   --eng-on-brand: #fff;
   /* 骨架屏 */
@@ -107,7 +114,7 @@ window.__ModuleLoader__.load({
 }
 .eng-app[data-density="comfortable"] { --eng-row-h: 36px; --eng-row-py: 8px; --eng-card-pad: var(--eng-s-4); --eng-ctrl-h: 32px; --eng-gap: var(--eng-s-4); --eng-block-gap: var(--eng-s-5); }
 .eng-app[data-density="compact"] { --eng-row-h: 30px; --eng-row-py: 5px; --eng-card-pad: var(--eng-s-3); --eng-ctrl-h: 28px; --eng-gap: var(--eng-s-3); --eng-block-gap: var(--eng-s-4); }
-.eng-rail { width: var(--eng-rail-w); flex: 0 0 var(--eng-rail-w); display: flex; flex-direction: column; gap: 3px; padding: var(--eng-s-4) var(--eng-s-3); overflow-y: auto; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-specific-sidebar-fill, color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2))); }
+.eng-rail { width: var(--eng-rail-w); flex: 0 0 var(--eng-rail-w); display: flex; flex-direction: column; gap: var(--eng-s-1); padding: var(--eng-s-4) var(--eng-s-3); overflow-y: auto; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-specific-sidebar-fill, color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, var(--dsw-alias-bg-layer-2))); }
 .eng-brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 16px; }
 .eng-brand-mark { width: 30px; height: 30px; border-radius: var(--eng-r-3); display: grid; place-items: center; color: var(--eng-accent-text); background: var(--eng-accent-soft); }
 .eng-brand-name { font-size: var(--eng-fs-h2); font-weight: 650; letter-spacing: .2px; }
@@ -124,15 +131,19 @@ window.__ModuleLoader__.load({
 .eng-nav-item { position: relative; }
 .eng-nav-item[data-active="true"]::before { content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--eng-accent-text); }
 .eng-main { flex: 1 1 auto; min-width: 0; width: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.eng-top { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-3); padding: var(--eng-s-3) var(--eng-s-6); border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-base, var(--dsw-alias-bg-layer-1)) 86%, transparent); backdrop-filter: blur(10px); }
+.eng-top { position: sticky; top: 0; z-index: var(--eng-z-top); display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-3); padding: var(--eng-s-3) var(--eng-s-6); border-bottom: 1px solid var(--dsw-alias-border-l1); background: color-mix(in srgb, var(--dsw-alias-bg-base, var(--dsw-alias-bg-layer-1)) 86%, transparent); backdrop-filter: blur(10px); }
 .eng-title { margin: 0; font-size: var(--eng-fs-h1); line-height: var(--eng-lh-h1); font-weight: var(--eng-fw-heavy); letter-spacing: .1px; }
-.eng-sub { margin-top: 2px; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
+.eng-sub { margin: 2px 0 0; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
 .eng-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+/* 页头（0.43 D2）：标题 + 一句话说明在左，主操作顶右；窄屏整体换行。 */
+.eng-page-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-3); width: 100%; min-width: 0; }
+.eng-page-head-text { min-width: 0; flex: 1 1 auto; }
+.eng-page-head-actions { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-2); }
 .eng-modal { animation: eng-modal-in var(--eng-dur-4) var(--eng-ease-emphasized); }
 @keyframes eng-modal-in { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes eng-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .eng-modal-mask { animation: eng-fade-in var(--eng-dur-2) var(--eng-ease-standard); }
-.eng-modal-mask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: var(--eng-s-5); background: rgba(0, 0, 0, .34); }
+.eng-modal-mask { position: fixed; inset: 0; z-index: var(--eng-z-modal); display: flex; align-items: center; justify-content: center; padding: var(--eng-s-5); background: var(--eng-scrim); }
 .eng-modal { width: min(660px, 100%); max-height: min(760px, 88vh); overflow: auto; padding: var(--eng-s-5); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-5); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-2); }
 .eng-modal-title { margin: 0 0 4px; font-size: var(--eng-fs-h2); font-weight: 650; }
 .eng-progress-text { font-size: var(--eng-fs-body); line-height: 1.6; margin: 4px 0 8px; }
@@ -178,7 +189,7 @@ window.__ModuleLoader__.load({
 .eng-palette-foot { display: flex; align-items: center; gap: var(--eng-s-2); padding-top: var(--eng-s-2); border-top: 1px solid var(--dsw-alias-border-l1); font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); }
 .eng-shortcut-list { display: flex; flex-direction: column; gap: var(--eng-s-2); max-height: 50vh; overflow: auto; }
 .eng-shortcut-row { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: var(--eng-s-3); align-items: center; font-size: var(--eng-fs-sm); }
-.eng-toast-host { position: fixed; right: var(--eng-s-4); bottom: var(--eng-s-4); z-index: 2147483000; display: flex; flex-direction: column; gap: var(--eng-s-2); pointer-events: none; }
+.eng-toast-host { position: fixed; right: var(--eng-s-4); bottom: var(--eng-s-4); z-index: var(--eng-z-toast); display: flex; flex-direction: column; gap: var(--eng-s-2); pointer-events: none; }
 .eng-toast { pointer-events: auto; padding: var(--eng-s-2) var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); font-size: var(--eng-fs-sm); animation: eng-toast-in var(--eng-dur-3) var(--eng-ease-emphasized); }
 .eng-toast[data-tone="bad"] { border-color: color-mix(in srgb, var(--eng-tone-bad-fg) 45%, var(--dsw-alias-border-l1)); color: var(--eng-tone-bad-fg); }
 .eng-toast[data-tone="ok"] { border-color: color-mix(in srgb, var(--eng-tone-ok-fg) 45%, var(--dsw-alias-border-l1)); color: var(--eng-tone-ok-fg); }
@@ -187,7 +198,7 @@ window.__ModuleLoader__.load({
 .eng-fill { animation: eng-page-in var(--eng-dur-3) var(--eng-ease-standard); }
 .eng-git-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); font-size: var(--eng-fs-sm); }
 /* 「添加技能」的拖拽落区：虚线框 + 中间提示，拖进来时高亮 */
-.eng-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; margin: 12px 0 12px; padding: 26px 16px; border: 1.5px dashed var(--dsw-alias-border-l2, var(--dsw-alias-border-l1)); border-radius: var(--eng-r-5); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent); text-align: center; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.eng-dropzone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--eng-s-2); margin: var(--eng-s-3) 0; padding: var(--eng-s-7) var(--eng-s-4); border: 1.5px dashed var(--dsw-alias-border-l2, var(--dsw-alias-border-l1)); border-radius: var(--eng-r-5); background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent); text-align: center; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
 .eng-dropzone:hover { border-color: color-mix(in srgb, var(--eng-accent) 55%, var(--dsw-alias-border-l2, var(--dsw-alias-border-l1))); }
 .eng-dropzone[data-dragging="true"] { border-color: var(--eng-accent); background: var(--eng-accent-soft); }
 .eng-dropzone-title { font-size: var(--eng-fs-h2); font-weight: 650; letter-spacing: .2px; }
@@ -261,12 +272,12 @@ window.__ModuleLoader__.load({
 .eng-table td { padding: 8px 8px; border-bottom: 1px solid var(--dsw-alias-border-l1); vertical-align: top; }
 .eng-table tr:last-child td { border-bottom: 0; }
 .eng-table tbody tr:nth-child(even) { background: var(--eng-zebra); }
-.eng-scroll .eng-table thead th { position: sticky; top: 0; z-index: 1; background: var(--dsw-alias-bg-layer-1); }
+.eng-scroll .eng-table thead th { position: sticky; top: 0; z-index: var(--eng-z-sticky); background: var(--dsw-alias-bg-layer-1); }
 .eng-tip { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 4px; border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-micro); font-weight: 600; line-height: 1; cursor: help; vertical-align: middle; }
 .eng-tip:hover, .eng-tip:focus-visible { color: var(--eng-accent-text); border-color: var(--eng-accent); outline: none; }
 /* 悬浮说明挂在 <body> 上（position: fixed）：宽度按视口上限收，左右上下再夹回视口内，
    不会被面板的 overflow 容器裁掉半截，也不会把长句子排出屏幕。 */
-.eng-tip-layer { position: fixed; z-index: 2147483000; box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 8px 8px; border-radius: var(--eng-r-2); border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); background: var(--dsw-alias-bg-layer-2, #ffffff); color: var(--dsw-alias-label-primary, #1f2329); font: 11px/1.55 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0,0,0,.2); pointer-events: none; }
+.eng-tip-layer { position: fixed; z-index: var(--eng-z-toast); box-sizing: border-box; width: max-content; max-width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; padding: 8px 8px; border-radius: var(--eng-r-2); border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); background: var(--dsw-alias-bg-layer-2, #ffffff); color: var(--dsw-alias-label-primary, #1f2329); font: 11px/1.55 ui-sans-serif, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; text-align: left; white-space: normal; word-break: break-word; overflow-wrap: anywhere; box-shadow: 0 8px 24px rgba(0,0,0,.2); pointer-events: none; }
 .eng-subnav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
 .eng-subnav-item { padding: 4px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; }
 .eng-subnav-item:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); color: var(--dsw-alias-label-primary); }
@@ -287,6 +298,9 @@ window.__ModuleLoader__.load({
 .eng-chipbar { display: flex; gap: 4px; flex-wrap: wrap; }
 .eng-chip { padding: 3px 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-micro); cursor: pointer; }
 .eng-chip[data-on="true"] { border-color: transparent; background: var(--eng-accent-soft); color: var(--eng-accent-text); font-weight: 600; }
+/* 0.42：经验页的视图切换条（列表/族/对象/冷档）。它是 .eng-content 内与页面片并列的兄弟节点，
+   只吃一行高度，不参与 .eng-content > .eng-fill 那条高度契约。 */
+.eng-view-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-1); padding-bottom: var(--eng-s-2); flex: 0 0 auto; }
 .eng-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .eng-toolbar .eng-input { width: min(220px, 100%); }
 .eng-toolbar .eng-select { width: min(140px, 100%); }
@@ -313,6 +327,13 @@ window.__ModuleLoader__.load({
 .eng-crumb button:hover { color: var(--dsw-alias-label-primary); }
 .eng-crumb-sep { opacity: .5; }
 .eng-nav-sep { height: 1px; margin: 8px 8px; background: var(--dsw-alias-border-l1); }
+/* == 断点集中区（0.43 D6）：改断点只改这一块，别在别处新开 ==
+   为什么同一个断点写两遍：面板被宿主塞进可缩放的容器里，@container 看的是面板自身宽度，
+   @media 看的是窗口宽度 —— 面板被压窄（侧栏展开、分屏）时只有容器查询会触发。
+   两段规则内容一致，是有意的双轨兜底，不要「去重」掉其中一条。
+   面板宽度：980（两栏收成一栏）/ 680（导航从竖排改横排）；
+   窗口宽度：1180 / 860 与之一一对应。下面 314/321 行是同一断点的补充规则（data-fill 高度回退），
+   与该断点一起改。最后那条带容器名的 680 规则只服务于存储卡片，断点同名。 */
 @container (max-width: 980px) { .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
 @container (max-width: 680px) { .eng-rail { width: 100%; flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--dsw-alias-border-l1); overflow: visible; } .eng-brand { padding: 0 8px 0 2px; } .eng-brand-sub { display: none; } .eng-nav { flex-direction: row; flex-wrap: wrap; } .eng-nav-item { width: auto; padding: 4px 8px; } .eng-nav-count, .eng-rail-foot, .eng-nav-sep { display: none; } .eng-content { padding: 12px; } .eng-top { padding: 8px 12px; } .eng-form-grid { grid-template-columns: minmax(0, 1fr); } .eng-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1180px) { .eng-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .eng-cols, .eng-split { grid-template-columns: minmax(0, 1fr); } .eng-split[data-open="true"] > .eng-detail-card { order: -1; } }
@@ -344,39 +365,41 @@ window.__ModuleLoader__.load({
 @keyframes eng-dash { to { stroke-dashoffset: -10; } }
 .eng-graph-canvas-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: var(--eng-r-4); background: transparent; }
 .eng-graph-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; user-select: none; }
-.eng-graph-fullscreen { position: absolute; top: 14px; right: 14px; z-index: 6; width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+.eng-graph-fullscreen { position: absolute; top: var(--eng-s-3); right: var(--eng-s-3); z-index: var(--eng-z-overlay); width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
 .eng-graph-fullscreen:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
 .eng-graph-fullscreen:focus-visible { outline: 2px solid var(--eng-accent-text); outline-offset: 2px; }
 .eng-graph-canvas-wrap:fullscreen { width: 100vw; height: 100vh; aspect-ratio: auto; border-radius: 0; background: var(--dsw-alias-bg-base); }
 .eng-graph-canvas-wrap:fullscreen .eng-graph-fullscreen { top: 18px; right: 18px; }
 .eng-content-full { padding: 0; max-width: none; overflow: hidden; display: flex; }
 .eng-content-full .eng-graph-canvas-wrap { flex: 1 1 auto; height: 100%; min-height: 0; aspect-ratio: auto; border-radius: 0; }
-.eng-graph-detail { position: absolute; right: 14px; bottom: 14px; z-index: 2; width: min(320px, 72%); padding: 12px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.14); }
-.eng-graph-detail-title { font-size: var(--eng-fs-body); font-weight: 650; margin: 0 0 4px; word-break: break-word; }
+.eng-graph-detail { position: absolute; right: var(--eng-s-3); bottom: var(--eng-s-3); z-index: var(--eng-z-card); width: min(360px, calc(100% - var(--eng-s-6))); max-height: min(60%, 320px); overflow: auto; padding: var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, transparent); backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,.14); }
+.eng-graph-detail-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: var(--eng-fs-body); font-weight: 650; margin: 0 0 4px; word-break: break-word; }
 .eng-graph-detail-meta { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+/* 底部单卡（0.44 D7）：.eng-graph-note 原来是右下角独立的绝对定位浮层，
+   与详情卡位置完全重合；现在它降级成详情卡底部的一行说明。 */
+.eng-graph-detail-note { margin-top: var(--eng-s-2); padding-top: var(--eng-s-2); border-top: 1px solid var(--dsw-alias-border-l1); }
+.eng-graph-detail-note .eng-graph-note { position: static; right: auto; bottom: auto; flex-wrap: wrap; padding: 0; border: 0; background: none; backdrop-filter: none; box-shadow: none; }
+.eng-graph-detail-open { margin-top: var(--eng-s-2); width: 100%; height: var(--eng-btn-h-sm); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-2); background: var(--dsw-alias-bg-layer-1); color: var(--eng-accent-text); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; }
+.eng-graph-detail-open:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
+.eng-graph-detail-open:focus-visible { outline: var(--eng-focus-w) solid var(--eng-accent-text); outline-offset: var(--eng-focus-offset); }
+/* 读图失败横幅：位置与层级都走 token（原来内联写死 left/top:14 + zIndex:3）。 */
+.eng-graph-error { position: absolute; left: var(--eng-s-3); top: var(--eng-s-3); right: var(--eng-s-3); z-index: var(--eng-z-float); }
 /* 关系图右上角配色胶囊：跟随主题 / 蓝紫星辰（dsh-codex-effort-slider 的渐变） */
-.eng-graph-pill { position: absolute; top: 14px; right: 14px; z-index: 3; display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent); backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(0,0,0,.10); }
-.eng-graph-pill button { border: 0; border-radius: var(--eng-r-full); padding: 4px 12px; font: inherit; font-size: var(--eng-fs-sm); line-height: 1.2; color: var(--dsw-alias-label-secondary); background: transparent; cursor: pointer; white-space: nowrap; }
-.eng-graph-pill button:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
-.eng-graph-pill button[data-active="true"] { color: #fff; background: var(--eng-accent-strong); }
-.eng-graph-pill button[data-tone="codex"][data-active="true"] { background: linear-gradient(90deg, #4d93f8 0%, #6d28d9 42%, #9333ea 74%, #c084fc 100%); }
 /* 左下角：画布深浅背景切换（与右上角配色胶囊同一套皮肤） */
-.eng-graph-pill-bottom { top: auto; right: auto; bottom: 14px; left: 14px; }
-.eng-graph-pill-top { top: 14px; right: auto; left: 14px; }
-.eng-graph-note { position: absolute; right: 14px; bottom: 14px; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-sm); backdrop-filter: blur(10px); }
+.eng-graph-note { position: absolute; right: var(--eng-s-3); bottom: var(--eng-s-3); z-index: var(--eng-z-float); display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 86%, transparent); color: var(--dsw-alias-label-secondary); font-size: var(--eng-fs-sm); backdrop-filter: blur(10px); }
 .eng-graph-note-btn { padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); font: inherit; font-size: var(--eng-fs-micro); color: var(--eng-accent-text); background: var(--dsw-alias-bg-layer-1); cursor: pointer; }
 .eng-graph-note-btn:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
-.eng-graph-drawer-toggle { position: absolute; top: 14px; left: 14px; z-index: 6; padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+.eng-graph-drawer-toggle { position: absolute; top: var(--eng-s-3); left: var(--eng-s-3); z-index: var(--eng-z-overlay); padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
 .eng-graph-drawer-toggle:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
-.eng-graph-drawer { position: absolute; top: 56px; left: 14px; z-index: 6; width: min(330px, calc(100% - 28px)); max-height: calc(100% - 78px); overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); box-shadow: 0 16px 40px rgba(0,0,0,.22); }
+.eng-graph-drawer { position: absolute; top: var(--eng-top-h); left: var(--eng-s-3); z-index: var(--eng-z-overlay); width: min(330px, calc(100% - 28px)); max-height: calc(100% - 78px); overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); box-shadow: 0 16px 40px rgba(0,0,0,.22); }
 .eng-graph-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .eng-graph-drawer-close { border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); padding: 2px 9px; font: inherit; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); cursor: pointer; }
 .eng-graph-drawer-label { margin-top: 4px; font-size: var(--eng-fs-micro); font-weight: 600; color: var(--dsw-alias-label-secondary); letter-spacing: .04em; }
-.eng-graph-drawer .eng-graph-search { position: static; width: 100%; padding: 0; }
+
 .eng-graph-drawer .eng-graph-filters button { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
 .eng-graph-drawer .eng-graph-filters button[data-active="true"] { color: var(--eng-accent-text); border-color: var(--eng-accent); background: var(--eng-accent-soft); }
 .eng-graph-legend-inline { display: flex; flex-direction: column; gap: var(--eng-s-1); max-height: 180px; overflow: auto; }
-.eng-graph-search { position: absolute; left: 14px; top: 58px; z-index: 4; width: min(320px, 72%); display: flex; flex-direction: column; gap: 6px; }
+.eng-graph-search { display: flex; flex-direction: column; gap: var(--eng-s-1); min-width: 0; }
 .eng-graph-search-input { width: 100%; background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent); backdrop-filter: blur(10px); }
 .eng-graph-search-hits { display: flex; flex-direction: column; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); }
 .eng-graph-search-hit { border: 0; border-radius: var(--eng-r-2); padding: 5px 8px; font: inherit; font-size: var(--eng-fs-sm); text-align: left; color: var(--dsw-alias-label-primary); background: transparent; cursor: pointer; }
@@ -385,20 +408,14 @@ window.__ModuleLoader__.load({
 .eng-graph-filters button { border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-full); padding: 2px 9px; font: inherit; font-size: var(--eng-fs-micro); color: var(--dsw-alias-label-secondary); background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 80%, transparent); cursor: pointer; }
 .eng-graph-filters button[data-active="true"] { color: var(--eng-accent-text); border-color: var(--eng-accent); background: var(--eng-accent-soft); }
 .eng-visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
-.eng-graph-legend { position: absolute; left: 14px; top: 178px; z-index: 3; width: min(300px, 72%); display: flex; flex-direction: column; gap: var(--eng-s-2); padding: var(--eng-s-3); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--eng-r-3); background: var(--dsw-alias-bg-overlay, var(--dsw-alias-bg-layer-2)); box-shadow: var(--eng-shadow-1); }
-.eng-graph-legend-list { display: flex; flex-direction: column; gap: var(--eng-s-1); max-height: 200px; overflow: auto; }
-.eng-graph-legend-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) 40px; gap: var(--eng-s-2); align-items: center; font-size: var(--eng-fs-sm); }
 .eng-graph-legend-btn { display: grid; grid-template-columns: 10px minmax(0, 1fr) 40px; gap: var(--eng-s-2); align-items: center; width: 100%; padding: 2px 6px; border: 1px solid transparent; border-radius: var(--eng-r-2); font: inherit; font-size: var(--eng-fs-sm); color: inherit; text-align: left; background: transparent; cursor: pointer; }
 .eng-graph-legend-btn:hover { background: var(--dsw-alias-interactive-bg-hover, var(--eng-ink-8)); }
 .eng-graph-legend-btn[data-active="true"] { color: var(--eng-accent-text); border-color: var(--eng-accent); background: var(--eng-accent-soft); }
 .eng-legend-dot { width: 7px; height: 7px; border-radius: var(--eng-r-full); background: var(--eng-accent); }
-.eng-graph-pill button[data-tone="light"] { color: #1f2430; }
-.eng-graph-pill button[data-tone="light"][data-active="true"] { color: #1f2430; background: #eef1f6; }
-.eng-graph-pill button[data-tone="dark"][data-active="true"] { color: #f4f6fb; background: #171b28; }
 .eng-warn-text { color: var(--eng-tone-warn-fg); }
 .eng-bad-text { color: var(--eng-tone-bad-fg); }
 /* P2 概览：7 日柱条 / 类型分布 / 存储格 / 待判定 */
-.eng-spark { display: flex; align-items: flex-end; gap: var(--eng-s-1); height: 52px; padding-top: var(--eng-s-2); }
+.eng-spark { display: flex; align-items: flex-end; gap: var(--eng-s-1); height: var(--eng-spark-h); padding-top: var(--eng-s-2); }
 .eng-spark-col { flex: 1 1 0; display: flex; align-items: flex-end; height: 100%; min-width: 6px; }
 .eng-spark-bar { width: 100%; min-height: 2px; border-radius: var(--eng-r-1) var(--eng-r-1) 0 0; background: color-mix(in srgb, var(--eng-accent) 55%, transparent); }
 .eng-dist { display: flex; flex-direction: column; gap: var(--eng-s-2); }
@@ -429,9 +446,31 @@ window.__ModuleLoader__.load({
 .eng-src-line { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .eng-path-list { display: flex; flex-direction: column; gap: 4px; }
 .eng-path-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.eng-tabs { display: flex; gap: var(--eng-s-1); margin: var(--eng-s-3) 0 var(--eng-s-2); border-bottom: 1px solid var(--dsw-alias-border-l1); }
-.eng-tab { padding: var(--eng-s-1) var(--eng-s-2); border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--eng-fs-sm); cursor: pointer; }
-.eng-tab[data-active="true"] { color: var(--eng-accent-text); border-bottom-color: var(--eng-accent-text); font-weight: var(--eng-fw-strong); }
+/* == 统一切换控件（0.43 D3）==
+   0.42 之前同一个交互有四种外观（eng-chip / eng-tab / eng-subnav-item / eng-graph-filters）。
+   现在只有 .eng-seg + .eng-seg-btn，靠 data-size 分两档密度：
+     chip — 经验页视图条、关系图抽屉筛选（24px 胶囊）
+     tab  — 详情面板分区、设置二级（一行带下划线）
+   选中态不靠颜色单独表达（WCAG 1.4.1）：chip 档同时改边框，tab 档再加 2px 下划线。
+   下划线用 border 不用 box-shadow —— forced-colors 下阴影会被抹掉，届时选中项就无从分辨。 */
+.eng-seg { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eng-s-1); min-width: 0; }
+.eng-seg-btn { display: inline-flex; align-items: center; gap: var(--eng-s-1); margin: 0; border: 1px solid transparent; border-radius: var(--eng-r-full); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; cursor: pointer; transition: background var(--eng-dur-2) var(--eng-ease-standard), border-color var(--eng-dur-2) var(--eng-ease-standard), color var(--eng-dur-2) var(--eng-ease-standard); }
+.eng-seg-btn:hover { background: var(--eng-hover); color: var(--dsw-alias-label-primary); }
+.eng-seg-btn[data-active="true"] { border-color: var(--eng-accent); background: var(--eng-accent-soft); color: var(--eng-accent-text); font-weight: var(--eng-fw-strong); }
+.eng-seg-btn:disabled { opacity: .5; cursor: default; }
+.eng-seg-btn:focus-visible { outline: var(--eng-focus-w) solid var(--eng-accent-text); outline-offset: var(--eng-focus-offset); }
+.eng-seg-label { white-space: nowrap; }
+.eng-seg-count { opacity: .6; font-variant-numeric: tabular-nums; }
+.eng-seg[data-size="chip"] .eng-seg-btn { height: var(--eng-chip-h); padding: 0 var(--eng-s-3); border-color: var(--dsw-alias-border-l1); font-size: var(--eng-fs-sm); }
+.eng-seg[data-size="tab"] { border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.eng-seg[data-size="tab"] .eng-seg-btn { position: relative; height: var(--eng-btn-h); padding: 0 var(--eng-s-2); border: 0; border-radius: 0; background: transparent; font-size: var(--eng-fs-sm); }
+.eng-seg[data-size="tab"] .eng-seg-btn[data-active="true"] { background: transparent; color: var(--eng-accent-text); }
+.eng-seg[data-size="tab"] .eng-seg-btn[data-active="true"]::after { content: ""; position: absolute; inset: auto 0 -1px; border-block-end: 2px solid var(--eng-accent-text); }
+/* forced-colors 下背景与阴影都会消失：把选中项交给系统高亮色，别让它变成「看不出选中」。 */
+@media (forced-colors: active) {
+  .eng-seg-btn[data-active="true"] { border-color: Highlight; color: Highlight; }
+  .eng-seg[data-size="tab"] .eng-seg-btn[data-active="true"]::after { border-block-end-color: Highlight; }
+}
 .eng-tab-body { min-height: 120px; }
 .eng-timeline { display: flex; flex-direction: column; gap: var(--eng-s-2); }
 .eng-timeline-item { display: grid; grid-template-columns: 120px 90px minmax(0, 1fr); gap: var(--eng-s-2); align-items: center; font-size: var(--eng-fs-sm); }
@@ -1215,6 +1254,23 @@ window.__ModuleLoader__.load({
       return { data, error, loading, reload: load, setData }
     }
 
+    /**
+     * 页面抬头（0.43 D2）：标题 + 一句话说明 + 右侧主操作。
+     * 0.42 之前这三样分散在三处：rail 里一遍品牌、顶栏里一遍「经验库 / 经验与技能的本地控制台」、
+     * 页面主操作靠 `tab === 'skills' ? …` 临时拼进全局顶栏。现在统一由这一个组件承担，
+     * 品牌只在 rail 出现一次，副标题按页给（`NAV_HINTS`），主操作属于页面自己。
+     */
+    function PageHeader(props) {
+      const title = String(props.title || '')
+      const desc = String(props.desc || '')
+      const actions = props.actions === null || props.actions === undefined ? null : props.actions
+      return h('div', { className: 'eng-page-head' },
+        h('div', { className: 'eng-page-head-text' },
+          h('h1', { className: 'eng-title' }, title),
+          desc === '' ? null : h('p', { className: 'eng-sub' }, desc)),
+        actions === null ? null : h('div', { className: 'eng-page-head-actions' }, actions))
+    }
+
     function Banner(props) {
       return h('div', { className: `eng-banner${props.bad ? ' eng-banner-bad' : ''}` }, props.children)
     }
@@ -1372,57 +1428,167 @@ window.__ModuleLoader__.load({
       return h('span', null, display === undefined || display === null ? '—' : String(display))
     }
 
+    /**
+     * 统一的「同类切换」控件（0.43 D3）。
+     *
+     * 0.42 之前同一个交互有四种外观：`eng-chip`（经验页视图条）、`eng-tab`（详情面板）、
+     * `eng-subnav-item`（设置二级 / 族页）、`eng-graph-filters button`（关系图筛选）。
+     * 全部收成这一个组件，只保留两种密度 + 一种语义映射表。
+     *
+     * 语义按「这些按钮在做什么」分三档，而不是按长相：
+     *   - `tabs`   同区域的视图 / 面板切换 → `role="tablist"` + `role="tab"` + `aria-selected`
+     *   - `nav`    页内二级导航 → `<nav>` + `aria-current="page"`
+     *   - `filter` 筛选条件（可与其他筛选叠加） → `role="group"` + `aria-pressed`
+     * 不统一成 tablist 是刻意的：tablist 表达「一个面板区在一个时刻只显示一个」，
+     * 而设置页二级、关系图筛选都不是这个关系，硬套会让读屏用户听到错误的结构。
+     *
+     * 键盘：`←/→/Home/End` 只移动焦点，`Enter/Space`（按钮原生行为）才真正切换，
+     * 即 selection by activation。这些切换都会改写 hash 或触发请求，
+     * 不能让方向键扫一遍就把每个视图都请求一遍。
+     *
+     * 刻意零 hooks：`ui/tests/pages-smoke.test.mjs` 的 React 桩按 useState 的调用顺序
+     * 给 Console 注入预设值（tab / null / ''），组件里多一个 hook 会打乱那套注入。
+     */
+    function Segmented(props) {
+      const items = Array.isArray(props.items) ? props.items.filter((item) => item !== null && item !== undefined && item.key !== undefined) : []
+      if (items.length === 0) return null
+      const value = props.value
+      const size = props.size === 'tab' ? 'tab' : 'chip'
+      const semantic = props.semantic === 'nav' ? 'nav' : props.semantic === 'filter' ? 'filter' : 'tabs'
+      const label = String(props.ariaLabel || props.label || '')
+      const activeIndex = items.findIndex((item) => item.key === value)
+      // roving tabindex：只有当前项进 Tab 序列，否则要按 4~6 次 Tab 才能越过这一条。
+      const focusIndex = activeIndex >= 0 ? activeIndex : 0
+      const hint = props.hint === false ? null : props.hint
+
+      const onKeyDown = (event) => {
+        const key = event && event.key
+        if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') return
+        const host = event.currentTarget
+        const children = host && host.children ? Array.prototype.slice.call(host.children) : []
+        const buttons = children.filter((child) => child && String(child.tagName || '').toUpperCase() === 'BUTTON' && child.disabled !== true)
+        if (buttons.length === 0) return
+        const current = buttons.indexOf(event.target)
+        if (current < 0) return
+        let next = current
+        if (key === 'ArrowLeft') next = (current - 1 + buttons.length) % buttons.length
+        else if (key === 'ArrowRight') next = (current + 1) % buttons.length
+        else if (key === 'Home') next = 0
+        else next = buttons.length - 1
+        if (buttons[next] && typeof buttons[next].focus === 'function') {
+          if (typeof event.preventDefault === 'function') event.preventDefault()
+          buttons[next].focus()
+        }
+      }
+
+      const hostProps = { className: 'eng-seg', 'data-size': size, 'data-semantic': semantic, onKeyDown }
+      if (label !== '') hostProps['aria-label'] = label
+      if (semantic === 'tabs') hostProps.role = 'tablist'
+      else if (semantic === 'filter') hostProps.role = 'group'
+
+      const button = (item, index) => {
+        const active = activeIndex === index
+        const buttonProps = {
+          key: item.key,
+          type: 'button',
+          className: 'eng-seg-btn',
+          'data-active': active ? 'true' : 'false',
+          tabIndex: index === focusIndex ? 0 : -1,
+          disabled: item.disabled === true,
+          onClick: () => { if (typeof props.onChange === 'function') props.onChange(item.key) },
+        }
+        if (item.title || hint) buttonProps.title = item.title || hint
+        if (semantic === 'tabs') {
+          buttonProps.role = 'tab'
+          buttonProps['aria-selected'] = active ? 'true' : 'false'
+        } else if (semantic === 'nav') {
+          if (active) buttonProps['aria-current'] = 'page'
+        } else {
+          buttonProps['aria-pressed'] = active ? 'true' : 'false'
+        }
+        const count = item.count === undefined || item.count === null || item.count === '' ? null : item.count
+        return h('button', buttonProps,
+          h('span', { className: 'eng-seg-label' }, item.label),
+          count === null ? null : h('span', { className: 'eng-seg-count' }, String(count)))
+      }
+
+      const content = items.map(button)
+      return semantic === 'nav' ? h('nav', hostProps, content) : h('div', hostProps, content)
+    }
+    /**
+     * 首页 = 工作台（0.44 D6）。三块，按「要不要我动手」排序：
+     *   1 待我处理：待判定 / 到期复核 —— 不处理就会烂在库里的东西，排最前
+     *   2 库况：可见经验 / 技能 / 对象 + 7 日调用曲线 + 族分布前 6
+     *   3 快捷动作：记录经验 / 检索召回 / 沉淀技能
+     *
+     * 0.43 之前这里其实是运维面板：8 个区块，「存储结构」卡（manifest 字节、family-flat、
+     * schema 2）占着屏幕正中的主视觉，真正要处理的「待判定」被挤到右栏第三屏。
+     * 存储结构整卡已搬到 设置 → 维护；冷档折叠块去掉了（冷档本身是经验页的一个视图）；
+     * 「最近经验」与「技能状态」也不再占首页 —— 它们分别是经验页列表与技能页的首屏内容。
+     */
     function Overview(props) {
-      const recent = useLoad(useCallback(() => request('/experiences?limit=6'), []))
       const pending = useLoad(useCallback(() => request('/pending'), []))
-      // 0.22.0 P2：自动记录被关掉时要在概览看得见，否则会以为钩子坏了。
+      const due = useLoad(useCallback(() => request('/experiences?due=1&limit=200'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const families = useLoad(useCallback(() => request('/families'), []))
       const objects = useLoad(useCallback(() => request('/objects'), []))
       const autoRecordState = (props.seedSettings && props.seedSettings.config && typeof props.seedSettings.config === 'object')
         ? props.seedSettings.config.autoRecord
         : (settings.data && settings.data.config ? settings.data.config.autoRecord : undefined)
-      useRefreshEvent(useCallback(() => { recent.reload(); pending.reload(); settings.reload(); families.reload(); objects.reload() }, [recent.reload, pending.reload, settings.reload, families.reload, objects.reload]))
-      const [coldOpen, setColdOpen] = useState(Boolean(props.state && props.state.cold && Number(props.state.cold.total) > 0))
-      const [notice, setNotice] = useState('')
+      useRefreshEvent(useCallback(() => { pending.reload(); due.reload(); settings.reload(); families.reload(); objects.reload() }, [pending.reload, due.reload, settings.reload, families.reload, objects.reload]))
       const state = props.state || {}
       const totals = state.totals || {}
       const usage = state.usage || {}
       const summary = state.skillSummary || {}
-      const storage = state.storage !== null && typeof state.storage === 'object' ? state.storage : null
-      const cold = state.cold !== null && typeof state.cold === 'object' ? state.cold : { years: [], total: 0, samples: [] }
-      const legacy = storage !== null && storage.legacy !== null && typeof storage.legacy === 'object' ? storage.legacy : { exists: false, bytes: 0 }
       const byDay = Array.isArray(usage.byDay) ? usage.byDay : []
       const familyList = families.data && Array.isArray(families.data.families) ? families.data.families : []
       const familyRows = familyList.slice(0, 6).map((item) => [item.family, Number(item.count) || 0])
       const familyMax = Math.max(1, ...familyRows.map(([, value]) => value))
       const pendingRows = Array.isArray(pending.data) ? pending.data : []
+      const dueRows = due.data && Array.isArray(due.data.rows) ? due.data.rows : []
       const objectTotal = objects.data && objects.data.available !== false ? Number(objects.data.total) || 0 : null
       const kpis = [
         ['可见经验', totals.visible, '条'],
         ['固化技能', totals.skills, '个'],
         ['对象', objectTotal, '个'],
-        ['今日调用', usage.today, '次'],
-        ['库大小', fmtBytes(state.bytes), ''],
       ]
-      const backfill = async (row, outcome) => {
-        setNotice('')
-        try {
-          await request('/verdicts', { method: 'POST', body: { verdicts: [{ id: row.id, outcome }] } })
-          await pending.reload()
-          if (typeof props.onChanged === 'function') props.onChanged()
-        } catch (error) {
-          setNotice(error && error.message ? error.message : String(error))
-        }
-      }
-      // 0.21.1 P0：批量回填交给共用组件；单条仍走 backfill（概览保持最短路径）。
+      // 0.21.1 P0：批量回填交给共用组件；单条与批量都走 PendingBackfill，首页保持最短路径。
       const pendingChanged = () => { pending.reload(); if (typeof props.onChanged === 'function') props.onChanged() }
-      const storageCell = (label, main, sub) => h('div', { key: label, style: { minWidth: 0 } },
-        h('div', { className: 'eng-kpi-label' }, label),
-        h('div', { className: 'eng-stat-main' }, main),
-        sub ? h('div', { className: 'eng-muted' }, sub) : null)
+      const dueChanged = () => { due.reload(); if (typeof props.onChanged === 'function') props.onChanged() }
+      const todoCount = pendingRows.length + dueRows.length
       return h('div', { className: 'eng-fill' },
-        h('div', { className: 'eng-scroll' },
+        h('div', { className: 'eng-scroll eng-stack' },
+          autoRecordState === false
+            ? h('div', { className: 'eng-muted' }, '自动记录已关闭（默认关）：回合收尾不会自动落待判定经验；要记去「设置 → 内核参数 → 自动记录回合」打开。')
+            : null,
+
+          // ---- 1 待我处理 ----
+          h('div', { className: 'eng-section-head' },
+            h('h2', { className: 'eng-section-title' }, '待我处理'),
+            h('span', { className: 'eng-muted' }, todoCount === 0 ? '暂无待办' : `待判定 ${pendingRows.length} · 到期复核 ${dueRows.length}`)),
+          h('div', { className: 'eng-cols eng-section' },
+            h('div', { className: 'eng-card eng-section-card' },
+              h('div', { className: 'eng-section-head' },
+                h('h3', { className: 'eng-section-title' }, `待判定（${pendingRows.length}）`),
+                h(Button, { small: true, onClick: () => props.onGo('usage') }, '全部')),
+              h('div', { className: 'eng-muted eng-section-note' }, GLOSSARY.pending),
+              pending.error ? h(Banner, { bad: true }, pending.error) : null,
+              pendingRows.length === 0
+                ? h('div', { className: 'eng-muted' }, pending.loading ? '读取中…' : '没有待判定的记录')
+                : h(PendingBackfill, { rows: pendingRows.slice(0, 3), loading: pending.loading, onChanged: pendingChanged })),
+            h('div', { className: 'eng-card eng-section-card' },
+              h('div', { className: 'eng-section-head' },
+                h('h3', { className: 'eng-section-title' }, `到期复核（${dueRows.length}）`),
+                h('span', { className: 'eng-muted' }, '确认仍有效会刷新复核时间')),
+              due.error ? h(Banner, { bad: true }, due.error) : null,
+              dueRows.length === 0
+                ? h('div', { className: 'eng-muted' }, due.loading ? '读取中…' : '没有到期待复核的经验')
+                : h(ReviewDuePanel, { rows: dueRows, kind: '经验', loading: due.loading, onChanged: dueChanged }))),
+
+          // ---- 2 库况 ----
+          h('div', { className: 'eng-section-head' },
+            h('h2', { className: 'eng-section-title' }, '库况'),
+            h('span', { className: 'eng-muted' }, `库大小 ${fmtBytes(state.bytes)}`)),
           h('div', { className: 'eng-grid' }, kpis.map(([label, value, unit]) => h('div', { key: label, className: 'eng-card eng-kpi' },
             h('span', { className: 'eng-kpi-label' }, label),
             h('span', { className: 'eng-kpi-value' }, h(Metric, { value }), h('span', { className: 'eng-kpi-unit' }, unit))))),
@@ -1441,84 +1607,41 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'eng-row-intent', title: name }, name),
                   h('div', { className: 'eng-dist-track' }, h('div', { className: 'eng-dist-fill', style: { width: `${Math.round((value / familyMax) * 100)}%` } })),
                   h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, String(value))))))),
-          notice ? h(Banner, { bad: true }, notice) : null,
-          autoRecordState === false
-            ? h('div', { className: 'eng-muted', style: { marginBottom: 10 } }, '自动记录已关闭（默认关）：回合收尾不会自动落待判定经验；要记去「设置 → 内核参数 → 自动记录回合」打开。')
-            : null,          h('div', { className: 'eng-card eng-section eng-section-card' },
-            h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '存储结构')),
-            storage === null
-              ? h('div', { className: 'eng-muted' }, '暂无存储信息')
-              : storage.layout === 'family-flat'
-                ? h('div', { className: 'eng-storage-grid' },
-                  storageCell('manifest', fmtBytes(storage.manifestBytes), '单层族清单'),
-                  storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
-                  storageCell('索引', `${storage.indexFiles || 0} 个`, fmtBytes(storage.indexBytes)),
-                  storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'))
-                : storage.layout === 'family'
-                  ? h('div', { className: 'eng-storage-grid' },
-                    storageCell('manifest', fmtBytes(storage.manifestBytes), '分族清单'),
-                    storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
-                    storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '安全阀未触发'))
-                  : h('div', { className: 'eng-muted' }, '仍是旧布局（schema 2）：请先迁移到分族布局，概览只展示新口径。'),
-            storage !== null && (storage.layout === 'family' || storage.layout === 'family-flat') ? h('div', { className: 'eng-muted eng-section-note' },
-              `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件 · 族 ${storage.familyFiles || 0}`) : null,
-            h('div', { className: 'eng-subsection' },
-              h('button', { type: 'button', className: 'eng-subsection-head', 'aria-expanded': coldOpen ? 'true' : 'false', onClick: () => setColdOpen((open) => !open) },
-                h('span', { className: 'eng-strong' }, '冷档'),
-                h('span', { className: 'eng-muted' }, cold.error ? '读取失败' : (Number(cold.total) > 0 ? `${cold.total} 条 · ${coldOpen ? '收起' : '展开'}` : '暂无冷档'))),
-              cold.error
-                ? h(Banner, { bad: true }, `冷档读取失败：${cold.error}`)
-                : (Number(cold.total) || 0) === 0
-                  ? h('div', { className: 'eng-muted eng-subsection-body' }, '暂无冷档（容量安全阀未触发）')
-                  : coldOpen
-                    ? h('div', { className: 'eng-subsection-body' },
-                      (cold.years || []).map((year) => h('div', { key: String(year.year), className: 'eng-muted' },
-                        `${year.year} 年 · ${year.count} 条 · ${fmtBytes(year.bytes)}`)),
-                      (cold.samples || []).slice(0, 50).map((row) => h('div', { key: row.id, className: 'eng-cold-row' },
-                        h('span', { className: 'eng-mono' }, row.id),
-                        h('span', { className: 'eng-row-main' }, row.intent || '（无意图）'),
-                        h('span', { className: 'eng-muted' }, `${row.family || '未分族'} · ${fmtTime(row.lastSeenAt)}`))))
-                    : null)),
-          h('div', { className: 'eng-cols eng-section' },
-            h('div', { className: 'eng-card' },
-              h('div', { className: 'eng-section-head eng-section-head-pad' },
-                h('h3', { className: 'eng-section-title' }, '最近经验'),
-                h(Button, { small: true, onClick: () => props.onGo('experiences') }, '全部')),
-              recent.error ? h(Banner, { bad: true }, recent.error) : null,
-              recent.data && recent.data.rows && recent.data.rows.length > 0
-                ? h('div', { className: 'eng-list' }, recent.data.rows.slice(0, 6).map((row) => {
-                  const [label, tone] = outcomeOf(row.outcome)
-                  return h('button', { key: row.id, type: 'button', className: 'eng-row eng-row-button', style: { gridTemplateColumns: '60px minmax(0,1fr) 70px' }, onClick: () => props.onOpen(row.id) },
-                    h(Badge, { tone }, label),
-                    h('div', { className: 'eng-row-main' }, h('div', { className: 'eng-row-intent' }, row.intent || '（无意图）'), h('div', { className: 'eng-row-sub' }, `${sourceOf(row).label} · ${row.family || '未分族'} · ${row.action || '—'}`)),
-                    h('span', { className: 'eng-mono', style: { textAlign: 'right' } }, `G ${fmtNumber(row.G)}`))
-                }))
-                : (recent.loading ? h(Skeleton, { rows: 4 }) : h(Empty, null, '还没有经验：去「记录」写第一条。'))),
-            h('div', { className: 'eng-stack' },
-              h('div', { className: 'eng-card eng-section-card' },
-                h('div', { className: 'eng-section-head' },
-                  h('h3', { className: 'eng-section-title' }, `待判定（${pendingRows.length}）`),
-                  h(Button, { small: true, onClick: () => props.onGo('usage') }, '全部')),
-                pending.error ? h(Banner, { bad: true }, pending.error) : null,
-                pendingRows.length === 0
-                  ? h('div', { className: 'eng-muted' }, pending.loading ? '读取中…' : '没有待判定的记录')
-                  : h(PendingBackfill, { rows: pendingRows.slice(0, 3), loading: pending.loading, onChanged: pendingChanged }))),
-              h('div', { className: 'eng-card eng-section-card' },
-                h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '快捷操作')),
-                h('div', { className: 'eng-actions' },
-                  h(Button, { kind: 'primary', onClick: () => props.onGo('record') }, '记录经验'),
-                  h(Button, { onClick: () => props.onGo('recall') }, '检索召回'),
-                  h(Button, { onClick: () => props.onGo('skills') }, '沉淀技能'))),
-              h('div', { className: 'eng-card eng-section-card' },
-                h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '技能状态')),
-                h('div', { className: 'eng-chipbar' }, ['solid', 'trial', 'risky', 'blocked', 'new'].map((key) => {
-                  const [label, tone] = skillStateOf(key)
-                  return h(Badge, { key, tone }, `${label} ${summary[key] || 0}`)
-                })),
-                h('div', { className: 'eng-muted eng-section-note' }, state.notice || `共 ${familyList.length} 个族`)))))
+
+          // ---- 3 快捷动作 ----
+          h('div', { className: 'eng-card eng-section-card' },
+            h('div', { className: 'eng-section-head' },
+              h('h2', { className: 'eng-section-title' }, '快捷动作'),
+              h('span', { className: 'eng-muted' }, `技能固化 ${summary.solid || 0} 个`)),
+            h('div', { className: 'eng-actions' },
+              h(Button, { kind: 'primary', onClick: () => props.onGo('record') }, '记录经验'),
+              h(Button, { onClick: () => props.onGo('recall') }, '检索召回'),
+              h(Button, { onClick: () => props.onGo('skills') }, '沉淀技能')),
+            h('div', { className: 'eng-muted eng-section-note' }, state.notice || `共 ${familyList.length} 个族`))))
+    }
+    /**
+     * 经验页的容器（0.42 D1）：族 / 对象 / 冷档从一级导航降级成这里的视图。
+     *
+     * 容器自身不持有状态，直接把对应页面的根节点返回（三者根节点都是 `.eng-fill`），
+     * 这样 `.eng-content > .eng-fill > .eng-split` 这套高度/滚动契约一字不用改；
+     * 视图切换条由 Console 渲染在 `.eng-content` 里，理由同上。
+     */
+    function Experiences(props) {
+      const view = props.view === 'families' || props.view === 'objects' || props.view === 'cold' ? props.view : 'list'
+      if (view === 'families') return h(Families, {
+        onChanged: props.onChanged,
+        // 点族里的一条 → 回列表视图并套上族筛选（原来这里是切 tab，现在只是换视图）。
+        onOpenFamily: (typeId, family) => { if (typeof props.onFamily === 'function') props.onFamily(typeId || '', family || '') },
+      })
+      if (view === 'objects') return h(Objects, {
+        onOpenFamily: (family) => { if (typeof props.onFamily === 'function') props.onFamily('', family || '') },
+      })
+      if (view === 'cold') return h(Cold)
+      return h(ExperienceList, props)
     }
 
-    function Experiences(props) {
+    /** 列表视图：原经验页主体，逻辑未动。 */
+    function ExperienceList(props) {
       const seed = props.seedFilters || {}
       const [searchDraft, setSearchDraft] = useState('')
       const [family, setFamily] = useState(seed.family || '')
@@ -1760,7 +1883,10 @@ window.__ModuleLoader__.load({
       const stepRewards = stepRewardsOf(row)
       const stepWeakest = stepRewards.length > 0 ? Math.min(...stepRewards) : null
       const artifacts = Array.isArray(row.artifacts) ? row.artifacts : []
+      // 0.43 D3：原来这套 .eng-tabs 是手写的 tablist，现在与经验页视图条、
+      // 设置二级、关系图筛选共用同一个 Segmented（size='tab' 保留下划线密度）。
       const tabs = [['overview', '概览'], ['history', `历史 ${events.length}`], ['feedback', `反馈 ${feedbackLog.length}`], ['raw', '原始']]
+      const tabItems = tabs.map(([key, label]) => ({ key, label }))
       const body = pane === 'history'
         ? (events.length === 0 ? h(Empty, null, '没有历史事件') : h('div', { className: 'eng-timeline' }, events.slice(-20).reverse().map((event, index) => h('div', { key: index, className: 'eng-timeline-item' },
           h('span', { className: 'eng-mono' }, fmtTime(event && event.at)),
@@ -1846,7 +1972,7 @@ window.__ModuleLoader__.load({
                 h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, row.id)),
               row.note ? h('div', { className: 'eng-note' }, h('div', { className: 'eng-label' }, '备注'), h('div', { className: 'eng-pre' }, row.note)) : null)
       return h('div', { className: 'eng-detail' },
-        h('div', { className: 'eng-actions' }, h(Badge, { tone }, label), h(SourceBadge, { row }), h('span', { className: 'eng-mono' }, `G ${fmtNumber(row.G)}`)),
+        h('div', { className: 'eng-actions' }, h(Badge, { tone }, label), h(SourceBadge, { row }), h('span', { className: 'eng-mono', title: GLOSSARY.G }, `G ${fmtNumber(row.G)}`)),
         h('h3', { className: 'eng-detail-title' }, row.intent || '（无意图）'),
         // 分类与标签置顶（2026-11-17 反馈：详情里翻不到当前经验的标签和分类）。
         h('div', { className: 'eng-card', style: { padding: 10, marginBottom: 10 } },
@@ -1863,10 +1989,7 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'eng-tag-hint' }, `缺${rowMissing.map((facet) => TAG_FACET_LABELS[facet]).join('、')}：${rowMissing.map((facet) => TAG_FACET_HINTS[facet]).join('；')}`)
             : null),
         lifeBits.length > 0 ? h('div', { className: 'eng-muted eng-warn-text' }, lifeBits.join(' · ')) : null,
-        h('div', { className: 'eng-tabs', role: 'tablist' }, tabs.map(([key, text]) => h('button', {
-          key, type: 'button', role: 'tab', className: 'eng-tab', 'data-active': pane === key ? 'true' : 'false', 'aria-selected': pane === key ? 'true' : 'false',
-          onClick: () => setPane(key),
-        }, text))),
+        h(Segmented, { items: tabItems, value: pane, onChange: setPane, size: 'tab', semantic: 'tabs', ariaLabel: '详情分区' }),
         h('div', { className: 'eng-tab-body' }, body),
         h('div', { className: 'eng-actions eng-detail-actions' },
           h(Button, { small: true, disabled: busy, onClick: () => send('helped') }, '有帮助'),
@@ -4304,7 +4427,9 @@ window.__ModuleLoader__.load({
     // 族 id 转义与服务端 graphFamilyId 同口径：过滤「只看此族」时必须用同一条规则比较，否则带 : / % 的族会把经验全滤掉。
     const graphFamilyIdOf = (name) => `family:${String(name || '').replace(/%/g, '%25').replace(/:/g, '%3A').replace(/\//g, '%2F')}`
     const graphFamilyNameOf = (id) => String(id || '').replace(/^family:/, '').replace(/%3A/g, ':').replace(/%2F/g, '/').replace(/%25/g, '%')
-    function Graph() {
+    function Graph(props) {
+      // 详情卡里的「在经验里打开」：由 Console 传入，跳到经验页并选中这一条。
+      const onOpen = props && typeof props.onOpen === 'function' ? props.onOpen : null
       const graph = useLoad(useCallback(() => request('/graph'), []))
       const settings = useLoad(useCallback(() => request('/settings'), []))
       const canvasRef = useRef(null)
@@ -5366,6 +5491,25 @@ window.__ModuleLoader__.load({
         const next = nodes[(index + direction + nodes.length) % nodes.length]
         selectNode(next)
       }
+      // 0.44 D7：原本这里有两个各自绝对定位的浮层 —— .eng-graph-note 与 .eng-graph-detail
+      // 都钉在 right:14 / bottom:14，选中节点时叠在一起。现在合成一张底部单卡：
+      // 有选中就展开详情（note 降级为卡内一行），没选中才单独显示「已显示 N / M」。
+      const noteRow = (graph.data && (graph.data.nodes.length > viewData.nodes.length || viewData.truncated || allowAll))
+        ? h('div', { className: 'eng-graph-note' },
+          h('span', null, `${focusedFamilyNode ? `只看「${focusedFamilyNode.label || focusedFamilyNode.id}」 · ` : ''}${allowAll && !viewData.truncated && viewData.nodes.length === graph.data.nodes.length
+            ? `已显示全部 ${viewData.nodes.length} 个节点`
+            : `已显示 ${viewData.nodes.length} / ${graph.data.nodes.length}${viewData.truncated ? `（上限 ${GRAPH_NODE_CAP}）` : ''}`}`),
+          (viewData.truncated || allowAll)
+            ? h('button', {
+              type: 'button',
+              className: 'eng-graph-note-btn',
+              title: allowAll
+                ? '恢复 1,200 节点上限'
+                : (graph.data.nodes.length > GRAPH_NODE_CAP ? '大图可能掉帧：一次渲染全部节点' : '加载全部节点'),
+              onClick: () => setAllowAll((value) => !value),
+            }, allowAll ? `恢复 ${GRAPH_NODE_CAP}` : '加载全部')
+            : null)
+        : null
       return h('div', {
         ref: wrapRef,
         className: 'eng-graph-canvas-wrap',
@@ -5442,26 +5586,32 @@ window.__ModuleLoader__.load({
                   onClick: () => { selectNode(node); setQuery('') },
                 }, `${node.label || node.id} · ${node.kind}`))) : null),
           h('div', { className: 'eng-graph-drawer-label' }, '筛选'),
-          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图节点筛选' },
-            [['all', '全部'], ['family', '族'], ['experience', '经验'], ['skill', '技能'], ['suite', '套件']].map(([key, label]) => h('button', {
-              key,
-              type: 'button',
-              'data-active': kindFilter === key ? 'true' : 'false',
-              onClick: () => setKindFilter(key),
-            }, label))),
-          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图结果筛选' },
-            [['all', '全部结果'], ['success', '成功'], ['partial', '部分'], ['failed', '失败'], ['unknown', '未知']].map(([key, label]) => h('button', {
-              key,
-              type: 'button',
-              'data-active': resultFilter === key ? 'true' : 'false',
-              onClick: () => setResultFilter(key),
-            }, label)),
+          // 0.43 D3：单选筛选统一走 Segmented（chip 密度）。容器不再自己画边框，
+          // 与设置页二级、经验页视图条共用一套选中态。
+          h(Segmented, {
+            items: [['all', '全部'], ['family', '族'], ['experience', '经验'], ['skill', '技能'], ['suite', '套件']].map(([key, label]) => ({ key, label })),
+            value: kindFilter,
+            onChange: setKindFilter,
+            size: 'chip',
+            semantic: 'filter',
+            ariaLabel: '关系图节点筛选',
+          }),
+          h('div', { className: 'eng-graph-filters' },
+            h(Segmented, {
+              items: [['all', '全部结果'], ['success', '成功'], ['partial', '部分'], ['failed', '失败'], ['unknown', '未知']].map(([key, label]) => ({ key, label })),
+              value: resultFilter,
+              onChange: setResultFilter,
+              size: 'chip',
+              semantic: 'filter',
+              ariaLabel: '关系图结果筛选',
+            }),
             h('button', {
               type: 'button',
+              className: 'eng-seg-btn',
               'data-active': recentOnly ? 'true' : 'false',
               'aria-pressed': recentOnly ? 'true' : 'false',
               onClick: () => setRecentOnly((value) => !value),
-            }, '最近 30 天')),
+            }, h('span', { className: 'eng-seg-label' }, '最近 30 天'))),
           h('div', { className: 'eng-graph-drawer-label' }, '视图'),
           h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图视图' },
             h('button', { type: 'button', onClick: () => { if (fitRef.current) fitRef.current() } }, '适配视图'),
@@ -5484,20 +5634,22 @@ window.__ModuleLoader__.load({
           h('span', { className: 'eng-row-intent', title: node.label }, node.label || node.id),
           h('span', { className: 'eng-mono' }, String(node.count || 0))))),
           h('div', { className: 'eng-graph-drawer-label' }, '外观'),
-          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图背景深浅' },
-            [['theme', '跟随主题'], ['light', '浅色'], ['dark', '深色']].map(([key, label]) => h('button', {
-              key,
-              type: 'button',
-              'data-active': surfaceNow === key ? 'true' : 'false',
-              onClick: () => pickSurface(key),
-            }, label))),
-          h('div', { className: 'eng-graph-filters', role: 'group', 'aria-label': '关系图配色' },
-            [['codex', '默认主题'], ['universe', '超能量体'], ['cosmos', '宇宙'], ['dsh', '跟随主题']].map(([key, label]) => h('button', {
-              key,
-              type: 'button',
-              'data-active': paletteNow === key ? 'true' : 'false',
-              onClick: () => pickPalette(key),
-            }, label)))) : null,
+          h(Segmented, {
+            items: [['theme', '跟随主题'], ['light', '浅色'], ['dark', '深色']].map(([key, label]) => ({ key, label })),
+            value: surfaceNow,
+            onChange: pickSurface,
+            size: 'chip',
+            semantic: 'filter',
+            ariaLabel: '关系图背景深浅',
+          }),
+          h(Segmented, {
+            items: [['codex', '默认主题'], ['universe', '超能量体'], ['cosmos', '宇宙'], ['dsh', '跟随主题']].map(([key, label]) => ({ key, label })),
+            value: paletteNow,
+            onChange: pickPalette,
+            size: 'chip',
+            semantic: 'filter',
+            ariaLabel: '关系图配色',
+          })) : null,
         h('ul', { className: 'eng-visually-hidden', 'aria-label': '关系图节点列表' },
           (viewData && Array.isArray(viewData.nodes) ? viewData.nodes : [])
             .filter((node) => node.kind !== 'root')
@@ -5505,26 +5657,10 @@ window.__ModuleLoader__.load({
             .map((node) => h('li', { key: node.id },
               h('button', { type: 'button', onClick: () => selectNode(node) }, `${node.label || node.id}（${({ family: '族', suite: '套件', skill: '技能', experience: '经验' })[node.kind] || node.kind}）`)))),
         (graph.error || (graph.data && graph.data.storeError))
-          ? h('div', { style: { position: 'absolute', left: 14, top: 14, right: 14, zIndex: 3 } },
+          ? h('div', { className: 'eng-graph-error' },
             h(Banner, { bad: true }, graph.error || `经验数据读取失败：${graph.data.storeError.message}${graph.data.storeError.file ? `（${graph.data.storeError.file}）` : ''}`))
           : null,
-        (graph.data && (graph.data.nodes.length > viewData.nodes.length || viewData.truncated || allowAll))
-          ? h('div', { className: 'eng-graph-note' },
-            h('span', null, `${focusedFamilyNode ? `只看「${focusedFamilyNode.label || focusedFamilyNode.id}」 · ` : ''}${allowAll && !viewData.truncated && viewData.nodes.length === graph.data.nodes.length
-              ? `已显示全部 ${viewData.nodes.length} 个节点`
-              : `已显示 ${viewData.nodes.length} / ${graph.data.nodes.length}${viewData.truncated ? `（上限 ${GRAPH_NODE_CAP}）` : ''}`}`),
-            (viewData.truncated || allowAll)
-              ? h('button', {
-                type: 'button',
-                className: 'eng-graph-note-btn',
-                title: allowAll
-                  ? '恢复 1,200 节点上限'
-                  : (graph.data.nodes.length > GRAPH_NODE_CAP ? '大图可能掉帧：一次渲染全部节点' : '加载全部节点'),
-                onClick: () => setAllowAll((value) => !value),
-              }, allowAll ? `恢复 ${GRAPH_NODE_CAP}` : '加载全部')
-              : null)
-          : null,
-        selection === null ? null : h('div', { className: 'eng-graph-detail' },
+        selection === null ? noteRow : h('div', { className: 'eng-graph-detail' },
           h('div', { className: 'eng-graph-detail-meta' }, h(Badge, { tone: selection.kind === 'skill' ? 'warn' : selection.kind === 'suite' ? 'brand' : selection.kind === 'family' ? 'brand' : outcomeOf(selection.outcome)[1] }, selection.kind === 'family' ? '族' : selection.kind === 'suite' ? '套件' : selection.kind === 'skill' ? '技能' : '经验')),
           h('h3', { className: 'eng-graph-detail-title' }, selection.label || selection.id),
           h('dl', { className: 'eng-kv' },
@@ -5538,7 +5674,15 @@ window.__ModuleLoader__.load({
             selection.kind === 'suite' ? h('dd', null, String(selection.count || 0)) : null,
             selection.kind === 'family' ? h('dt', null, '经验数') : null,
             selection.kind === 'family' ? h('dd', null, String(selection.count || 0)) : null,
-            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, selection.kind === 'family' ? graphFamilyNameOf(selection.id) : String(selection.id || '').replace(/^(exp|skill|suite):/, '')))))
+            h('dt', null, 'id'), h('dd', { className: 'eng-mono' }, selection.kind === 'family' ? graphFamilyNameOf(selection.id) : String(selection.id || '').replace(/^(exp|skill|suite):/, ''))),
+          noteRow === null ? null : h('div', { className: 'eng-graph-detail-note' }, noteRow),
+          onOpen !== null && selection.kind === 'experience'
+            ? h('button', {
+              type: 'button',
+              className: 'eng-graph-detail-open',
+              onClick: () => onOpen(String(selection.id || '').replace(/^exp:/, '')),
+            }, '在经验里打开')
+            : null))
     }
 
     // 0.25.0 P0：影子判据只读卡片（数据来自 usage.shadow，不写盘、不改召回）。
@@ -5951,14 +6095,22 @@ window.__ModuleLoader__.load({
       const storage = data.storage !== null && typeof data.storage === 'object' ? data.storage : null
       const legacy = storage !== null && storage.legacy !== null && typeof storage.legacy === 'object' ? storage.legacy : null
       const spec = data.spec || { config: [], ui: [], git: [] }
-      const nav = [['storage', '存储位置'], ['backup', '备份与账号'], ['kernel', '内核参数'], ['ui', '界面与关系图'], ['maintenance', '维护']]
-      const subnav = h('div', { className: 'eng-subnav' }, nav.map(([id, label]) => h('button', {
-        key: id,
-        type: 'button',
-        className: 'eng-subnav-item',
-        'data-active': section === id ? 'true' : 'false',
-        onClick: () => setSection(id),
-      }, label)))
+      // 存储结构卡的单元格（随 D6 从首页搬来）。
+      const storageCell = (label, main, sub) => h('div', { key: label, style: { minWidth: 0 } },
+        h('div', { className: 'eng-kpi-label' }, label),
+        h('div', { className: 'eng-stat-main' }, main),
+        sub ? h('div', { className: 'eng-muted' }, sub) : null)
+      // 0.42 D2：「标签分级」不再占一级导航，收进设置 →「分类与标签」。
+      const nav = [['storage', '存储位置'], ['backup', '备份与账号'], ['kernel', '内核参数'], ['ui', '界面与关系图'], ['tags', '分类与标签'], ['maintenance', '维护']]
+      // 0.43 D3：这是页内二级导航，不是 tablist —— 用 nav 语义（aria-current）而不是 aria-selected。
+      const subnav = h(Segmented, {
+        items: nav.map(([key, label]) => ({ key, label })),
+        value: section,
+        onChange: setSection,
+        size: 'tab',
+        semantic: 'nav',
+        ariaLabel: '设置分区',
+      })
       return h('div', { className: 'eng-fill eng-stack' },
         subnav,
         h('div', { className: 'eng-scroll eng-stack' },
@@ -6112,7 +6264,34 @@ window.__ModuleLoader__.load({
           h('div', { className: 'eng-actions' }, h(Button, { kind: 'primary', disabled: busy, onClick: () => post({ config: configDraft }) }, '保存内核参数'))),
         h(ShadowP0Card)
         ] : null,
+        section === 'tags' ? [
+          // 0.43 D8：这个词从一级导航挪到这里，用户第一次见到它时得有一句人话。
+          h('div', { className: 'eng-muted eng-section-note' }, GLOSSARY.tags),
+          h(Tags, { onChanged: props.onChanged }),
+        ] : null,
         section === 'maintenance' ? [
+        // 0.44 D6：存储结构从首页搬到这里。首页不该出现 manifest / family-flat / schema
+        // 这类内核词，它们只在「排查为什么某条经验没落盘」时才有意义。
+        h('div', { className: 'eng-card eng-detail' },
+          h('h3', { className: 'eng-detail-title' }, '存储结构'),
+          h('div', { className: 'eng-muted eng-section-note' }, '文件的真实分布。平时不用看，排查「某条经验为什么没落盘」时才需要。'),
+          storage === null
+            ? h('div', { className: 'eng-muted' }, '暂无存储信息')
+            : storage.layout === 'family-flat'
+              ? h('div', { className: 'eng-storage-grid' },
+                storageCell('清单', fmtBytes(storage.manifestBytes), '一张索引表：有哪些族、各在哪个文件'),
+                storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
+                storageCell('查找索引', `${storage.indexFiles || 0} 个`, fmtBytes(storage.indexBytes)),
+                storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '容量安全阀未触发'))
+              : storage.layout === 'family'
+                ? h('div', { className: 'eng-storage-grid' },
+                  storageCell('清单', fmtBytes(storage.manifestBytes), '分族清单'),
+                  storageCell('族文件', `${storage.familyFiles || 0} 个`, fmtBytes(storage.familyBytes)),
+                  storageCell('冷档', Number(storage.coldFiles) > 0 ? fmtBytes(storage.coldBytes) : '暂无', Number(storage.coldFiles) > 0 ? `${storage.coldFiles} 个文件` : '容量安全阀未触发'))
+                : h('div', { className: 'eng-muted' }, '仍是旧布局（单文件）：请先迁移到分族布局，这里只展示新口径。'),
+          storage !== null && (storage.layout === 'family' || storage.layout === 'family-flat')
+            ? h('div', { className: 'eng-muted eng-section-note' }, `总计 ${fmtBytes(storage.totalBytes)} · ${storage.fileCount || 0} 个文件 · 族 ${storage.familyFiles || 0}`)
+            : null),
         h('div', { className: 'eng-card eng-detail' },
           h('h3', { className: 'eng-detail-title' }, '技能校验'),
           validation.data && validation.data.problems && validation.data.problems.length > 0
@@ -6211,26 +6390,75 @@ window.__ModuleLoader__.load({
           chainBlocks)))
     }
 
+    /**
+     * 一级导航。每项四位：`[id, 标签, 图标, 进不进导航]`。
+     * 第 4 位写 `false` 表示「路由保留、但不占导航位置」（0.42 D1/D3）：
+     * 族/对象/冷档变成经验页内的视图，检索/记录变成全局入口（顶栏 + 经验页搜索）。
+     * 顺序即显示顺序；分组的先后由 NAV_GROUPS 决定。
+     */
     const NAV = [
-      ['overview', '概览', 'overview'],
-      ['graph', '关系图', 'graph'],
+      ['overview', '首页', 'overview'],
       ['experiences', '经验', 'book'],
-      ['families', '族', 'folder'],
-      ['objects', '对象', 'chain'],
-      ['tags', '标签分级', 'layers'],
-      ['recall', '检索', 'search'],
-      ['record', '记录', 'plus'],
       ['skills', '技能', 'spark'],
-      ['cold', '冷档', 'archive'],
-      ['usage', '使用记录', 'clock'],
+      ['graph', '关系图', 'graph'],
+      ['usage', '运行记录', 'clock'],
       ['settings', '设置', 'gear'],
+      // 以下六条只保留路由：深链、书签、命令面板仍然能到，只是不进左侧导航。
+      ['families', '族', 'folder', false],
+      ['objects', '对象', 'chain', false],
+      ['tags', '分类与标签', 'layers', false],
+      ['recall', '检索', 'search', false],
+      ['record', '记录', 'plus', false],
+      ['cold', '冷档', 'archive', false],
     ]
 
+    /** 导航两组：日常做的四件事 + 系统类两项。 */
     const NAV_GROUPS = [
-      ['总览', ['overview', 'graph']],
-      ['数据', ['experiences', 'families', 'objects', 'tags', 'cold']],
-      ['动作', ['recall', 'record', 'skills']],
+      ['主区', ['overview', 'experiences', 'skills', 'graph']],
       ['系统', ['usage', 'settings']],
+    ]
+
+    /** 导航项的 hover 解释：让人不必先学内核词（0.42 D8）。 */
+    const NAV_HINTS = {
+      overview: '今天要处理什么、库况怎么样',
+      experiences: '所有记下来的经验，可按族 / 对象 / 冷档切换着看',
+      skills: '从经验里提炼出来、可直接复用的做法',
+      graph: '经验之间怎么连起来的',
+      usage: '被检索、被用到的历史记录',
+      settings: '存储位置、备份、内核参数、分类与标签',
+    }
+
+    /**
+     * 旧路由 → 经验页内视图（0.42 D1）。
+     * 路由一条不删（`ui/tests/pages-smoke.test.mjs` 的 TABS 断言了 12 个 id），
+     * 只是把它们折叠成 `#experiences?view=…`。
+     */
+    const NAV_VIEWS = { families: 'families', objects: 'objects', cold: 'cold' }
+
+    /**
+     * 术语表（0.43 D8）：内核词的一句人话。
+     * 只在这些词「第一次出现在用户眼前」的地方挂 title —— 导航项、视图条、详情里的 G 值、
+     * 设置的分类与标签。不铺满全站，否则每个数字都挂一个说明反而更吵。
+     */
+    const GLOSSARY = {
+      family: '族：把「同一类做法」的经验归到一起，比如都跟「写周报」有关',
+      object: '对象：一件件具体的事，比如「那次把 PPT 导成 PDF」',
+      G: '可靠度 G：0 到 1，越高表示这条经验被反复验证得越可靠',
+      pending: '待判定：经验已经存下来了，但还没确认它对不对',
+      skill: '技能：从经验里提炼出来、可以直接复用的做法',
+      cold: '冷档：很久没用到的经验先挪到一边省内存，随时能取回',
+      tags: '分类与标签：给经验贴的记号，用来分面筛选（方向 / 主题 / 质量）',
+    }
+
+    /**
+     * 经验页的四个视图（0.42 D1）。族 / 对象 / 冷档不占一级导航，靠这条视图条切换；
+     * 0.43 起由 `Segmented` 统一渲染，这里只留数据。
+     */
+    const EXPERIENCE_VIEWS = [
+      { key: 'list', label: '列表', title: '逐条看每条经验' },
+      { key: 'families', label: '族', title: '按同类做法分组' },
+      { key: 'objects', label: '对象', title: '按一件件具体的事分组' },
+      { key: 'cold', label: '冷档', title: '很久没用的经验挪到这里省内存，可随时取回' },
     ]
 
     const PageBoundary = React.Component
@@ -6252,6 +6480,23 @@ window.__ModuleLoader__.load({
       : (props) => props.children
 
     function Console() {
+      /**
+       * 旧路由 → 新路由的唯一映射点（0.42 D1 / R3）。
+       * 别处只吃规范化结果，不再各自判断 `#families` 这类旧形状。
+       */
+      const normalizeHash = (name, params) => {
+        const typeId = String(params.get('type') || '')
+        const family = String(params.get('family') || '')
+        const viewParam = String(params.get('view') || '')
+        // 0.36 类型页退场：旧的 #types 深链重定向到族页，不落到兜底设置页。
+        const route = name === 'types' ? 'families' : name
+        // 0.42 族 / 对象 / 冷档不再占导航，折叠成经验页内视图；路由本身保留。
+        if (NAV_VIEWS[route] !== undefined) return { tab: 'experiences', view: NAV_VIEWS[route], typeId, family }
+        // 0.42 标签分级收进设置 → 分类与标签。
+        if (route === 'tags') return { tab: 'settings', view: 'list', typeId: '', family: '', section: 'tags' }
+        const view = NAV_VIEWS[viewParam] !== undefined ? NAV_VIEWS[viewParam] : 'list'
+        return { tab: route, view, typeId, family }
+      }
       const readHashState = () => {
         try {
           if (typeof location === 'undefined' || typeof location.hash !== 'string') return null
@@ -6259,17 +6504,23 @@ window.__ModuleLoader__.load({
           if (raw === '') return null
           const [name, query = ''] = raw.split('?')
           if (name === '') return null
-          // 0.36 类型页退场：旧的 #types 深链重定向到族页，不落到兜底设置页。
-          const tab = name === 'types' ? 'families' : name
-          const params = new URLSearchParams(query)
-          return { tab, typeId: String(params.get('type') || ''), family: String(params.get('family') || '') }
+          return normalizeHash(name, new URLSearchParams(query))
         } catch { return null }
       }
       const initialHash = readHashState()
       const [tab, setTab] = useState(initialHash === null ? 'overview' : initialHash.tab)
-      const [expFilters, setExpFilters] = useState({ typeId: initialHash === null ? '' : initialHash.typeId, family: initialHash === null ? '' : initialHash.family })
+      // view：经验页内的视图（列表 / 族 / 对象 / 冷档），跟筛选一起放在同一个对象里，
+      // 不再多开一个 state（`pages-smoke` 的桩按前三个 useState 的位置注入 tab/筛选）。
+      const [expFilters, setExpFilters] = useState({
+        typeId: initialHash === null ? '' : initialHash.typeId,
+        family: initialHash === null ? '' : initialHash.family,
+        view: initialHash === null || !initialHash.view ? 'list' : initialHash.view,
+      })
       // 渲染桩/极端情况下 state 可能是 null：统一兜底，避免整页崩。
-      const safeFilters = expFilters === null || typeof expFilters !== 'object' ? { typeId: '', family: '' } : expFilters
+      const safeFilters = expFilters === null || typeof expFilters !== 'object' ? { typeId: '', family: '', view: 'list' } : { typeId: '', family: '', view: 'list', ...expFilters }
+      const safeView = NAV_VIEWS[safeFilters.view] !== undefined ? NAV_VIEWS[safeFilters.view] : 'list'
+      // `#tags` 深链进来时一次性定位到设置的「分类与标签」；之后 Settings 自己管 section。
+      const deepLinkSection = initialHash !== null && initialHash.section ? initialHash.section : undefined
       const [focusId, setFocusId] = useState(null)
       const [density] = useState(() => {
         try { return localStorage.getItem('eng:density') === 'compact' ? 'compact' : 'comfortable' } catch { return 'comfortable' }
@@ -6286,19 +6537,22 @@ window.__ModuleLoader__.load({
       // 当前页与族筛选写进 URL hash，刷新/深链接可还原（不占用 Graph 的 location.search）。
       useEffect(() => {
         if (typeof window === 'undefined' || !window.history || typeof window.history.replaceState !== 'function') return
-        const query = safeFilters.family !== ''
-          ? '?family=' + encodeURIComponent(safeFilters.family) + (safeFilters.typeId !== '' ? '&type=' + encodeURIComponent(safeFilters.typeId) : '')
-          : (safeFilters.typeId !== '' ? '?type=' + encodeURIComponent(safeFilters.typeId) : '')
+        // 0.42：经验页把「列表/族/对象/冷档」写进 hash，刷新与分享能还原同一个视图。
+        const params = new URLSearchParams()
+        if (tab === 'experiences' && safeView !== 'list') params.set('view', safeView)
+        if (safeFilters.family !== '') params.set('family', safeFilters.family)
+        if (safeFilters.typeId !== '') params.set('type', safeFilters.typeId)
+        const query = params.toString() === '' ? '' : '?' + params.toString()
         const next = '#' + tab + query
         if (window.location.hash !== next) window.history.replaceState(null, '', next)
-      }, [tab, safeFilters])
+      }, [tab, safeFilters, safeView])
       useEffect(() => {
         if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
         const onHash = () => {
           const parsed = readHashState()
           if (parsed === null) return
           setTab(parsed.tab)
-          setExpFilters({ typeId: parsed.typeId, family: parsed.family })
+          setExpFilters({ typeId: parsed.typeId, family: parsed.family, view: parsed.view })
         }
         window.addEventListener('hashchange', onHash)
         return () => window.removeEventListener('hashchange', onHash)
@@ -6374,12 +6628,13 @@ window.__ModuleLoader__.load({
             return
           }
           if (Date.now() - goRef.current < 1200) {
+            // 12 条路由的快捷键一个不少；族/对象/冷档会落到经验页对应视图。
             const map = { o: 'overview', e: 'experiences', f: 'families', l: 'tags', r: 'recall', n: 'record', s: 'skills', u: 'usage', ',': 'settings' }
             const target = map[String(event.key).toLowerCase()]
             if (target !== undefined) {
               event.preventDefault()
               goRef.current = 0
-              setTab(target)
+              go(target)
             }
           }
         }
@@ -6462,33 +6717,66 @@ window.__ModuleLoader__.load({
       }
       // 没有冷档就不占导航：安全阀未触发时「冷档」页没有意义。
       const coldVisible = counts.cold !== null && counts.cold > 0
+      // 0.42：导航只排 `entry[3] !== false` 的六项；12 条路由本身一条不少（R1）。
       const navBlock = NAV_GROUPS.map(([label, ids]) => {
         const items = ids
           .map((id) => NAV.find((entry) => entry[0] === id))
-          .filter((entry) => entry !== undefined && (entry[0] !== 'cold' || coldVisible))
+          .filter((entry) => entry !== undefined && entry[3] !== false && (entry[0] !== 'cold' || coldVisible))
         if (items.length === 0) return null
         return h('div', { className: 'eng-nav-group', key: label },
           h('div', { className: 'eng-nav-group-label' }, label),
           items.map(navButton))
       })
-      const go = (next) => setTab(next)
+      /** 切经验页内的视图（列表 / 族 / 对象 / 冷档），同时写回 hash。 */
+      const setView = (next) => {
+        const value = NAV_VIEWS[next] !== undefined ? NAV_VIEWS[next] : 'list'
+        setExpFilters((previous) => {
+          const base = previous === null || typeof previous !== 'object' ? { typeId: '', family: '' } : previous
+          return { ...base, view: value }
+        })
+      }
+      // 族 / 对象 / 冷档进经验页对应视图；其余照旧切页。命令面板与 g 快捷键都走这里。
+      const go = (next) => {
+        if (NAV_VIEWS[next] !== undefined) {
+          setView(next)
+          setTab('experiences')
+          return
+        }
+        // 已经停在经验页的某个视图里，再点一次「经验」= 回到列表，不会「点了没反应」。
+        if (next === 'experiences' && tab === 'experiences' && safeView !== 'list') {
+          setView('list')
+          return
+        }
+        setTab(next)
+      }
       const content = (() => {
         if (tab === 'overview') return h(Overview, { state, onGo: go, onChanged: loadState, onOpen: (id) => { setFocusId(id); setTab('experiences') } })
-        if (tab === 'graph') return h(Graph)
-        if (tab === 'experiences') return h(Experiences, { key: 'exp-' + safeFilters.typeId + '|' + safeFilters.family, state, focusId, seedFilters: safeFilters, onChanged: loadState, onSearch: (value) => { setRecallSeed(value); setTab('recall') } })
+        // 关系图详情卡里的「在经验里打开」：跳经验页并选中这一条（0.44 D7）。
+        if (tab === 'graph') return h(Graph, { onOpen: (id) => { setFocusId(id); setTab('experiences') } })
+        if (tab === 'experiences') return h(Experiences, {
+          key: 'exp-' + safeView + '|' + safeFilters.typeId + '|' + safeFilters.family,
+          view: safeView,
+          state,
+          focusId,
+          seedFilters: safeFilters,
+          onChanged: loadState,
+          // 从族 / 对象视图点进一条具体经验：回到列表视图并带上族筛选。
+          onFamily: (typeId, family) => setExpFilters({ typeId: typeId || '', family: family || '', view: 'list' }),
+          onSearch: (value) => { setRecallSeed(value); setTab('recall') },
+        })
         if (tab === 'recall') return h(Recall, { seed: recallSeed })
         if (tab === 'record') return h(Record)
         if (tab === 'skills') return h(Skills, { onChanged: loadState })
         if (tab === 'families') return h(Families, { onChanged: loadState, onOpenFamily: (typeId, family) => { setExpFilters({ typeId: typeId || '', family: family || '' }); setTab('experiences') } })
         if (tab === 'objects') return h(Objects, { onOpenFamily: (family) => { setExpFilters({ typeId: '', family: family || '' }); setTab('experiences') } })
-        if (tab === 'tags') return h(Tags, { onChanged: loadState })
+        if (tab === 'tags') return h(Settings, { onChanged: loadState, section: 'tags' })
         if (tab === 'cold') return h(Cold)
         if (tab === 'usage') return h(Usage)
-        return h(Settings, { onChanged: loadState })
+        return h(Settings, { onChanged: loadState, section: deepLinkSection })
       })()
       const source = state && state.source
       const paletteItems = [
-        ...NAV.filter(([id]) => id !== 'cold' || coldVisible).map(([id, label]) => ({ id: `go-${id}`, group: '前往', label, run: () => setTab(id) })),
+        ...NAV.filter(([id]) => id !== 'cold' || coldVisible).map(([id, label]) => ({ id: `go-${id}`, group: '前往', label, run: () => go(id) })),
         { id: 'new-record', group: '动作', label: '记录经验', run: () => setTab('record') },
         { id: 'recall', group: '动作', label: '检索召回', run: () => setTab('recall') },
         { id: 'import-skill', group: '动作', label: '添加技能', run: () => { setTab('skills'); setImportOpen(true) } },
@@ -6502,11 +6790,24 @@ window.__ModuleLoader__.load({
           key: id,
           type: 'button',
           className: 'eng-nav-item',
-          'data-active': tab === id ? 'true' : 'false',
-          onClick: () => setTab(id),
+          // 旧路由（#families 等）已经折叠进经验页，但高亮仍要落在「经验」上。
+          'data-active': tab === id || (id === 'experiences' && NAV_VIEWS[tab] !== undefined) ? 'true' : 'false',
+          title: NAV_HINTS[id] || label,
+          onClick: () => go(id),
         }, h(NavIcon, { name: icon }), label, counts[id] === null || counts[id] === undefined ? null : h('span', { className: 'eng-nav-count' }, String(counts[id])))
       }
+      const currentNav = NAV.find((entry) => entry[0] === tab)
+      const pageLabel = currentNav ? currentNav[1] : TITLE
       const brandMark = h(EngramGlyph, { size: 18 })
+      // 页头（0.43 D2）：标题 + 本页一句话说明 + 本页主操作。
+      // 「添加技能」以前靠 `tab === 'skills'` 拼进全局顶栏，现在它是技能页自己的主操作。
+      const headerActions = [
+        tab === 'skills' ? h(Button, { key: 'add-skill', small: true, kind: 'primary', onClick: () => setImportOpen(true), title: '从外部导入一条技能（会开一个临时模型会话做分类/标签/排序）' }, '添加技能') : null,
+        source && source.mode === 'mock' ? h(Badge, { key: 'mock', tone: 'warn' }, '示例数据') : null,
+        // 0.43 D4：版本号不再挂顶栏，迁到 设置 → 维护（那里本来就有「版本」一行）。
+        refreshedAt ? h('span', { key: 'refreshed', className: 'eng-muted', title: '最近一次刷新完成时间' }, `已刷新 ${refreshedAt}`) : null,
+        h(Button, { key: 'refresh', small: true, disabled: refreshing, onClick: refreshAll }, refreshing ? '刷新中…' : '刷新'),
+      ].filter((node) => node !== null)
       return h('div', { className: 'eng-app', 'data-density': density, ref: rootRef, style: fitHeight === null ? undefined : { height: `${fitHeight}px` } },
         h('aside', { className: 'eng-rail' },
           h('div', { className: 'eng-brand' },
@@ -6518,21 +6819,27 @@ window.__ModuleLoader__.load({
             source && source.mode === 'mock' ? h('div', null, '示例数据（非真实库）') : null)),
         h('main', { className: 'eng-main' },
           h('header', { className: 'eng-top' },
-            h('div', null, h('h1', { className: 'eng-title' }, TITLE), h('div', { className: 'eng-sub' }, '经验与技能的本地控制台')),
-            h('div', { className: 'eng-top-right' },
-              tab === 'skills' ? h(Button, { small: true, kind: 'primary', onClick: () => setImportOpen(true), title: '从外部导入一条技能（会开一个临时模型会话做分类/标签/排序）' }, '添加技能') : null,
-              source && source.mode === 'mock' ? h(Badge, { tone: 'warn' }, '示例数据') : null,
-              state ? h('span', { className: 'eng-muted' }, `v${state.version}`) : null,
-              refreshedAt ? h('span', { className: 'eng-muted', title: '最近一次刷新完成时间' }, `已刷新 ${refreshedAt}`) : null,
-              h(Button, { small: true, disabled: refreshing, onClick: refreshAll }, refreshing ? '刷新中…' : '刷新'))),
+            h(PageHeader, { title: pageLabel, desc: NAV_HINTS[tab] || '', actions: headerActions })),
           h('div', {
             className: tab === 'graph' ? 'eng-content eng-content-full' : 'eng-content',
             'data-fill': tab === 'graph' ? 'false' : 'true',
           },
+            // 经验页的视图切换（0.42 D1 / 0.43 D3）。放在 .eng-content 里当页面片的兄弟节点，
+            // 而不是包一层容器：包一层会让 `.eng-content > .eng-fill > .eng-split`
+            // 这套高度/滚动契约断掉（见 10-css.js 的 data-fill 段落）。
+            tab === 'experiences' ? h('div', { className: 'eng-view-bar' },
+              h(Segmented, {
+                items: EXPERIENCE_VIEWS,
+                value: safeView,
+                onChange: setView,
+                size: 'chip',
+                semantic: 'tabs',
+                ariaLabel: '经验的查看方式',
+              })) : null,
             error ? h(Banner, { bad: true }, error) : null,
             state && state.notice ? h(Banner, null, state.notice) : null,
             importNotice ? h(Banner, null, importNotice) : null,
-            h(PageBoundary, { key: `${tab}:${reloadToken}` }, content))),
+            h(PageBoundary, { key: `${tab}:${safeView}:${reloadToken}` }, content))),
         importOpen
           ? h(ImportSkillDialog, {
             // 用户要的是「装完弹窗就消失」：导入成功 → 关弹窗 + 刷新列表（refreshAll 顺带重挂页面）。
@@ -6659,6 +6966,9 @@ window.__ModuleLoader__.load({
       useRefreshEvent,
       Graph,
       SaveExperienceAction,
+      // 0.43 新增的两个外壳组件：统一切换控件与页面抬头，都要能被渲染回归单独盯住。
+      Segmented,
+      PageHeader,
       Tip,
       showTipLayer,
       hideTipLayer,
