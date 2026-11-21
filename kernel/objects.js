@@ -290,6 +290,8 @@ export function addBranch(obj, { chainIndex, stepPath, when, steps, result } = {
 }
 
 function walkBranches(steps, visit, where = []) {
+  // 0.41：损坏的 objects.jsonl 可能有 null 分支或超深嵌套，别抛裸 TypeError / 爆栈。
+  if (where.length > 64) return
   const list = Array.isArray(steps) ? steps : []
   for (let index = 0; index < list.length; index += 1) {
     const step = list[index]
@@ -297,6 +299,7 @@ function walkBranches(steps, visit, where = []) {
     const here = [...where, index + 1]
     for (let branchIndex = 0; branchIndex < (Array.isArray(step.branches) ? step.branches.length : 0); branchIndex += 1) {
       const branch = step.branches[branchIndex]
+      if (branch === null || typeof branch !== 'object') continue
       visit(branch, { stepPath: [...here, branchIndex + 1], step })
       walkBranches(branch.steps, visit, [...here, branchIndex + 1])
     }
@@ -317,7 +320,9 @@ export function promotionHints(obj) {
   const bySteps = new Map()
   const byWhen = new Map()
   for (let index = from; index < chains.length; index += 1) {
-    walkBranches(chains[index].steps, (branch, where) => {
+    const chain = chains[index]
+    if (chain === null || typeof chain !== 'object') continue
+    walkBranches(chain.steps, (branch, where) => {
       const signature = stepsSignature(branch.steps)
       const stepHit = bySteps.get(signature) || { signature, when: branch.when, count: 0, places: [] }
       stepHit.count += 1
@@ -344,7 +349,9 @@ export function promotionHints(obj) {
   return hints
 }
 
-function stepView(step, registry) {
+function stepView(step, registry, depth = 0) {
+  // 0.41：损坏库（step 为 null / 分支为 null / 超深嵌套）不抛裸 TypeError / 爆栈。
+  if (step === null || typeof step !== 'object' || depth > 64) return null
   const out = {}
   const ref = resolveFamilyRef(registry, step.familyId)
   if (ref === null) {
@@ -358,12 +365,14 @@ function stepView(step, registry) {
   if (step.note !== undefined && step.note !== '') out.note = step.note
   if (step.outcome !== undefined && step.outcome !== '') out.outcome = step.outcome
   if (Array.isArray(step.branches) && step.branches.length > 0) {
-    out.branches = step.branches.map((branch) => {
-      const view = { when: branch.when }
-      if (branch.result === 'aborted') view.result = 'aborted'
-      view.steps = (Array.isArray(branch.steps) ? branch.steps : []).map((item) => stepView(item, registry))
-      return view
-    })
+    out.branches = step.branches
+      .filter((branch) => branch !== null && typeof branch === 'object')
+      .map((branch) => {
+        const view = { when: branch.when }
+        if (branch.result === 'aborted') view.result = 'aborted'
+        view.steps = (Array.isArray(branch.steps) ? branch.steps : []).map((item) => stepView(item, registry, depth + 1)).filter(Boolean)
+        return view
+      })
   }
   return out
 }
@@ -377,7 +386,7 @@ export function objectView(obj, registry) {
     chains: (Array.isArray(obj.chains) ? obj.chains : []).map((chain) => {
       const view = { at: chain.at }
       if (chain.note) view.note = chain.note
-      view.steps = (Array.isArray(chain.steps) ? chain.steps : []).map((step) => stepView(step, registry))
+      view.steps = (Array.isArray(chain.steps) ? chain.steps : []).map((step) => stepView(step, registry)).filter(Boolean)
       return view
     }),
   }
@@ -389,14 +398,17 @@ export function chainReferences(objects, familyIds) {
   const hits = []
   for (const obj of Array.isArray(objects) ? objects : []) {
     (Array.isArray(obj.chains) ? obj.chains : []).forEach((chain, chainIndex) => {
-      const scan = (steps, where) => {
+      const scan = (steps, where, depth = 0) => {
+        if (depth > 64) return
         (Array.isArray(steps) ? steps : []).forEach((step, index) => {
+          if (step === null || typeof step !== 'object') return
           const here = [...where, index + 1]
-          if (step !== null && typeof step === 'object' && ids.has(String(step.familyId || ''))) {
+          if (ids.has(String(step.familyId || ''))) {
             hits.push({ object: obj.object, objectId: obj.id, chainIndex: chainIndex + 1, stepPath: here })
           }
-          (Array.isArray(step && step.branches) ? step.branches : []).forEach((branch, branchIndex) => {
-            scan(branch.steps, [...here, branchIndex + 1])
+          (Array.isArray(step.branches) ? step.branches : []).forEach((branch, branchIndex) => {
+            if (branch === null || typeof branch !== 'object') return
+            scan(branch.steps, [...here, branchIndex + 1], depth + 1)
           })
         })
       }

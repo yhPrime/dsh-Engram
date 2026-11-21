@@ -7,6 +7,7 @@
 import fs from 'node:fs'
 
 import path from 'node:path'
+import { cjkBigrams, jaccard, stateSignature, stateSimilarity, tokenize } from './kernel.js'
 import {
   FEEDBACK_ETA,
   REVIEW_ACTIONS,
@@ -2041,9 +2042,10 @@ export function buildTools(defineTool, config = {}) {
 
   const objectTool = defineTool({
     name: 'exp_object',
-    description: '对象链：记录「这一件具体任务按什么顺序做完」。对象名 + 1..n 条链，每条 1..n 步，每步=方向标签+动作族（family 必填且须已登记；direction 可选但给了必须是该族已登记方向）；某步失败可在该步下挂分支换一组动作。create 建对象+首条链 / append 追链或补步 / branch 给 failed 步骤挂分支 / show 读对象 / list 清单 / delete 删对象。不参与召回与排序；可复用的做法/原则/踩坑记 exp_record，别把任务流水塞进经验。',
+    description: '对象链：记录「这一件具体任务按什么顺序做完」。【什么时候写】一件具体任务做完、按步骤走过来了就用它记分步链（对象名=任务、一条链=一次做法、一步=族+方向）；只记任务流水，可复用做法仍走 exp_record。【怎么找】list 可带 query 按关键词/任务描述模糊搜（对象名+链的步），返回最像的 top 5；show 按名/id 读。【结构】对象名 + 1..n 条链，每条 1..n 步，每步=方向标签+动作族（family 必填且须已登记；direction 可选但给了必须是该族已登记方向）；某步失败可在该步下挂分支换一组动作。create 建对象+首条链 / append 追链或补步 / branch 给 failed 步骤挂分支 / show 读对象 / list 清单（可带 query）/ delete 删对象。不参与召回与排序。',
     parameters: {
       action: { type: 'string', enum: ['create', 'append', 'branch', 'show', 'list', 'delete'], required: true, description: '要执行的动作。' },
+      query: { type: 'string', description: '可选：仅 list 用。按关键词/任务描述模糊搜对象（对象名 + 链的步：族名/方向/note），返回最像的 top 5；不传则全量列。' },
       object: { type: 'string', description: 'create 的对象名（1–40 字）；其余动作传对象名或 ob_ id。' },
       chain: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'create/append 的步骤数组：[{ family: "跑测试", direction: "回归断言", note: "可选", outcome: "failed" }]；family 必填（须已登记族），direction 可选（给了须是该族已登记方向），note 可选。' },
       steps: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'branch 的动作组，与 chain 同形状（family 必填、direction 可选受控）。' },
@@ -2096,30 +2098,60 @@ export function buildTools(defineTool, config = {}) {
         }
         let result = null
         if (action === 'list') {
-          result = {
-            action,
-            count: objects.length,
-            objects: objects.map((obj) => {
-              const hints = hintViews(obj)
-              const families = new Set()
-              const walk = (steps) => {
-                for (const step of Array.isArray(steps) ? steps : []) {
-                  const ref = resolveFamilyRef(registry, step && step.familyId)
-                  if (ref !== null) families.add(ref.name)
-                  for (const branch of Array.isArray(step && step.branches) ? step.branches : []) walk(branch.steps)
+          const items = objects.map((obj) => {
+            const hints = hintViews(obj)
+            const families = new Set()
+            const walk = (steps, depth = 0) => {
+              if (depth > 64) return
+              for (const step of Array.isArray(steps) ? steps : []) {
+                if (step === null || typeof step !== 'object') continue
+                const ref = resolveFamilyRef(registry, step.familyId)
+                if (ref !== null) families.add(ref.name)
+                for (const branch of Array.isArray(step.branches) ? step.branches : []) walk(branch && branch.steps, depth + 1)
+              }
+            }
+            for (const chain of Array.isArray(obj.chains) ? obj.chains : []) walk(chain.steps)
+            const item = {
+              id: obj.id,
+              object: obj.object,
+              chains: obj.chains.length,
+              families: [...families],
+              lastAt: obj.chains.length > 0 ? obj.chains[obj.chains.length - 1].at : '',
+            }
+            if (hints.length > 0) item.hints = hints
+            return item
+          })
+          // 0.41：按关键词/任务描述模糊搜对象（对象名 + 链的步：族名/方向/note），复用 kernel 的 token/bigram 双信号。
+          // query 截到 200 码点、签名只算一次（10 万字符 query 不放大成 200×超长集合）。
+          const queryText = typeof args.query === 'string' ? Array.from(args.query.trim()).slice(0, 200).join('') : ''
+          if (queryText !== '') {
+            const wantSig = stateSignature({ tokens: tokenize(queryText), artifacts: [], cgrams: cjkBigrams(queryText.toLowerCase()) })
+            const wantMain = new Set([...wantSig.tokens, ...wantSig.artifacts])
+            const byId = new Map(objects.map((obj) => [obj.id, obj]))
+            const scored = items
+              .map((item) => {
+                const obj = byId.get(item.id) || {}
+                const parts = [item.object, ...(item.families || [])]
+                const walk = (steps, depth = 0) => {
+                  if (depth > 64) return
+                  for (const step of Array.isArray(steps) ? steps : []) {
+                    if (step === null || typeof step !== 'object') continue
+                    parts.push(String(step.direction || ''), String(step.note || ''))
+                    for (const branch of Array.isArray(step.branches) ? step.branches : []) walk(branch && branch.steps, depth + 1)
+                  }
                 }
-              }
-              for (const chain of Array.isArray(obj.chains) ? obj.chains : []) walk(chain.steps)
-              const item = {
-                id: obj.id,
-                object: obj.object,
-                chains: obj.chains.length,
-                families: [...families],
-                lastAt: obj.chains.length > 0 ? obj.chains[obj.chains.length - 1].at : '',
-              }
-              if (hints.length > 0) item.hints = hints
-              return item
-            }),
+                for (const chain of Array.isArray(obj.chains) ? obj.chains : []) walk(chain.steps)
+                const text = parts.join(' ')
+                const haveSig = stateSignature({ tokens: tokenize(text), artifacts: [], cgrams: cjkBigrams(text.toLowerCase()) })
+                const haveMain = new Set([...haveSig.tokens, ...haveSig.artifacts])
+                return { ...item, score: 0.75 * jaccard(wantMain, haveMain) + 0.25 * jaccard(wantSig.grams, haveSig.grams) }
+              })
+              .filter((item) => item.score > 0)
+              .sort((a, b) => b.score - a.score)
+              .slice(0, 5)
+            result = { action, count: scored.length, total: items.length, query: queryText, objects: scored }
+          } else {
+            result = { action, count: items.length, objects: items }
           }
         } else if (action === 'show') {
           const obj = requireObject(args.object)

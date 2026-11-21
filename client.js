@@ -6133,6 +6133,7 @@ window.__ModuleLoader__.load({
       const load = useLoad(useCallback(() => request('/objects'), []))
       useRefreshEvent(useCallback(() => load.reload(), [load.reload]))
       const [selectedId, setSelectedId] = useState(null)
+      const [query, setQuery] = useState('')
       if (load.loading && !load.data) return h(Skeleton, { rows: 6 })
       if (load.error) return h(ErrorState, { message: load.error, onRetry: load.reload })
       const data = load.data || { available: false, total: 0, objects: [] }
@@ -6147,9 +6148,11 @@ window.__ModuleLoader__.load({
       if (objects.length === 0) {
         return h('div', { className: 'eng-fill' }, h('div', { className: 'eng-card eng-scroll', style: { margin: 12 } },
           h('div', { className: 'eng-section-head' }, h('h3', { className: 'eng-section-title' }, '对象链')),
-          h(Empty, null, '还没有对象链。对象链由 exp_object 工具写入，记录一件事按什么顺序做完；控制台只读。')))
+          h(Empty, null, '还没有对象链。多步任务用 exp_object 记分步链（对象名=任务、一条链=一次做法、一步=族+方向）；控制台只读。')))
       }
-      const current = objects.find((item) => item.id === selectedId) || objects[0]
+      const needle = query.trim()
+      const visible = needle === '' ? objects : objects.filter((item) => String(item.object || '').includes(needle) || (Array.isArray(item.hints) ? item.hints : []).some((hint) => String(hint.when || '').includes(needle)))
+      const current = visible.find((item) => item.id === selectedId) || visible[0] || objects[0]
       const stepNode = (step, depth, key) => {
         const failed = step.outcome === 'failed'
         const branches = Array.isArray(step.branches) ? step.branches : []
@@ -6183,8 +6186,9 @@ window.__ModuleLoader__.load({
         h('div', { className: 'eng-card eng-scroll' },
           h('div', { className: 'eng-section-head' },
             h('h3', { className: 'eng-section-title' }, '对象'),
-            h('span', { className: 'eng-muted' }, `${objects.length} 个`)),
-          objects.map((item) => h('button', {
+            h('span', { className: 'eng-muted' }, `${visible.length} 个`)),
+          h('div', { style: { padding: '0 8px 8px' } }, h('input', { className: 'eng-input', placeholder: '搜对象名 / 分支…', value: query, onChange: (event) => setQuery(event.target.value) })),
+          visible.map((item) => h('button', {
             key: item.id,
             type: 'button',
             className: 'eng-row',

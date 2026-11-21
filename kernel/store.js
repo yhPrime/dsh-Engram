@@ -3384,7 +3384,7 @@ export function renderHintSlim(config = {}, maxCharacters = 1400) {
   }
   const active = visibleExperiences(store).length
   const lines = [
-    `经验库：不必每轮都记，只记可复用做法，流水账不记。搜：exp_recall(intent=描述目标+约束)；族=可复用动作；不知族名先 exp_family list query=<词> 搜。写：exp_record（对象=描述+族+方向），outcome 可省、verdicts 回填。共 ${active} 条。`,
+    `经验库：不必每轮都记，只记可复用做法，流水账不记。搜：exp_recall(intent=描述目标+约束)；族=可复用动作；不知族名先 exp_family list query=<词> 搜。写：exp_record（对象=描述+族+方向，verdicts 回填）；多步任务用 exp_object。共 ${active} 条。`,
   ]
   const pending = pendingRows(store, 2)
   if (pending.length > 0) {

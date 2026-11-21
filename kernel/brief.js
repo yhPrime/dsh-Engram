@@ -8,7 +8,8 @@
 export const MAX_BRIEF_CHARS = 80
 
 function cut(text, max) {
-  const value = String(text === undefined || text === null ? '' : text).replace(/\s+/gu, ' ').trim()
+  // 0.41：\s 不含 U+0085(NEL)，单独补上——否则待判定行会被 NEL 折成两行。
+  const value = String(text === undefined || text === null ? '' : text).replace(/[\s\u0085]+/gu, ' ').trim()
   if (value === '') return ''
   // 按码点截断：直接 slice 会把 emoji 的代理对劈成孤立半截（实测输出 \ud83d）。
   return value.length <= max ? value : `${Array.from(value).slice(0, Math.max(0, max - 1)).join('')}…`
