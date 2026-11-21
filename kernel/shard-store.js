@@ -1,19 +1,20 @@
 /**
- * 存储分片层（0.14.0 P1）：manifest + `buckets/<typeId>.<k>.jsonl` + 一次性迁移。
+ * 存储分片层门面（shard-store.js）：按领域拆分后本文件保留 manifest / 统计 / 写入 /
+ * 压缩 / 族读写，并把路径与布局、原子 IO、冷档三块从同层模块转发出去。
  *
- * 为什么切「类型」：召回先 routeCluster 再打分，命中类型只要读该类型的分片；
- * 而 `sameTask` 强制 `rowTypeId === thisTypeId`（store.js），跨类型的合并/取代本来就不存在，
- * 所以按类型分片后写入语义逐字节不变。
+ * 拆分（纯搬代码，行为不变）：
+ *   shard-paths.js  纯路径/布局常量与函数
+ *   shard-io.js     原子读写与分片行解码
+ *   shard-cold.js   冷档扫描/读取/追加/回滚
+ *
+ * 依赖方向只允许 shard-store → 新模块；新模块不 import 本文件，也不 import store.js，
+ * 避免 store ↔ shard-store 循环依赖。
  *
  * 目录（计划书 §4.1）：
  *   manifest.json                  # 索引与元数据，唯一入口
  *   buckets/<typeId>.<0|1>.jsonl   # 定数 K=2，一行一条记录，无缩进
  *   cold/<year>.jsonl              # 冷档（P2 才写；本层只读 manifest 里的登记）
  *   exp-lib.legacy.json            # 迁移时由 exp-lib.json 改名保留，只读，回滚用
- *
- * 本文件只管「目录形态」：路径、分片读写、manifest 结构、迁移落盘。
- * 归一化语义（typeId 悬空、G 重放、结构校验）留在 store.js，两条读路径共用同一份归一化，
- * 这样迁移前后逐字段等价是结构性保证，而不是靠两边各写一遍。
  */
 
 import fs from 'node:fs'
@@ -23,17 +24,60 @@ import { createHash } from 'node:crypto'
 import { tokenize } from './kernel.js'
 import { buildCluster } from './cluster.js'
 
-/** manifest schema 版本（2 = 分片布局；1 = 旧的单文件 exp-lib.json）。 */
-export const SHARD_SCHEMA = 2
-/** 每类型定数桶数：调大只增加粒度与文件数，不改语义。 */
-export const SHARD_K = 2
-export const MANIFEST_FILE = 'manifest.json'
-export const BUCKETS_DIR = 'buckets'
-export const COLD_DIR = 'cold'
-/** 迁移后的旧库文件名（rollback = 改回 exp-lib.json 再删 manifest+buckets）。 */
-export const LEGACY_FILE = 'exp-lib.legacy.json'
-/** 迁移来源（旧单文件名）；本文件不 import store.js，避免循环依赖。 */
-export const LEGACY_SOURCE_FILE = 'exp-lib.json'
+import {
+  SHARD_SCHEMA,
+  SHARD_K,
+  MANIFEST_FILE,
+  BUCKETS_DIR,
+  COLD_DIR,
+  LEGACY_FILE,
+  LEGACY_SOURCE_FILE,
+  COMPACT_BACKUP_DIR,
+  FAMILY_LAYOUT,
+  FLAT_LAYOUT,
+  LIBRARY_DIR,
+  UNFILED_FAMILY,
+  FAMILY_SCHEMA,
+  manifestPath,
+  bucketsPath,
+  coldPath,
+  legacyPath,
+  shardBucketIndex,
+  shardFileName,
+  shardRelPath,
+  isFlatLayout,
+  familyRelPath,
+  hasFamilyLayout,
+  familyDirOf,
+  contentHash,
+  safeTypeDirName,
+  resolveBucketPath,
+  BUCKET_NAME_RE,
+  COLD_NAME_RE,
+} from './shard-paths.js'
+
+import {
+  readJsonFile,
+  writeFileAtomic,
+  cleanupStaleTemps,
+  writeManyAtomicFiles,
+  readBucketRows,
+  bucketTextOf,
+  sleepSync,
+} from './shard-io.js'
+
+import {
+  COLD_MAX_BYTES,
+  normalizeCold,
+  scanCold,
+  scanColdNormalized,
+  coldGrowthTotal,
+  missingColdFiles,
+  readColdRecords,
+  appendColdRecords,
+  rollbackColdAppends,
+} from './shard-cold.js'
+
 /**
  * 单桶上限，超过触发压缩（P2）。2026-11-12 计划书 §7.10 定调：容量机制是**安全阀**，
  * 正常使用（经验量受使用范围限制）永不触发淘汰；参数为此上调 1 MiB → 2 MiB。
@@ -55,11 +99,6 @@ export const HOT_MAX_BYTES = 32 * 1024 * 1024
  * UTF-8 落盘实测 2,138 B/条。凡按字节算上限、算压缩触发的地方都用这个，别用条数×1.4KB。
  */
 export const AVG_RECORD_BYTES = 2138
-/**
- * 冷档单文件上限：超了按字母顺序**新开一片** `cold/<year>-<a|b|…>.jsonl`。
- * 原「合并到下一档」作废——合并不会变小，等于没解决（D2/D5）。
- */
-export const COLD_MAX_BYTES = 8 * 1024 * 1024
 /** 冷档保留年数。 */
 export const COLD_RETAIN_YEARS = 3
 /** manifest 上限；超出就降采样簇签名，不涨文件。 */
@@ -93,122 +132,15 @@ export const RECENT_LIMIT = 100
 export const STATS_MAX_BYTES = 3 * 1024
 /** 墓碑保留天数（与 store.js 的 DEFAULT_TOMBSTONE_DAYS 同值；本文件不 import store.js 以免循环）。 */
 export const TOMBSTONE_DAYS = 30
-/** 压缩前备份目录（相对 dataDir）。 */
-export const COMPACT_BACKUP_DIR = '.locks'
 
 /** 文件数上界：1 manifest + maxTypes×K + 冷档(≤4 年) + legacy(1)。 */
 export function shardFileBudget(maxTypes = 24) {
   return 1 + Math.max(0, Math.trunc(Number(maxTypes) || 0)) * SHARD_K + COLD_RETAIN_YEARS + 1 + 1
 }
 
-export function manifestPath(dataDir) {
-  return path.join(String(dataDir || ''), MANIFEST_FILE)
-}
 
-export function bucketsPath(dataDir) {
-  return path.join(String(dataDir || ''), BUCKETS_DIR)
-}
 
-export function coldPath(dataDir) {
-  return path.join(String(dataDir || ''), COLD_DIR)
-}
 
-export function legacyPath(dataDir) {
-  return path.join(String(dataDir || ''), LEGACY_FILE)
-}
-
-function sleepSync(ms) {
-  try {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-  } catch {
-    const until = Date.now() + ms
-    while (Date.now() < until) { /* 退化为忙等 */ }
-  }
-}
-
-/**
- * 稳定桶号：`hash(record.id) % K`。同一条记录永远落同一个桶（跨进程、跨机器一致），
- * 压缩/重写只移动内容、不改变归属。
- */
-export function shardBucketIndex(id, k = SHARD_K) {
-  const width = Math.max(1, Math.trunc(Number(k) || SHARD_K))
-  const digest = createHash('sha1').update(String(id === undefined || id === null ? '' : id)).digest()
-  return digest.readUInt32BE(0) % width
-}
-
-/** 文件名里的类型 id 只保留安全字符（类型 id 是 ty_<hex>，这里只是防御）。 */
-export function shardFileName(typeId, index) {
-  const safe = String(typeId || 'ty_other').replace(/[^A-Za-z0-9_-]/g, '_')
-  return `${safe}.${Math.max(0, Math.trunc(Number(index) || 0))}.jsonl`
-}
-
-/** manifest 里登记的相对路径（统一正斜杠，Git 跨平台一致）。 */
-export function shardRelPath(typeId, index) {
-  return `${BUCKETS_DIR}/${shardFileName(typeId, index)}`
-}
-
-/**
- * 读 JSON 文件：文件不存在返回 null；损坏/被占用时重试 10 次后抛错。
- * 绝不静默返回空——空快照被写回会清空整库（0.13.0 的守卫）。
- */
-export function readJsonFile(file, label) {
-  let raw = null
-  let lastError = null
-  try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch (error) {
-    if (error && error.code === 'ENOENT') return null
-    lastError = error
-    for (let attempt = 0; attempt < 10 && raw === null; attempt += 1) {
-      sleepSync(20)
-      try {
-        raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-      } catch (retryError) {
-        lastError = retryError
-      }
-    }
-    if (raw === null) {
-      throw new Error(`${label}读取失败（已重试 10 次，文件可能正被写入或已损坏）：${file}：${lastError && lastError.message ? lastError.message : lastError}`)
-    }
-  }
-  return raw
-}
-
-/**
- * 冷档登记规范化：`{years:[{year, count, bytes, files:[{file, count, bytes}]}]}`。
- * 兼容两种落盘形状（早期扁平条目 / D5 的 files[] 分片条目），读侧不用关心写的是哪版。
- */
-export function normalizeCold(raw) {
-  const source = raw !== null && typeof raw === 'object' && Array.isArray(raw.years) ? raw.years : []
-  const byYear = new Map()
-  const ensureYear = (year) => {
-    const key = Number(year) || 0
-    if (!byYear.has(key)) byYear.set(key, { year: key, count: 0, bytes: 0, files: [] })
-    return byYear.get(key)
-  }
-  for (const entry of source) {
-    if (entry === null || typeof entry !== 'object') continue
-    const year = Number(entry.year) || 0
-    if (Array.isArray(entry.files)) {
-      const group = ensureYear(year)
-      for (const file of entry.files) {
-        if (file === null || typeof file !== 'object' || typeof file.file !== 'string' || file.file === '') continue
-        group.files.push({ file: file.file, count: Number(file.count) || 0, bytes: Number(file.bytes) || 0 })
-      }
-      continue
-    }
-    if (typeof entry.file === 'string' && entry.file !== '') {
-      ensureYear(year).files.push({ file: entry.file, count: Number(entry.count) || 0, bytes: Number(entry.bytes) || 0 })
-    }
-  }
-  const years = [...byYear.values()].sort((left, right) => left.year - right.year)
-  for (const year of years) {
-    year.files.sort((left, right) => (left.file < right.file ? -1 : left.file > right.file ? 1 : 0))
-    year.count = year.files.reduce((sum, file) => sum + (Number(file.count) || 0), 0)
-    year.bytes = year.files.reduce((sum, file) => sum + (Number(file.bytes) || 0), 0)
-  }
-  return { years }
-}
 
 /**
  * 「同做法键」：intent + action（做法按 `actionKeyOf` 的口径 trim + lower）。
@@ -391,71 +323,8 @@ export function readManifestFile(dataDir) {
   return normalizeManifest(raw)
 }
 
-/** 写临时文件再 rename（沿用旧 writeStore 的写盘手法，绝不退化成直接覆盖）。 */
-function writeFileAtomic(file, text) {
-  // D2（2026-11-12）：目标目录里的陈旧 *.tmp 一并清——manifest 的临时文件在根目录，
-  // 原来只清 buckets/，根目录 `manifest.json.*.tmp` 会永久残留。
-  cleanupStaleTemps(path.dirname(file))
-  const temp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  try {
-    fs.writeFileSync(temp, text, 'utf8')
-    let renamed = false
-    let lastError = null
-    for (let attempt = 0; attempt < 20 && !renamed; attempt += 1) {
-      try {
-        fs.renameSync(temp, file)
-        renamed = true
-      } catch (error) {
-        lastError = error
-        if (error && (error.code === 'EPERM' || error.code === 'EBUSY' || error.code === 'EACCES')) {
-          sleepSync(25)
-          continue
-        }
-        throw error
-      }
-    }
-    if (!renamed) {
-      throw new Error(`经验库写入被占用（rename 重试 20 次仍失败）：${lastError && lastError.message ? lastError.message : String(lastError)}`)
-    }
-  } finally {
-    try {
-      fs.unlinkSync(temp)
-    } catch {
-      // 已 rename 掉 / 不存在
-    }
-  }
-}
 
-/** 清掉崩溃留下的 *.tmp（>10 分钟）。 */
-function cleanupStaleTemps(dir) {
-  const now = Date.now()
-  let names = []
-  try {
-    names = fs.readdirSync(dir)
-  } catch {
-    return
-  }
-  for (const name of names) {
-    // R9 缺陷：崩溃残留的 .tmp/.bak 都要 GC（.bak 是两阶段写备份，正常路径会删，崩溃窗口会留）。
-    if (!name.endsWith('.tmp') && !name.endsWith('.bak')) continue
-    const full = path.join(dir, name)
-    try {
-      if (now - fs.statSync(full).mtimeMs > 600000) fs.unlinkSync(full)
-    } catch {
-      // 正被别的进程使用
-    }
-  }
-}
 
-function resolveBucketPath(dataDir, rel) {
-  const root = path.resolve(String(dataDir || ''))
-  const resolved = path.resolve(root, rel)
-  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
-    throw new Error(`经验库 manifest 里的分片路径越界：${rel}`)
-  }
-  return resolved
-}
 
 /** 行的 id（字符串）；空/缺失返回 ''（没有 id 的行无法判定重复，原样保留）。 */
 function recordIdOf(row) {
@@ -607,15 +476,7 @@ function latestTsOf(rows) {
   return latest
 }
 
-/** 分片内容指纹：增量写只重写指纹变了的文件（字节相等 ⇒ 内容相等）。 */
-export function contentHash(text) {
-  return createHash('sha1').update(String(text)).digest('hex')
-}
 
-/** 记录的分片文本（一行一条，JSON 转义内部换行，保证 Git 行级 diff/merge 可用）。 */
-export function bucketTextOf(rows) {
-  return `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`
-}
 
 /**
  * 记录分桶（§4.3）：按 `record.typeId` 归类型，类型不存在或为系统兜底 → `ty_other`；
@@ -661,8 +522,6 @@ function removeStaleBuckets(dir, keepNames) {
   }
 }
 
-const BUCKET_NAME_RE = /^(.+)\.(\d+)\.jsonl$/
-const COLD_NAME_RE = /^(\d{4})(?:-[a-z]+)?\.jsonl$/
 
 /** 有没有分片数据——用来区分「manifest 缺失」是未迁移的老库，还是缓存丢了。 */
 export function hasShardFiles(dataDir) {
@@ -695,32 +554,6 @@ export function hasShardFiles(dataDir) {
   return false
 }
 
-function scanCold(dataDir) {
-  let names = []
-  try {
-    names = fs.readdirSync(coldPath(dataDir)).filter((name) => COLD_NAME_RE.test(name)).sort()
-  } catch {
-    names = []
-  }
-  const years = new Map()
-  for (const name of names) {
-    let text
-    try {
-      text = fs.readFileSync(path.join(coldPath(dataDir), name), 'utf8')
-    } catch {
-      continue
-    }
-    const year = Number(COLD_NAME_RE.exec(name)[1]) || 0
-    if (!years.has(year)) years.set(year, { year, count: 0, bytes: 0, files: [] })
-    const group = years.get(year)
-    group.files.push({
-      file: `${COLD_DIR}/${name}`,
-      count: text.split('\n').filter((line) => line.trim() !== '').length,
-      bytes: Buffer.byteLength(text, 'utf8'),
-    })
-  }
-  return normalizeCold({ years: [...years.values()] })
-}
 
 /**
  * 扫全部分片（事实源）：`buckets/*.jsonl` → 记录 + manifest 需要的索引项。
@@ -879,37 +712,7 @@ function familyShardsMismatch(dataDir, manifest) {
   }
   return false
 }
-/** 扫描冷档并归一成 manifest.cold 形状（重建时用：manifest 丢了也不能把冷档登记清空）。 */
-export function scanColdNormalized(dataDir) {
-  return normalizeCold(scanCold(dataDir))
-}
-/** 冷档相对旧 manifest 的净增条数（用于识别「行被压缩搬进冷档」的合法少行）。 */
-function coldGrowthTotal(dataDir, cold) {
-  const declared = normalizeCold(cold)
-  let declaredTotal = 0
-  for (const year of declared.years) declaredTotal += Number(year.count) || 0
-  let actualTotal = 0
-  for (const year of scanCold(dataDir).years) actualTotal += Number(year.count) || 0
-  return actualTotal - declaredTotal
-}
 
-/** D5：manifest.cold 登记了但文件不在的那些冷档文件（空数组 = 全在）。 */
-export function missingColdFiles(dataDir, cold) {
-  const declared = normalizeCold(cold)
-  const missing = []
-  for (const year of declared.years) {
-    for (const file of year.files) {
-      const label = String(file.file || '')
-      if (label === '') continue
-      try {
-        fs.statSync(resolveBucketPath(dataDir, label))
-      } catch {
-        missing.push(label)
-      }
-    }
-  }
-  return missing
-}
 
 /**
  * 簇签名落 manifest（§4.2 / §7.3）：只维护「变了的类型」。
@@ -1377,61 +1180,7 @@ export function writeShards(dataDir, store, previousManifest = null, options = {
   return manifest
 }
 
-/** 读一个分片文件成记录数组；文件不存在返回 null，损坏抛错。 */
-const UTF8_FATAL_DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
-/**
- * 逐行读分片（D3/D4，2026-11-12）：
- *  - 用 `TextDecoder(fatal:true)` 解码每行，非法 UTF-8 **报错并指出文件+行号**（不静默变 U+FFFD）；
- *  - 缺文件默认返回 null（调用方决定语义）；`options.missing === 'throw'` 时明确报错；
- *  - `options.bucket` 给了声明 count 时校验行数：**少于声明即判损坏并报错**，拒绝返回不完整快照；
- *    多于声明说明 manifest 只是旧缓存（D1），交由调用方的自愈逻辑重建，不在这里报错。
- */
-/**
- * R8 缺陷：多族写盘两边提交——先全部写临时文件，全部成功后再统一 rename。
- * 任何一步失败只删临时文件，已存在的族文件一个字节都不动（避免半写导致丢行/整库不可读）。
- */
-function writeManyAtomicFiles(dataDir, writes) {
-  if (!Array.isArray(writes) || writes.length === 0) return
-  const temps = []
-  const renamed = []
-  try {
-    for (const item of writes) {
-      const target = path.join(dataDir, item.rel)
-      fs.mkdirSync(path.dirname(target), { recursive: true })
-      const temp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-      temps.push([temp, target])
-      fs.writeFileSync(temp, item.text, 'utf8')
-    }
-    // R8 缺陷：rename 阶段也可能中途失败（只读文件 EPERM）；先把将被覆盖的原文件备份，失败时回滚。
-    for (const [temp, target] of temps) {
-      let backup = null
-      if (fs.existsSync(target)) {
-        // R14 缺陷：目标不是普通文件（被目录占位）时给可诊断错误，不把 copyfile/EPERM 抛给调用方。
-        let isFile = false
-        try { isFile = fs.lstatSync(target).isFile() } catch { isFile = false }
-        if (!isFile) throw new Error(`经验库结构损坏：${target} 不是普通文件（拒绝覆盖）`)
-        backup = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.bak`
-        fs.copyFileSync(target, backup)
-      }
-      try {
-        fs.renameSync(temp, target)
-        renamed.push({ target, backup, created: backup === null })
-      } catch (error) {
-        if (backup !== null) { try { fs.unlinkSync(backup) } catch { /* ignore */ } }
-        throw error
-      }
-    }
-    for (const item of renamed) { if (item.backup !== null) { try { fs.unlinkSync(item.backup) } catch { /* ignore */ } } }
-  } catch (error) {
-    for (const [temp] of temps) { try { fs.unlinkSync(temp) } catch { /* ignore */ } }
-    for (const item of renamed) {
-      if (item.backup !== null) { try { fs.renameSync(item.backup, item.target) } catch { /* 回滚失败也要继续 */ } }
-      else { try { fs.unlinkSync(item.target) } catch { /* 本次新建的文件回滚时删掉，避免未提交行被读自愈提交 */ } }
-    }
-    throw error
-  }
-}
 
 /** 生成一个分类目录的 _type/_index 内容（不写盘，供两阶段写与索引一起提交）。 */
 function familyIndexFiles(dataDir, typeId, typeName, entries, created = false) {
@@ -1465,195 +1214,10 @@ function isIgnoredLibraryDir(name) {
   return value.startsWith('.') || value.toLowerCase().endsWith('.bak') || value.toLowerCase().endsWith('.tmp')
 }
 
-function readBucketRows(file, label, options = {}) {
-  let buffer
-  try {
-    buffer = fs.readFileSync(file)
-  } catch (error) {
-    if (error && error.code === 'ENOENT') {
-      if (options.missing === 'throw') throw new Error(`经验库分片丢失：${label}（登记存在但文件不在，拒绝按空库继续）`)
-      return null
-    }
-    throw new Error(`经验库分片读取失败：${label}：${error && error.message ? error.message : error}`)
-  }
-  const rows = []
-  let lineNumber = 0
-  let start = 0
-  const length = buffer.length
-  // BOM：TextDecoder 默认会把首 BOM 吃掉，这里按原始字节判定并明确报错（JSON 不允许 BOM）。
-  if (length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
-    throw new Error(`经验库分片损坏：${label} 第 1 行带 UTF-8 BOM（非法前缀，拒绝静默容忍）`)
-  }
-  const decodeLine = (startAt, endAt) => {
-    lineNumber += 1
-    let text
-    try {
-      text = UTF8_FATAL_DECODER.decode(buffer.subarray(startAt, endAt))
-    } catch {
-      throw new Error(`经验库分片损坏：${label} 第 ${lineNumber} 行不是合法 UTF-8（编码错误，拒绝静默替换成 U+FFFD）`)
-    }
-    // UTF-8 BOM 出现在行首：JSON 不允许，Node 的 JSON.parse 却会容忍 → 明确报错，别静默接受。
-    if (text.startsWith('\uFEFF')) {
-      throw new Error(`经验库分片损坏：${label} 第 ${lineNumber} 行带 UTF-8 BOM（非法前缀，拒绝静默容忍）`)
-    }
-    if (text.endsWith('\r')) text = text.slice(0, -1)
-    if (text.trim() === '') return null
-    let row
-    try {
-      row = JSON.parse(text)
-    } catch {
-      throw new Error(`经验库分片损坏：${label} 第 ${lineNumber} 行不是合法 JSON`)
-    }
-    if (row === null || typeof row !== 'object' || Array.isArray(row)) {
-      throw new Error(`经验库分片损坏：${label} 第 ${lineNumber} 行不是对象`)
-    }
-    return row
-  }
-  for (let index = 0; index < length; index += 1) {
-    if (buffer[index] !== 0x0a) continue
-    const row = decodeLine(start, index)
-    if (row !== null) rows.push(row)
-    start = index + 1
-  }
-  // 最后一行没有换行符也要解（JSONL 允许文件末尾无 \n）。
-  if (start < length) {
-    const row = decodeLine(start, length)
-    if (row !== null) rows.push(row)
-  }
-  const bucket = options.bucket
-  if (bucket !== null && bucket !== undefined) {
-    const declared = Number(bucket.count)
-    if (Number.isFinite(declared) && declared > 0 && rows.length < declared) {
-      throw new Error(`经验库分片损坏：${label} 声明 count=${declared}，实际 ${rows.length} 行（拒绝用不完整快照继续）`)
-    }
-  }
-  return rows
-}
 
-function coldLetterOf(index) {
-  let value = Math.max(0, Math.trunc(Number(index) || 0))
-  let letters = ''
-  do {
-    letters = String.fromCharCode(97 + (value % 26)) + letters
-    value = Math.floor(value / 26) - 1
-  } while (value >= 0)
-  return letters
-}
 
-/**
- * 读冷档记录（G3）：`options.years` 给了就只读那几个年份；`manifest.cold` 是登记表。
- * 冷档默认不参与召回、不进关系图/簇统计——调用方（`exp_recall cold:true`）显式来取。
- *
- * 冷档记录**不可反馈**（`exp_feedback`）：它们不在热档 store 里，`applyFeedback` 按 id 找不到
- * 会明确报「没有这条经验」。这是 §7.1 的预期行为，不是 bug——要反馈就先让它回到热档。
- */
-export function readColdRecords(dataDir, manifest, options = {}) {
-  const dir = String(dataDir || '')
-  const cold = normalizeCold(manifest === null || manifest === undefined ? null : manifest.cold)
-  const years = Array.isArray(options.years) && options.years.length > 0
-    ? new Set(options.years.map((year) => Number(year) || 0))
-    : null
-  const rows = []
-  for (const year of cold.years) {
-    if (years !== null && !years.has(Number(year.year))) continue
-    for (const file of year.files) {
-      const absolute = resolveBucketPath(dir, file.file)
-      // D5（2026-11-12）：manifest.cold 登记了但文件不在 → 明确报错，别静默返回 0 条。
-      // 只影响 `cold:true` 的显式查询，热档召回与提示段不读这里。
-      const loaded = readBucketRows(absolute, file.file, { missing: 'throw' })
-      rows.push(...loaded)
-    }
-  }
-  return rows
-}
 
-/**
- * 往冷档追加（D2/D5）：`cold/<year>-<a|b|…>.jsonl`，一年一档、单片 ≤ `COLD_MAX_BYTES`，
- * 超了按字母**新开一片**（不合并——合并不会变小）。
- * 每片登记 `{file, count, bytes}`；返回的 `appends` 用于失败回滚（truncate 回原大小）。
- */
-export function appendColdRecords(dataDir, cold, records, options = {}) {
-  const dir = String(dataDir || '')
-  const current = normalizeCold(cold)
-  const appends = []
-  const list = Array.isArray(records) ? records.filter((row) => row !== null && typeof row === 'object' && !Array.isArray(row)) : []
-  if (list.length === 0) return { cold: current, appends }
-  const maxBytes = Number.isFinite(Number(options.coldMaxBytes)) ? Number(options.coldMaxBytes) : COLD_MAX_BYTES
-  const byYear = new Map()
-  for (const row of list) {
-    const ts = String(row.lastSeenAt || row.ts || row.registeredAt || '')
-    const parsed = Date.parse(ts)
-    const year = Number.isFinite(parsed) ? new Date(parsed).getUTCFullYear() : new Date().getUTCFullYear()
-    if (!byYear.has(year)) byYear.set(year, [])
-    byYear.get(year).push(row)
-  }
-  fs.mkdirSync(coldPath(dir), { recursive: true })
-  for (const [year, rows] of [...byYear.entries()].sort((left, right) => left[0] - right[0])) {
-    const group = current.years.find((item) => Number(item.year) === year) || (() => {
-      const created = { year, count: 0, bytes: 0, files: [] }
-      current.years.push(created)
-      current.years.sort((left, right) => left.year - right.year)
-      return created
-    })()
-    const newColdFile = () => {
-      const entry = { file: `${COLD_DIR}/${year}-${coldLetterOf(group.files.length)}.jsonl`, count: 0, bytes: 0 }
-      group.files.push(entry)
-      return entry
-    }
-    let target = group.files[group.files.length - 1] || newColdFile()
-    let pending = []
-    let pendingBytes = 0
-    const flush = () => {
-      if (pending.length === 0) return
-      const text = bucketTextOf(pending)
-      const bytes = Buffer.byteLength(text, 'utf8')
-      const absolute = path.join(dir, target.file)
-      let bytesBefore = 0
-      try {
-        bytesBefore = fs.statSync(absolute).size
-      } catch {
-        bytesBefore = 0
-      }
-      fs.appendFileSync(absolute, text, 'utf8')
-      target.count = (Number(target.count) || 0) + pending.length
-      target.bytes = bytesBefore + bytes
-      appends.push({ file: target.file, bytesBefore, bytes, rows: pending.length })
-      pending = []
-      pendingBytes = 0
-    }
-    for (const row of rows) {
-      const lineBytes = Buffer.byteLength(JSON.stringify(row), 'utf8') + 1
-      if (pending.length === 0) {
-        // 当前片已有内容且这条放不下 → 按字母新开一片（单片上限靠这里守住）
-        if ((Number(target.bytes) || 0) > 0 && (Number(target.bytes) || 0) + lineBytes > maxBytes) target = newColdFile()
-      } else if ((Number(target.bytes) || 0) + pendingBytes + lineBytes > maxBytes) {
-        flush()
-        target = newColdFile()
-      }
-      pending.push(row)
-      pendingBytes += lineBytes
-    }
-    flush()
-  }
-  for (const year of current.years) {
-    year.count = year.files.reduce((sum, file) => sum + (Number(file.count) || 0), 0)
-    year.bytes = year.files.reduce((sum, file) => sum + (Number(file.bytes) || 0), 0)
-  }
-  return { cold: normalizeCold(current), appends }
-}
 
-/** 压缩失败回滚：把追加进冷档的内容截掉（append-only，截回原大小即可）。 */
-function rollbackColdAppends(dir, appends) {
-  for (const item of [...(Array.isArray(appends) ? appends : [])].reverse()) {
-    const absolute = path.join(dir, item.file)
-    try {
-      if (Number(item.bytesBefore) <= 0) fs.unlinkSync(absolute)
-      else fs.truncateSync(absolute, Number(item.bytesBefore))
-    } catch {
-      // 回滚失败只能留在日志里；数据仍在备份里
-    }
-  }
-}
 
 /**
  * 只读指定类型的分片（G1，P3 的省读入口）：`typeIds` 为空表示全部。
@@ -2778,25 +2342,6 @@ export function storageFileCount(dataDir) {
   return count
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 0.27.0 P0：分族存储（分类 → 文件夹 / 族 → 文件 / 经验 → 行）
-// 目标：分类只决定目录，族决定文件；检索读路径仍走 manifest.buckets 列表，形状不变。
-// 约束：不引入新存储引擎，复用现有 bucket 文本/哈希/原子写/manifest 构建。
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const FAMILY_LAYOUT = 'family'
-export const FLAT_LAYOUT = 'family-flat'
-export const LIBRARY_DIR = 'library'
-
-/** 0.33：单层族布局（library/<族~hash>.jsonl）。 */
-export function isFlatLayout(dataDir) {
-  try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(String(dataDir || ''), 'manifest.json'), 'utf8'))
-    return manifest.layout === FLAT_LAYOUT
-  } catch { return false }
-}
-export const UNFILED_FAMILY = '未分族'
-export const FAMILY_SCHEMA = 3
 
 /** 行的族键：`family` 字段优先；缺省 / 空值 → 未分族。 */
 export function familyOf(row) {
@@ -2805,44 +2350,9 @@ export function familyOf(row) {
   return raw === '' ? UNFILED_FAMILY : raw
 }
 
-/**
- * 族名 → 文件名（0.27.0 R1 修复）：**清洗名 + 原名哈希尾缀**保证单射。
- * - 非法字符/空白折叠/大小写不同的族名不会撞同一文件（哈希取自原族名）；
- * - `.`/`..`/空名 → `_~hash`，避免与「未分族」或路径穿越混淆；
- * - 按码点截断 40 字（不劈代理对），哈希尾缀保证截断后仍可区分；
- * - 分片后缀 `.N` 追加在哈希段之后，族名里形如 `.1` 的尾巴不会再与分片撞名。
- */
-function safeFamilyFileName(family) {
-  const raw = String(family === undefined || family === null ? '' : family)
-  const cleaned = raw.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/\s+/gu, ' ').trim()
-  const base = cleaned === '' || cleaned === '.' || cleaned === '..' ? '_' : cleaned
-  const head = [...base].slice(0, 40).join('')
-  return `${head}~${contentHash(raw).slice(0, 8)}`
-}
 
-function safeTypeDirName(typeId) {
-  const raw = String(typeId === undefined || typeId === null || typeId === '' ? 'ty_other' : typeId)
-  const cleaned = raw.replace(/[\\/:*?"<>|.]/g, '_')
-  return cleaned === '' ? 'ty_other' : cleaned
-}
 
-/** 族文件相对路径：`library/<typeId>/<族~hash>.jsonl`（第 2 片起 `.1.jsonl`）。 */
-export function familyRelPath(typeId, family, index = 0, dataDir = '') {
-  const name = safeFamilyFileName(family)
-  // 0.33：单层族布局不再有分类目录。
-  if (dataDir !== '' && isFlatLayout(dataDir)) return `${LIBRARY_DIR}/${name}${index > 0 ? `.${index}` : ''}.jsonl`
-  const safeType = safeTypeDirName(typeId)
-  return `${LIBRARY_DIR}/${safeType}/${name}${index > 0 ? `.${index}` : ''}.jsonl`
-}
 
-/** 是否已经切到分族布局（有 library/ 目录即视为是）。 */
-export function hasFamilyLayout(dataDir) {
-  return fs.existsSync(path.join(String(dataDir || ''), LIBRARY_DIR))
-}
-export function familyDirOf(dataDir, typeId) {
-  // 与 familyRelPath 使用同一套清洗，避免「文件在 library/a_b/、索引写到 library/a/b/」的分叉。
-  return path.join(String(dataDir || ''), LIBRARY_DIR, safeTypeDirName(typeId))
-}
 
 /**
  * 按 (typeId, family) 分组；未知类型落 `ty_other`；空族落 `未分族`。
@@ -3417,4 +2927,39 @@ export function assertFamilyBucketsIntact(dataDir, buckets) {
       if (contentHash(expected) !== bucket.hash) throw new Error(`经验库分族文件内容与 manifest 声明不一致：${label}（hash 不符，拒绝把替换/篡改内容当经验返回）`)
     }
   }
+}
+export {
+  SHARD_SCHEMA,
+  SHARD_K,
+  MANIFEST_FILE,
+  BUCKETS_DIR,
+  COLD_DIR,
+  LEGACY_FILE,
+  LEGACY_SOURCE_FILE,
+  COMPACT_BACKUP_DIR,
+  FAMILY_LAYOUT,
+  FLAT_LAYOUT,
+  LIBRARY_DIR,
+  UNFILED_FAMILY,
+  FAMILY_SCHEMA,
+  manifestPath,
+  bucketsPath,
+  coldPath,
+  legacyPath,
+  shardBucketIndex,
+  shardFileName,
+  shardRelPath,
+  isFlatLayout,
+  familyRelPath,
+  hasFamilyLayout,
+  familyDirOf,
+  contentHash,
+  readJsonFile,
+  bucketTextOf,
+  COLD_MAX_BYTES,
+  normalizeCold,
+  scanColdNormalized,
+  missingColdFiles,
+  readColdRecords,
+  appendColdRecords,
 }

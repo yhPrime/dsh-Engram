@@ -6,156 +6,84 @@
  * - 仓库根在 `.exp`（`.exp/.git`），引擎只提交 `skills/` 路径；
  * - 事件按「障碍签名」独立记录：干净成功给每个活跃签名各记 clean；
  *   同一签名连续 3 次 → 覆盖技能并归档，之后复发从 1 重新累计。
+ *
+ * 0.45.0 拆分（纯搬代码，行为与导出面不变）：路径与安全校验 → skill-paths.js；
+ * 磁盘表示（SKILL.md/skill.json/附件清单）→ skill-files.js；列表与提示段缓存、全局注册、
+ * 套件树、附件挂载与 git 提交 → skill-registry.js。本文件保留匹配、沉淀、目录与复用回执，
+ * 并把三个新模块的导出名原样转出。
  */
+
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 
 import { abstractState, stateSimilarity } from './kernel.js'
-import {
-  DEFAULT_SKILL_VOLATILITY,
-  HALF_LIFE_DAYS,
-  lifecycleMetaOf,
-  normalizeAppliesTo,
-  normalizeIsoDate,
-  normalizeVolatility,
-} from './retrieval.js'
+import { DEFAULT_SKILL_VOLATILITY, HALF_LIFE_DAYS } from './retrieval.js'
 
-export const SKILLS_DIRNAME = 'skills'
-export const SCRIPTS_DIRNAME = 'scripts'
-const MAX_ATTACH_FILE_BYTES = 2 * 1024 * 1024
-const MAX_ATTACH_TOTAL_BYTES = 8 * 1024 * 1024
-const MAX_ATTACH_COUNT = 200
-export const SKILL_FILENAME = 'SKILL.md'
-export const META_FILENAME = 'skill.json'
+import {
+  SKILLS_DIRNAME,
+  SCRIPTS_DIRNAME,
+  SKILL_FILENAME,
+  META_FILENAME,
+  skillsRootOf,
+  assertSafeSlug,
+  assertSafePathSegment,
+  assertSafeRelPath,
+  pathIsLink,
+  skillDirOf,
+  slugify,
+  SKILL_SCAN_SKIP_DIRS,
+} from './skill-paths.js'
+
+import {
+  RESOLVED_LIMIT,
+  writeFileAtomic,
+  defaultMeta,
+  readSkill,
+  readSkillBySlug,
+  runnerForScript,
+  skillRuntimeOf,
+  clipSkillBody,
+  writeSkill,
+  normalizeMeta,
+  readJsonFile,
+  writeJsonFile,
+  headingIndex,
+  sectionBounds,
+  safeSliceEnd,
+} from './skill-files.js'
+
+import {
+  listSkills,
+  listSkillsCached,
+  clearSkillsHintCache,
+  attachSkillFiles,
+  dshGlobalSkillsRoot,
+  globalRegistrationOf,
+  registerSkillGlobally,
+  unregisterSkillFromDsh,
+  updateSkillMeta,
+  forgetSkill,
+  buildSkillTree,
+  subtreeSkills,
+  findSkillTreeNode,
+  registerSkillTree,
+  unregisterSkillTree,
+  forgetSkillTree,
+  rewriteSkillIds,
+  moveSkillToTop,
+  applySkillNodeAction,
+  ensureSkillsRepo,
+  commitSkills,
+  sleepSync,
+} from './skill-registry.js'
 export const EXCEPTION_LIMIT = 5
-export const RESOLVED_LIMIT = 20
+
 export const EVENTS_LIMIT = 10
 export const MATCH_MIN_SIMILARITY = 0.12
 export const MATCH_AMBIGUITY_MARGIN = 0.15
 export const CONFIDENT_MIN_USES = 3
 export const CONFIDENT_MIN_RATIO = 0.8
-
-const GIT_IDENTITY = ['-c', 'user.name=dsh-exp-lib', '-c', 'user.email=exp-lib@local']
-
-export function skillsRootOf(dataDir) {
-  return path.join(String(dataDir || ''), SKILLS_DIRNAME)
-}
-
-const RESERVED_SLUG = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
-
-/** slug 只允许字母/数字/中文/短横；拒绝穿越、保留名、尾点尾空格。 */
-export function assertSafeSlug(value) {
-  const slug = String(value || '')
-  if (slug === '' || slug.length > 64) throw new Error('技能 slug 为空或超过 64 字符')
-  if (!/^[a-z0-9\u4e00-\u9fa5][a-z0-9\u4e00-\u9fa5-]*$/i.test(slug)) throw new Error(`技能 slug 非法：${slug}`)
-  if (slug.includes('..')) throw new Error(`技能 slug 不能包含 ..：${slug}`)
-  if (RESERVED_SLUG.test(slug)) throw new Error(`技能 slug 不能是 Windows 保留名：${slug}`)
-  if (/[. ]$/.test(slug)) throw new Error(`技能 slug 不能以点或空格结尾：${slug}`)
-  return slug
-}
-
-const RESERVED_SEGMENT = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i
-const ILLEGAL_SEGMENT = /[<>:"/\\|?*\u0000-\u001f]/
-
-/**
- * 套件树里的一个路径段。
- *
- * 新建技能仍走 `assertSafeSlug`（严格小写短横线）；套件里的子目录要保住来源原名，
- * 所以这里放宽到「文件系统安全」：允许中文、空格、点、下划线，但拒绝穿越、
- * 非法字符、尾点/尾空格与 Windows 保留名。名字只在 skillsRoot 内解析，不拼绝对路径。
- */
-export function assertSafePathSegment(value) {
-  const name = String(value || '')
-  if (name === '' || name === '.' || name === '..') throw new Error(`技能路径段非法：${name}`)
-  if (name.length > 100) throw new Error(`技能路径段超过 100 字符：${name}`)
-  if (ILLEGAL_SEGMENT.test(name)) throw new Error(`技能路径段含非法字符：${name}`)
-  if (/[. ]$/.test(name)) throw new Error(`技能路径段不能以点或空格结尾：${name}`)
-  if (RESERVED_SEGMENT.test(name)) throw new Error(`技能路径段不能是 Windows 保留名：${name}`)
-  return name
-}
-
-/** 技能 id：相对 skillsRoot 的 POSIX 路径（`套件/子技能`），逐段校验。 */
-export function assertSafeRelPath(value) {
-  const raw = String(value || '')
-  if (raw === '' || raw.length > 512) throw new Error('技能 id 为空或过长')
-  if (raw.startsWith('/') || raw.endsWith('/') || raw.includes('\\')) throw new Error(`技能 id 非法：${raw}`)
-  const parts = raw.split('/')
-  if (parts.some((part) => part === '' || part === '.' || part === '..')) throw new Error(`技能 id 含空段或穿越：${raw}`)
-  for (const part of parts) assertSafePathSegment(part)
-  return parts.join('/')
-}
-
-/** 同一路径比较（Windows 大小写不敏感；两边都先 path.resolve）。 */
-function samePath(left, right) {
-  const a = path.resolve(String(left))
-  const b = path.resolve(String(right))
-  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
-}
-
-/**
- * 目录**本身**是不是链接（symlink 或 Windows junction），不看祖先目录。
- *
- * 不能拿 `realpath(target) !== resolve(target)` 判：dataDir 本身可能是指向同步目录的 junction，
- * 此时 `link/skills/x` 的 realpath 与自身必然不同，正常技能会被全判成链接——写入报成功、
- * 读回/列表却全是空（静默不可见）。这里只比「自身 realpath」与「父目录 realpath + 自身名」：
- * 相等说明这一层不是链接；祖先是不是链接不影响判定。祖先越界由 skillDirOf 的 skillsRoot
- * 包含性检查负责。
- */
-export function pathIsLink(target) {
-  const abs = path.resolve(String(target))
-  try {
-    if (fs.lstatSync(abs).isSymbolicLink()) return true
-  } catch {
-    return false
-  }
-  // Windows junction 可能不报 symlink（不同 Node 版本行为不一），用父级 realpath 比对兜底。
-  try {
-    const real = fs.realpathSync.native(abs)
-    const parentReal = fs.realpathSync.native(path.dirname(abs))
-    return !samePath(real, path.join(parentReal, path.basename(abs)))
-  } catch {
-    return false
-  }
-}
-
-/** 在 skillsRoot 内解析技能目录；越界或链接直接拒绝。 */
-export function skillDirOf(dataDir, id) {
-  const safe = assertSafeRelPath(id)
-  const root = path.resolve(skillsRootOf(dataDir))
-  const dir = path.resolve(root, ...safe.split('/'))
-  const rel = path.relative(root, dir)
-  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`技能路径越界：${safe}`)
-  try {
-    if (pathIsLink(dir)) throw new Error(`技能目录不能是链接：${safe}`)
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error
-  }
-  // Windows junction 的 lstat 不是 symlink：用 realpath 再确认没有跳出 skillsRoot。
-  try {
-    const realpath = fs.realpathSync.native || fs.realpathSync
-    const rootReal = realpath(root)
-    const dirReal = realpath(dir)
-    const realRel = path.relative(rootReal, dirReal)
-    if (realRel === '' || realRel.startsWith('..') || path.isAbsolute(realRel)) {
-      throw new Error(`技能目录越界（realpath）：${safe}`)
-    }
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error
-  }
-  return dir
-}
-
-export function slugify(text) {
-  const slug = String(text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-  return slug === '' ? `skill-${Date.now().toString(36)}` : slug
-}
 
 /** 错误文本归一化：去路径/时间戳/行号，保留错误码与关键 token。 */
 export function normalizeSignature(text) {
@@ -174,155 +102,6 @@ export function normalizeSignature(text) {
 export function summarizeSignature(text) {
   const line = String(text || '').split(/\r?\n/)[0].replace(/\s+/g, ' ').trim()
   return line === '' ? '未命名障碍' : line.slice(0, 60)
-}
-
-/* -------------------------------------------------------------------------- */
-/* 文件读写                                                                    */
-/* -------------------------------------------------------------------------- */
-
-function readJsonFile(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return null
-  }
-}
-
-export function writeFileAtomic(file, content) {
-  const dir = path.dirname(file)
-  fs.mkdirSync(dir, { recursive: true })
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
-  try {
-    fs.writeFileSync(tmp, content, 'utf8')
-    fs.renameSync(tmp, file)
-  } catch (error) {
-    try { fs.unlinkSync(tmp) } catch { /* 清理失败不掩盖原错误 */ }
-    throw error
-  }
-}
-
-function writeJsonFile(file, value) {
-  writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`)
-}
-
-/**
- * corrupt/metaError 是 readSkill 给「本次读取」挂的诊断标记，不属于账本字段。
- * 写回前剥离：否则引擎修好 skill.json 后，标记会随 existing.meta 一起写进新账本，
- * 之后 metaRaw 已能解析却仍显示「账本损坏」，validateAllSkills 永久报警（R8 D2）。
- * 成功写回即视为修复，内存对象里的标记也一并清掉（后续 pendingCommit 重写不再带病）。
- */
-function stripMetaReadFlags(meta) {
-  if (meta === null || typeof meta !== 'object') return meta
-  delete meta.corrupt
-  delete meta.metaError
-  return meta
-}
-
-function parseFrontmatter(text) {
-  const lines = String(text || '').split(/\r?\n/)
-  if (lines[0] !== '---') return { fields: {}, body: lines.join('\n') }
-  const fields = {}
-  let idx = 1
-  for (; idx < lines.length; idx += 1) {
-    const line = lines[idx]
-    if (line === '---') break
-    const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line)
-    if (!match) continue
-    let value = match[2].trim()
-    // YAML 块标量：`description: |` / `>` 的值在缩进块里。
-    // 不认它会把描述读成「|」或「>」，技能的 name/description 就废了。
-    if (/^[|>][+-]?$/.test(value)) {
-      const block = []
-      let cursor = idx + 1
-      for (; cursor < lines.length; cursor += 1) {
-        const inner = lines[cursor]
-        if (inner === '---') break
-        if (inner.trim() !== '' && !/^\s/.test(inner)) break
-        block.push(inner)
-      }
-      const nonEmpty = block.filter((inner) => inner.trim() !== '')
-      const indent = nonEmpty.length === 0 ? 0 : Math.min(...nonEmpty.map((inner) => (inner.match(/^\s*/) || [''])[0].length))
-      const dedented = block.map((inner) => inner.slice(indent)).join('\n').trim()
-      value = value.startsWith('>') ? dedented.replace(/\n(?=\S)/gu, ' ') : dedented
-      idx = cursor - 1
-    }
-    fields[match[1]] = value
-  }
-  return { fields, body: lines.slice(idx + 1).join('\n').replace(/^\n+/, '') }
-}
-
-function oneLine(value) {
-  return String(value || '').replace(/[\r\n]+/g, ' ').trim()
-}
-
-function renderSkillMd(name, description, body) {
-  return `---\nname: ${oneLine(name)}\ndescription: ${oneLine(description)}\n---\n\n${String(body || '').trim()}\n`
-}
-
-export function defaultMeta(id) {
-  return {
-    id,
-    typeName: '',
-    // 一个技能可以挂多个分类（技能套件常见：一个套件覆盖多类任务），便签是给人看的备注
-    typeNames: [],
-    notes: [],
-    context: [],
-    triggers: [],
-    confidence: { uses: 0, helped: 0, hurt: 0, lastUsedAt: null },
-    revisions: 0,
-    obstacles: {},
-    resolved: [],
-    derivedFrom: [],
-    // 新技能一开始排到最前：刚加进来的技能先让用户看见、能被触发，
-    // 之后靠实际使用（feedback/uses）把顺序调回正常。
-    order: 90,
-    files: [],
-    pendingCommit: false,
-    // 时效治理（0.20 P0）：技能比经验更易腐，旧技能缺字段时按 perishable 解释（计划书 §7.1）。
-    volatility: 'perishable',
-    lastVerifiedAt: null,
-    reviewAfter: null,
-    verifiedBy: null,
-    appliesTo: null,
-    stale_at: null,
-    stale_reason: null,
-    review_note: '',
-    retired_at: null,
-    retired_reason: null,
-  }
-}
-
-function normalizeMeta(raw, id) {
-  const meta = { ...defaultMeta(id), ...(raw && typeof raw === 'object' ? raw : {}) }
-  meta.confidence = { uses: 0, helped: 0, hurt: 0, lastUsedAt: null, ...(raw && raw.confidence) }
-  meta.obstacles = raw && raw.obstacles && typeof raw.obstacles === 'object' ? raw.obstacles : {}
-  meta.resolved = Array.isArray(raw && raw.resolved) ? raw.resolved.slice(-RESOLVED_LIMIT) : []
-  meta.derivedFrom = Array.isArray(raw && raw.derivedFrom) ? raw.derivedFrom : []
-  meta.typeNames = Array.isArray(raw && raw.typeNames) ? raw.typeNames.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()).slice(0, 12) : []
-  meta.notes = Array.isArray(raw && raw.notes) ? raw.notes.filter((item) => typeof item === 'string' && item.trim() !== '').map((item) => item.trim()).slice(0, 50) : []
-  meta.triggers = Array.isArray(raw && raw.triggers) ? raw.triggers : []
-  meta.context = Array.isArray(raw && raw.context) ? raw.context : []
-  // 附件登记不在读取时截断：截断会让第 41 个附件「文件在、登记表里没有」，下次 attach 就丢。
-  // 数量上限放在 attach 时明确拒绝（见 MAX_ATTACH_COUNT），而不是静默丢弃。
-  meta.files = Array.isArray(raw && raw.files)
-    ? raw.files.filter((item) => item && typeof item.path === 'string')
-    : []
-  // 时效字段（0.20 P0）：旧技能缺字段按 perishable 解释，读时不写回；只有真正改技能时才落盘。
-  meta.volatility = normalizeVolatility(raw && raw.volatility) || DEFAULT_SKILL_VOLATILITY
-  meta.lastVerifiedAt = normalizeIsoDate(raw && raw.lastVerifiedAt)
-  meta.reviewAfter = normalizeIsoDate(raw && raw.reviewAfter)
-  meta.verifiedBy = raw && raw.verifiedBy ? String(raw.verifiedBy).slice(0, 80) : null
-  meta.appliesTo = normalizeAppliesTo(raw && raw.appliesTo)
-  meta.stale_at = normalizeIsoDate(raw && raw.stale_at)
-  meta.stale_reason = raw && raw.stale_reason ? String(raw.stale_reason).slice(0, 60) : null
-  meta.review_note = raw && raw.review_note ? String(raw.review_note).slice(0, 240) : ''
-  meta.retired_at = normalizeIsoDate(raw && raw.retired_at)
-  meta.retired_reason = raw && raw.retired_reason ? String(raw.retired_reason).slice(0, 120) : null
-  // corrupt/metaError 是 readSkill 的「本次读取」诊断标记，不是账本字段：旧数据若把标记写进磁盘，
-  // 不能再原样展开（否则账本已修复、健康检查仍永久报损坏）。是否损坏只由本次 metaRaw 能否解析决定。
-  delete meta.corrupt
-  delete meta.metaError
-  return meta
 }
 
 /** 从同族经验归纳出技能草稿：≥minSamples 条、≥2 正 ≥1 负、抽共同词与反例。 */
@@ -391,296 +170,6 @@ export function deriveSkillDraft(candidates, options = {}) {
 }
 
 /**
- * 读一个技能目录；缺 SKILL.md 返回 null，损坏的 skill.json 用默认值兜底。
- * id 是相对 skillsRoot 的 POSIX 路径（顶层技能 = 目录名）；不传时退回目录名。
- */
-export function readSkill(dir, id = path.basename(dir)) {
-  try {
-    if (pathIsLink(dir)) return null
-  } catch {
-    return null
-  }
-  const skillFile = path.join(dir, SKILL_FILENAME)
-  let raw
-  try {
-    // 缺失（ENOENT）/ 是目录（EISDIR）/ 权限不足（EACCES）/ 读的瞬间被删都按「读不出」处理。
-    // 这里不能抛：listSkills 逐目录读，单个坏技能项会拖垮整库列表与普通召回（D1）。
-    raw = fs.readFileSync(skillFile, 'utf8')
-  } catch {
-    return null
-  }
-  const { fields, body } = parseFrontmatter(raw)
-  let rel = String(id || path.basename(dir)).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
-  if (rel === '') rel = path.basename(dir)
-  const metaPath = path.join(dir, META_FILENAME)
-  const metaRaw = readJsonFile(metaPath)
-  const meta = normalizeMeta(metaRaw, rel)
-  // skill.json 存在但读不出来：不能静默当默认账本（confidence/obstacles/files 会像丢了一样）。
-  // 读路径仍然返回技能（正文可用），但打上标记，validateAllSkills / 界面能看到「账本损坏」。
-  // 形状也要判：`[]` / `"x"` / `123` / `true` 都是合法 JSON，但不是账本对象，同样不能被静默当默认账本。
-  const metaNotObject = metaRaw !== null && (typeof metaRaw !== 'object' || Array.isArray(metaRaw))
-  if (fs.existsSync(metaPath) && (metaRaw === null || metaNotObject)) {
-    meta.corrupt = true
-    meta.metaError = metaRaw === null
-      ? `技能账本损坏：${META_FILENAME}（无法解析，已按默认值显示；修复后可恢复计数）`
-      : `技能账本损坏：${META_FILENAME}（不是账本对象，已按默认值显示；修复后可恢复计数）`
-  }
-  // 磁盘路径是唯一事实源：账本里的旧 id 不拦路，读出来按当前位置纠正（写回发生在下次落盘）。
-  meta.id = rel
-  const parts = rel.split('/')
-  return {
-    id: rel,
-    slug: rel,
-    path: rel,
-    parentPath: parts.length > 1 ? parts.slice(0, -1).join('/') : '',
-    depth: parts.length - 1,
-    dir,
-    name: fields.name && fields.name !== '' ? fields.name : parts[parts.length - 1],
-    description: fields.description || '',
-    body,
-    meta,
-  }
-}
-
-export function readSkillBySlug(dataDir, slug) {
-  try {
-    const id = assertSafeRelPath(slug)
-    return readSkill(skillDirOf(dataDir, id), id)
-  } catch {
-    return null
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* 技能运行时（0.24.1）：召回后直接用技能里准备好的文件，而不是让模型重写       */
-/* -------------------------------------------------------------------------- */
-
-const SCRIPT_RUNNERS = new Map([
-  ['.py', 'python'],
-  ['.js', 'node'],
-  ['.mjs', 'node'],
-  ['.cjs', 'node'],
-  ['.ps1', 'powershell -NoProfile -File'],
-  ['.sh', 'bash'],
-  ['.bat', 'cmd /c'],
-  ['.cmd', 'cmd /c'],
-])
-
-/** .py → `python "<abs>"`；认不出的扩展名返回 null。 */
-export function runnerForScript(file) {
-  const runner = SCRIPT_RUNNERS.get(path.extname(String(file || '')).toLowerCase())
-  return runner === undefined ? null : `${runner} "${file}"`
-}
-
-/** 技能包内这些目录不扫（构建产物/缓存），避免拖慢召回。 */
-const PACKAGE_SKIP_DIRS = new Set(['node_modules', '.venv', 'venv', '__pycache__', 'dist', 'build', '.git', '.idea', '.vscode'])
-
-function collectPackageFiles(dir, sub, out, depth, cap) {
-  if (depth > 2 || out.length >= cap) return
-  let entries = []
-  try {
-    entries = fs.readdirSync(path.join(dir, sub), { withFileTypes: true })
-  } catch {
-    return
-  }
-  for (const entry of entries) {
-    if (out.length >= cap) return
-    if (entry.name.startsWith('.')) continue
-    const rel = sub === '' ? entry.name : `${sub}/${entry.name}`
-    const abs = path.join(dir, rel)
-    if (entry.isDirectory()) {
-      if (PACKAGE_SKIP_DIRS.has(entry.name)) continue
-      collectPackageFiles(dir, rel, out, depth + 1, cap)
-      continue
-    }
-    if (!entry.isFile()) continue
-    let bytes = 0
-    try {
-      bytes = fs.statSync(abs).size
-    } catch {
-      bytes = 0
-    }
-    out.push({ path: rel, abs, bytes })
-  }
-}
-
-/**
- * 技能运行时清单：把「召回后怎么直接用它」一次性给全。
- *
- * 为什么需要：模型拿到技能正文后，以前只有 `files: ['scripts/x.py']` 这种相对路径，
- * 不知道技能根在哪、该用什么解释器跑，于是常常自己重写一个等价脚本——技能就白沉淀了。
- * 这里给出绝对路径 + 可直接执行的命令，模型照 run 跑即可，省 token 也省一次试错。
- */
-export function skillRuntimeOf(skill, options = {}) {
-  const dir = String((skill && skill.dir) || '')
-  if (dir === '') return null
-  const cap = Number(options.cap) > 0 ? Number(options.cap) : 24
-  const scripts = []
-  collectPackageFiles(dir, SCRIPTS_DIRNAME, scripts, 0, cap)
-  const references = []
-  for (const sub of ['references', 'templates', 'assets', 'data', 'examples']) {
-    collectPackageFiles(dir, sub, references, 0, cap)
-  }
-  const scriptRows = scripts.map((item) => ({
-    path: item.path,
-    abs: item.abs,
-    bytes: item.bytes,
-    run: runnerForScript(item.abs),
-  }))
-  const runnable = scriptRows.filter((item) => item.run !== null)
-  return {
-    dir,
-    skillFile: path.join(dir, SKILL_FILENAME),
-    scripts: scriptRows,
-    references: references.slice(0, cap).map((item) => ({ path: item.path, abs: item.abs, bytes: item.bytes })),
-    usage: runnable.length > 0
-      ? '自带脚本优先：先按 scripts[].run 直接执行，不要重写等价脚本；只有脚本识别不了（锚点漂移、复制页同号等边界）才自己写。'
-      : (scriptRows.length > 0
-        ? '有脚本但认不出解释器：先看脚本头部（shebang/注释）再决定怎么执行，别重写等价脚本。'
-        : '没有自带脚本：按正文步骤做。'),
-  }
-}
-
-/**
- * 召回时的正文裁剪（0.24.1）：长正文以前直接切前 6000 字，末尾的「## Resources / ## 脚本」
- * 正好被切掉——而那里才是脚本用法。现在保留开头 + 最后一节，中间省略。
- * 两处切口（保留尾节的头部窗口、纯头部截断）都按字符边界收口，见 safeSliceEnd：
- * 不把 emoji 等代理对字符切成孤立码元（否则落盘/传输时 UTF-8 会变成 U+FFFD）。
- */
-export function clipSkillBody(body, limit = 6000) {
-  const raw = String(body || '')
-  const cap = Number(limit) > 0 ? Number(limit) : 6000
-  if (raw.length <= cap) return { text: raw, truncated: false }
-  const headings = [...raw.matchAll(/^##\s+[^\n]*$/gmu)]
-  const tailStart = headings.length > 0 ? headings[headings.length - 1].index : -1
-  const tail = tailStart >= 0 ? raw.slice(tailStart) : ''
-  if (tail !== '' && tail.length <= Math.floor(cap * 0.6)) {
-    // 头部窗口的收尾点也要收在字符边界：emoji 等非 BMP 字符占 2 码元，按码元直切会切出孤立代理。
-    const head = raw.slice(0, safeSliceEnd(raw, Math.max(0, cap - tail.length - 30)))
-    return { text: `${head}\n…（中间省略）…\n${tail}`, truncated: true }
-  }
-  return { text: raw.slice(0, safeSliceEnd(raw, cap)), truncated: true }
-}
-
-// 技能包里的这些目录不会放技能；跳过可避免为了找子技能去遍历上万个附件文件。
-export const SKILL_SCAN_SKIP_DIRS = new Set([
-  'node_modules', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'dist', 'build',
-  'scripts', 'references', 'templates', 'assets', 'images', 'image', 'data', 'examples',
-])
-
-/**
- * 列出技能（递归）。
- *
- * 技能套件在磁盘上就是目录树：任何含 SKILL.md 的目录都是技能，中间目录只是收纳。
- * 所以这里递归扫描，子技能 id 是相对 skillsRoot 的路径（`套件/子技能`）。
- * options.onlyLocal=true 时不返回「已全局注册」的技能——它们已经交给 DSH 当真实技能用，
- * 经验库不再参与排序/召回，避免两个引擎同时抢着用它。
- */
-export function listSkills(dataDir, options = {}) {
-  const onlyLocal = options.onlyLocal === true
-  const root = skillsRootOf(dataDir)
-  if (!fs.existsSync(root)) return []
-  const skills = []
-  const visited = new Set()
-  const walk = (dir, rel, depth) => {
-    if (depth > 12) return
-    let real = ''
-    try {
-      real = fs.realpathSync(dir)
-    } catch {
-      return
-    }
-    if (visited.has(real)) return
-    visited.add(real)
-    let entries = []
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      if (entry.name.startsWith('.')) continue
-      if (SKILL_SCAN_SKIP_DIRS.has(entry.name)) continue
-      const childRel = rel === '' ? entry.name : `${rel}/${entry.name}`
-      let childDir
-      try {
-        childDir = skillDirOf(dataDir, childRel)
-      } catch {
-        continue
-      }
-      const skill = readSkill(childDir, childRel)
-      if (skill !== null && (!onlyLocal || globalRegistrationOf(skill) === null)) skills.push(skill)
-      walk(childDir, childRel, depth + 1)
-    }
-  }
-  walk(path.resolve(root), '', 0)
-  return skills.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
-}
-
-/** 写技能目录（SKILL.md + skill.json）。 */
-/**
- * 提示段专用技能目录缓存（0.14.0）：listSkills 要递归走 `skills/` 并逐份读 `SKILL.md` + `skill.json`，
- * 22 个技能实测约 60 ms，而提示段只列前几个名字。提示段容得下 2 秒陈旧；记录/召回/控制台仍走
- * `listSkills`，不吃这份缓存（避免测试与实时性受影响）。
- */
-const HINT_SKILLS_TTL_MS = 10000
-const hintSkillsCache = new Map()
-
-/**
- * skills 树签名（0.37 P0）：根目录 mtime + 每个顶层子目录 mtime。
- * 增删技能（含套件里加子技能）会改目录 mtime，所以签名一变就重扫；
- * 只改 SKILL.md 正文不会改目录 mtime，这类陈旧由 TTL 兜底（内容侧的实时读取走 readSkillBySlug）。
- */
-function skillsRootSignature(dataDir) {
-  try {
-    const root = skillsRootOf(dataDir)
-    const rootStat = fs.statSync(root)
-    let signature = `${Math.trunc(rootStat.mtimeMs)}`
-    let entries = []
-    try {
-      entries = fs.readdirSync(root, { withFileTypes: true })
-    } catch {
-      entries = []
-    }
-    for (const entry of entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))) {
-      if (!entry.isDirectory()) continue
-      try {
-        const stat = fs.statSync(path.join(root, entry.name))
-        signature += `|${entry.name}:${Math.trunc(stat.mtimeMs)}`
-      } catch {
-        signature += `|${entry.name}:?`
-      }
-    }
-    return signature
-  } catch {
-    return null
-  }
-}
-
-export function listSkillsCached(dataDir, options = {}) {
-  const key = `${path.resolve(String(dataDir || ''))}|${options.onlyLocal === true ? 'local' : 'all'}`
-  const hit = hintSkillsCache.get(key)
-  const now = Date.now()
-  const signature = skillsRootSignature(dataDir)
-  // 目录签名一致 → 命中（0.37 P0：导入新技能当次可见，不再等 10 秒）。
-  if (hit !== undefined && signature !== null && hit.signature === signature) return hit.skills
-  // 签名拿不到（目录不存在/读失败）时退回计时缓存，避免每次调用都重扫失败路径。
-  if (hit !== undefined && signature === null && now - hit.at < HINT_SKILLS_TTL_MS) return hit.skills
-  const skills = listSkills(dataDir, options)
-  hintSkillsCache.set(key, { at: now, skills, signature })
-  return skills
-}
-
-/** 技能目录变了就地清缓存（导入/注册/取消注册后由调用方决定要不要清；不调也只是多陈旧 2 秒）。 */
-export function clearSkillsHintCache(dataDir) {
-  const prefix = `${path.resolve(String(dataDir || ''))}|`
-  for (const key of [...hintSkillsCache.keys()]) {
-    if (key.startsWith(prefix)) hintSkillsCache.delete(key)
-  }
-}
-
-/**
  * 按技能树顶层目录分组（0.37 P1/P2 共用）。
  *
  * 组 = slug 的第一段；套件入口技能的 slug 没有斜杠（`ai-base-tools`），
@@ -716,573 +205,6 @@ export function skillGroupsOf(skills) {
     groups: [...groups.entries()].map(([name, items]) => ({ name, skills: items })),
     ungrouped,
   }
-}
-
-export function writeSkill(dir, draft, meta) {
-  fs.mkdirSync(dir, { recursive: true })
-  writeFileAtomic(path.join(dir, SKILL_FILENAME), renderSkillMd(draft.name, draft.description, draft.body))
-  writeJsonFile(path.join(dir, META_FILENAME), stripMetaReadFlags(meta))
-}
-
-/* -------------------------------------------------------------------------- */
-/* 附件（scripts/ + SKILL.md 的「## 脚本」节）                                  */
-/* -------------------------------------------------------------------------- */
-
-function safeAttachName(name) {
-  const base = String(name || '').split(/[\\/]/).pop() || ''
-  const cleaned = base.replace(/[^\w.\-]+/gu, '_').replace(/^\.+/u, '').slice(0, 80)
-  if (cleaned === '' || cleaned === '.' || cleaned === '..') throw new Error(`附件文件名不可用：${base}`)
-  return cleaned
-}
-
-function formatBytes(bytes) {
-  const size = Number(bytes) || 0
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-  return `${(size / 1024 / 1024).toFixed(1)} MB`
-}
-
-/** 把附件写进 SKILL.md 的 `## 脚本` 节（保留原有其它节）。 */
-function appendScriptsSection(dir, files) {
-  const skillFile = path.join(dir, SKILL_FILENAME)
-  const { fields, body } = parseFrontmatter(fs.readFileSync(skillFile, 'utf8'))
-  const lines = String(body || '').split(/\r?\n/)
-  const section = [
-    '## 脚本',
-    ...(files.length === 0 ? ['- （暂无附件）'] : files.map((item) => `- \`${item.path}\`（${formatBytes(item.bytes)}）`)),
-    '',
-    '> 运行前先确认解释器与依赖；命令示例可以补在对应条目下面。',
-  ]
-  const index = headingIndex(lines, '脚本')
-  let next
-  if (index >= 0) {
-    const { to } = sectionBounds(lines, index)
-    next = [...lines.slice(0, index), ...section, ...lines.slice(to)]
-  } else {
-    next = [...lines, '', ...section]
-  }
-  writeFileAtomic(skillFile, renderSkillMd(fields.name || path.basename(dir), fields.description || '', next.join('\n')))
-}
-
-/**
- * 给技能挂脚本附件：复制到 `<skill>/scripts/`，登记进 skill.json 的 files，
- * 并在 SKILL.md 里维护「## 脚本」清单。这样技能才是可执行的完整包。
- */
-export function attachSkillFiles(dataDir, slug, sources, options = {}) {
-  const skill = readSkillBySlug(dataDir, slug)
-  if (skill === null) throw new Error(`没有这个技能：${slug}`)
-  const scriptsDir = path.join(skill.dir, SCRIPTS_DIRNAME)
-  const files = Array.isArray(skill.meta.files) ? [...skill.meta.files] : []
-  let total = files.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0)
-  const added = []
-  // 先整体校验、再逐项落盘：中途拒绝（同名/超限）时不会留下未登记的孤儿文件。
-  const planned = []
-  let budget = total
-  const sourcesList = (Array.isArray(sources) ? sources : [])
-    .map((item) => String(item || '').trim())
-    .filter((item) => item !== '')
-  for (const raw of sourcesList) {
-    const resolved = path.resolve(raw)
-    let stat
-    try {
-      stat = fs.statSync(resolved)
-    } catch {
-      throw new Error(`附件不存在：${raw}`)
-    }
-    if (!stat.isFile()) throw new Error(`附件不是文件：${raw}`)
-    if (stat.size > MAX_ATTACH_FILE_BYTES) throw new Error(`单个附件不能超过 2MB：${raw}`)
-    const name = safeAttachName(resolved)
-    const rel = `${SCRIPTS_DIRNAME}/${name}`
-    // 同一次 attach 里同名文件会互相覆盖（只留最后一份），明确拒绝；跨调用替换是允许的。
-    if (planned.some((item) => item.rel === rel)) throw new Error(`同一次 attach 里有同名附件：${rel}（改名或分两次调用）`)
-    const index = files.findIndex((item) => item.path === rel)
-    const oldBytes = index >= 0 ? Number(files[index].bytes) || 0 : 0
-    // 同名附件是替换不是新增：预算要减去旧的一份，否则 3×1.5MB 同名文件会误撞 8MB 上限。
-    if (budget - oldBytes + stat.size > MAX_ATTACH_TOTAL_BYTES) throw new Error(`附件总量不能超过 8MB（当前 ${formatBytes(budget - oldBytes)}）`)
-    const pendingNew = planned.filter((item) => item.index < 0).length
-    if (index < 0 && files.length + pendingNew >= MAX_ATTACH_COUNT) throw new Error(`附件数量不能超过 ${MAX_ATTACH_COUNT} 个（当前 ${files.length + pendingNew}）`)
-    budget = budget - oldBytes + stat.size
-    planned.push({ resolved, stat, name, rel, index, oldBytes })
-  }
-  for (const item of planned) {
-    fs.mkdirSync(scriptsDir, { recursive: true })
-    const target = path.join(scriptsDir, item.name)
-    fs.copyFileSync(item.resolved, target)
-    const entry = {
-      path: item.rel,
-      bytes: item.stat.size,
-      sha256: createHash('sha256').update(fs.readFileSync(target)).digest('hex'),
-      addedAt: new Date().toISOString(),
-    }
-    if (item.index >= 0) files[item.index] = entry
-    else files.push(entry)
-    total += item.stat.size - item.oldBytes
-    added.push(entry)
-  }
-  skill.meta.files = files
-  appendScriptsSection(skill.dir, files)
-  const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${slug}): attach ${added.length} file(s)`)
-  return { slug, files, added, commit: committed }
-}
-
-
-/** DSH 扫描「已安装技能」的目录（全局注册的落点）。 */
-export function dshGlobalSkillsRoot(env = process.env) {
-  const home = String((env && env.DSH_HOME) || '').trim()
-  const base = home === '' ? path.join(os.homedir(), '.dsh') : path.resolve(home.replace(/^~(?=$|[\\/])/u, os.homedir()))
-  return path.join(base, 'skills')
-}
-
-/** 这个技能是否已经在全局注册（被 DSH 当真实技能加载）。 */
-export function globalRegistrationOf(skill) {
-  const meta = skill && skill.meta ? skill.meta : {}
-  const registered = meta.globalRegistered
-  return registered && typeof registered.path === 'string' && registered.path !== '' ? registered : null
-}
-
-/**
- * 只删链接本体，绝不递归：Windows 上 rm(recursive) 会顺着 junction 进去，
- * 把经验库里的源目录一起删光（实测过）。junction 只能 rmdir，symlink 用 unlink。
- */
-function removeLinkOnly(target) {
-  for (const attempt of [() => fs.rmdirSync(target), () => fs.unlinkSync(target)]) {
-    try {
-      attempt()
-      return true
-    } catch {
-      // 换下一种
-    }
-  }
-  return false
-}
-
-/**
- * 把一个技能链接进 DSH 的 skills 目录（用户手动点的动作，不是自动行为）。
- *
- * - 优先建 junction（Windows 上不需要管理员权限，且两边是同一份文件，改一处同步）；
- * - 链接建不出来才退回复制，并在 meta 里记 mode='copy'，取消注册时按记录删。
- * - 目标已被别人占用（不是指向本技能）时直接报错，绝不覆盖。
- */
-export function registerSkillGlobally(dataDir, slug, options = {}) {
-  const skill = readSkillBySlug(dataDir, slug)
-  if (skill === null) throw new Error(`没有这个技能：${slug}`)
-  const id = skill.id
-  // 链接目标用叶子名：套件里的子技能也要能在 DSH 的 skills/ 下被单独加载。
-  const leaf = id.split('/').pop()
-  const root = path.resolve(options.root || dshGlobalSkillsRoot())
-  fs.mkdirSync(root, { recursive: true })
-  const target = path.join(root, leaf)
-  let mode = 'junction'
-  // 幂等：账本记着就是这个目标、文件也还在 → 直接返回成功（别因 readlink 判不出 junction 就报占用）。
-  const registered = globalRegistrationOf(skill)
-  if (registered !== null && path.resolve(registered.path) === path.resolve(target) && fs.existsSync(target)) {
-    return { slug: id, id, leaf, targetDir: target, mode: registered.mode || 'junction', registered: true }
-  }
-  if (fs.existsSync(target)) {
-    // 已存在但账本没记（或记的是别处）：只有 realpath 指向同一技能才认领，否则绝不覆盖。
-    let same = false
-    try {
-      same = path.resolve(fs.realpathSync.native(target)) === path.resolve(fs.realpathSync.native(skill.dir))
-    } catch {
-      same = false
-    }
-    if (!same) throw new Error(`目标已被占用：${target}（不是经验库的链接，删掉或改名后再试）`)
-  } else {
-    try {
-      fs.symlinkSync(skill.dir, target, 'junction')
-    } catch {
-      copyTree(skill.dir, target)
-      mode = 'copy'
-    }
-  }
-  skill.meta.globalRegistered = { path: target, at: new Date().toISOString(), mode }
-  commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): register globally`)
-  clearSkillsHintCache(dataDir)
-  return { slug: id, id, leaf, targetDir: target, mode, registered: true }
-}
-
-/**
- * 取消全局注册：只删我们记下的那条链接/副本，别的一概不动。
- * 没注册过也不报错（幂等），返回 removed=false。
- */
-export function unregisterSkillFromDsh(dataDir, slug) {
-  const skill = readSkillBySlug(dataDir, slug)
-  if (skill === null) throw new Error(`没有这个技能：${slug}`)
-  const id = skill.id
-  const leaf = id.split('/').pop()
-  const registered = globalRegistrationOf(skill)
-  // 没登记过 = 幂等成功；但绝不猜默认路径、不动任何文件。
-  if (registered === null) {
-    return { slug: id, id, leaf, targetDir: path.join(dshGlobalSkillsRoot(), leaf), removed: false, registered: false }
-  }
-  const target = registered.path
-  let removed = false
-  if (!fs.existsSync(target)) {
-    removed = true
-  } else if (registered.mode === 'copy') {
-    // 只有确认是我们自己复制的那份才删，避免误删用户手放的技能。
-    fs.rmSync(target, { recursive: true, force: true })
-    removed = true
-  } else {
-    // 链接/junction：只删本体（递归会顺着 junction 删掉经验库源目录）。删不掉就报错并保留登记。
-    // 目标若已被替换成普通文件/目录，绝不能当链接删掉（那是用户的东西）。
-    if (!pathIsLink(target)) {
-      throw new Error(`目标已不是链接：${target}（登记已保留，确认后手动处理再重试）`)
-    }
-    removed = removeLinkOnly(target)
-    if (!removed) {
-      throw new Error(`无法删除全局链接：${target}（登记已保留，可稍后重试或手动删除）`)
-    }
-  }
-  delete skill.meta.globalRegistered
-  commitMeta(dataDir, path.join(skill.dir, META_FILENAME), skill.meta, `skill(${id}): unregister globally`)
-  clearSkillsHintCache(dataDir)
-  return { slug: id, id, leaf, targetDir: target, removed, registered: false }
-}
-
-/**
- * 改技能的「分类 + 便签」这类元数据。
- * 技能套件常用：一个技能挂多个分类、加几条给人看的便签；这些不参与排序打分，只做标识。
- */
-export function updateSkillMeta(dataDir, slug, patch = {}) {
-  const skill = readSkillBySlug(dataDir, slug)
-  if (skill === null) throw new Error(`没有这个技能：${slug}`)
-  const meta = skill.meta
-  if (patch.typeName !== undefined) meta.typeName = String(patch.typeName || '').trim()
-  if (Array.isArray(patch.typeNames)) {
-    meta.typeNames = patch.typeNames.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 12)
-  }
-  if (Array.isArray(patch.notes)) {
-    meta.notes = patch.notes.map(String).map((item) => item.trim()).filter((item) => item !== '').slice(0, 50)
-  }
-  // 排序：新建默认高（90），用户可手动调；范围 0~100。
-  if (patch.order !== undefined && Number.isFinite(Number(patch.order))) {
-    meta.order = Math.max(0, Math.min(100, Math.round(Number(patch.order))))
-  }
-  // 时效字段（0.20 P0）：只写显式给的；改易腐层没给复核时间时按新半衰期重排。
-  if (patch.volatility !== undefined) {
-    const next = normalizeVolatility(patch.volatility)
-    if (next !== '') meta.volatility = next
-    if (patch.reviewAfter === undefined && meta.lastVerifiedAt) {
-      meta.reviewAfter = new Date(Date.parse(meta.lastVerifiedAt) + (HALF_LIFE_DAYS[meta.volatility] || HALF_LIFE_DAYS.semi) * 86400000).toISOString()
-    }
-  }
-  if (patch.lastVerifiedAt !== undefined) meta.lastVerifiedAt = normalizeIsoDate(patch.lastVerifiedAt)
-  if (patch.reviewAfter !== undefined) meta.reviewAfter = normalizeIsoDate(patch.reviewAfter)
-  if (patch.verifiedBy !== undefined) meta.verifiedBy = patch.verifiedBy === null ? null : String(patch.verifiedBy || '').slice(0, 80)
-  if (patch.appliesTo !== undefined) meta.appliesTo = normalizeAppliesTo(patch.appliesTo)
-  if (patch.stale_at !== undefined) meta.stale_at = normalizeIsoDate(patch.stale_at)
-  if (patch.stale_reason !== undefined) meta.stale_reason = patch.stale_reason === null ? null : String(patch.stale_reason || '').slice(0, 60)
-  if (patch.review_note !== undefined) meta.review_note = String(patch.review_note || '').slice(0, 240)
-  if (patch.retired_at !== undefined) meta.retired_at = normalizeIsoDate(patch.retired_at)
-  if (patch.retired_reason !== undefined) meta.retired_reason = patch.retired_reason === null ? null : String(patch.retired_reason || '').slice(0, 120)
-  const committed = commitMeta(dataDir, path.join(skill.dir, META_FILENAME), meta, `skill(${slug}): meta`)
-  clearSkillsHintCache(dataDir)
-  return {
-    slug,
-    typeName: meta.typeName,
-    typeNames: meta.typeNames,
-    notes: meta.notes,
-    commit: committed,
-    lifecycle: lifecycleMetaOf(meta),
-  }
-}
-
-/** 忘记技能 = 删除这个技能目录（注册着的先取消注册，免得留悬空链接）。 */
-export function forgetSkill(dataDir, slug) {
-  const skill = readSkillBySlug(dataDir, slug)
-  if (skill === null) throw new Error(`没有这个技能：${slug}`)
-  let unregistered = false
-  if (globalRegistrationOf(skill) !== null) {
-    try {
-      unregistered = unregisterSkillFromDsh(dataDir, slug).removed
-    } catch {
-      unregistered = false
-    }
-  }
-  if (pathIsLink(skill.dir)) throw new Error(`拒绝删除链接：${slug}`)
-  fs.rmSync(skill.dir, { recursive: true, force: true })
-  const committed = commitSkills(dataDir, `skill(${skill.id}): forget`)
-  clearSkillsHintCache(dataDir)
-  return { slug: skill.id, id: skill.id, deleted: true, unregistered, commit: committed }
-}
-
-/* -------------------------------------------------------------------------- */
-/* 套件树（磁盘即结构）                                                        */
-/* -------------------------------------------------------------------------- */
-
-/**
- * 由技能列表构建目录树。
- * 含 SKILL.md 的目录是技能节点（kind=skill）；只为收纳存在的中间目录是组节点（kind=group）。
- * skillCount / registeredCount 按子树累计。
- */
-export function buildSkillTree(skills) {
-  const input = Array.isArray(skills) ? skills : []
-  const nodes = new Map()
-  const roots = []
-  const ensure = (id) => {
-    const existing = nodes.get(id)
-    if (existing) return existing
-    const parts = id.split('/')
-    const node = {
-      path: id,
-      name: parts[parts.length - 1],
-      kind: 'group',
-      depth: parts.length - 1,
-      skillCount: 0,
-      registeredCount: 0,
-      skill: null,
-      children: [],
-    }
-    nodes.set(id, node)
-    if (parts.length === 1) roots.push(node)
-    else ensure(parts.slice(0, -1).join('/')).children.push(node)
-    return node
-  }
-  for (const skill of input) {
-    if (!skill || typeof skill.id !== 'string' || skill.id === '') continue
-    const node = ensure(skill.id)
-    node.kind = 'skill'
-    node.name = skill.name || node.name
-    node.skill = skill
-  }
-  const count = (node) => {
-    let total = node.kind === 'skill' ? 1 : 0
-    // 内核技能对象带 meta.globalRegistered 记录；界面行只有 globalRegistered 布尔，两种都认。
-    let registered = node.skill
-      ? (node.skill.globalRegistered === true || globalRegistrationOf(node.skill) !== null ? 1 : 0)
-      : 0
-    for (const child of node.children) {
-      const sub = count(child)
-      total += sub.total
-      registered += sub.registered
-    }
-    node.skillCount = total
-    node.registeredCount = registered
-    node.childCount = Math.max(0, total - (node.kind === 'skill' ? 1 : 0))
-    node.children.sort((left, right) => left.name.localeCompare(right.name, 'zh'))
-    return { total, registered }
-  }
-  for (const root of roots) count(root)
-  roots.sort((left, right) => left.name.localeCompare(right.name, 'zh'))
-  return roots
-}
-
-/** 某个节点下的所有技能（含自身）。组节点就是整棵子树。 */
-export function subtreeSkills(skills, nodePath) {
-  const id = assertSafeRelPath(nodePath)
-  const list = Array.isArray(skills) ? skills : []
-  return list.filter((skill) => skill.id === id || skill.id.startsWith(`${id}/`))
-}
-
-/** 在树里按路径找节点；找不到返回 null。 */
-export function findSkillTreeNode(tree, nodePath) {
-  const id = assertSafeRelPath(nodePath)
-  const stack = Array.isArray(tree) ? [...tree] : []
-  while (stack.length > 0) {
-    const node = stack.pop()
-    if (node.path === id) return node
-    if (Array.isArray(node.children) && node.children.length > 0) stack.push(...node.children)
-  }
-  return null
-}
-
-function assertNodeExists(dataDir, nodePath) {
-  const id = assertSafeRelPath(nodePath)
-  const skills = listSkills(dataDir)
-  const members = subtreeSkills(skills, id)
-  if (members.length === 0) throw new Error(`没有这个节点：${id}`)
-  return { id, skills, members }
-}
-
-/** 子树注册到全局：逐项执行，单项失败不中断。 */
-export function registerSkillTree(dataDir, nodePath, options = {}) {
-  const { id, members } = assertNodeExists(dataDir, nodePath)
-  const results = []
-  const failed = []
-  for (const skill of members) {
-    try {
-      results.push(registerSkillGlobally(dataDir, skill.id, options))
-    } catch (error) {
-      failed.push({ path: skill.id, message: error && error.message ? error.message : String(error) })
-    }
-  }
-  return { action: 'register', path: id, total: members.length, ok: results.length, failed, results }
-}
-
-/** 子树取消注册：逐项执行，单项失败不中断。 */
-export function unregisterSkillTree(dataDir, nodePath) {
-  const { id, members } = assertNodeExists(dataDir, nodePath)
-  const results = []
-  const failed = []
-  for (const skill of members) {
-    if (globalRegistrationOf(skill) === null) continue
-    try {
-      results.push(unregisterSkillFromDsh(dataDir, skill.id))
-    } catch (error) {
-      failed.push({ path: skill.id, message: error && error.message ? error.message : String(error) })
-    }
-  }
-  return { action: 'unregister', path: id, total: members.length, ok: results.length, failed, results }
-}
-
-/**
- * 子树删除：先按 expect 校验数量（防 UI 过期），再逐个取消注册，最后删节点目录。
- * 节点目录必须是普通目录；链接一律拒绝（删链接会连带删目标，11-10 踩过）。
- */
-export function forgetSkillTree(dataDir, nodePath, options = {}) {
-  const { id, members } = assertNodeExists(dataDir, nodePath)
-  const expect = Number(options.expect)
-  if (!Number.isFinite(expect)) throw new Error('删除节点必须带 expect（子树技能数）')
-  if (expect !== members.length) throw new Error(`数量不匹配：预期 ${expect}，实际 ${members.length}（列表可能已过期，刷新后再试）`)
-  const unregistered = []
-  const failed = []
-  for (const skill of members) {
-    if (globalRegistrationOf(skill) === null) continue
-    try {
-      if (unregisterSkillFromDsh(dataDir, skill.id).removed) unregistered.push(skill.id)
-    } catch (error) {
-      failed.push({ path: skill.id, message: error && error.message ? error.message : String(error) })
-    }
-  }
-  if (failed.length > 0) {
-    // 还有注册没摘干净就删目录会留悬空链接：整单拒绝，让用户重试。
-    throw new Error(`有 ${failed.length} 个技能取消注册失败，已停止删除：${failed.map((item) => item.path).join('、')}`)
-  }
-  const dir = skillDirOf(dataDir, id)
-  if (!fs.existsSync(dir)) throw new Error(`没有这个节点目录：${id}`)
-  if (pathIsLink(dir)) throw new Error(`拒绝删除链接：${id}`)
-  fs.rmSync(dir, { recursive: true, force: true })
-  const committed = commitSkills(dataDir, `skill(${id}): forget subtree (${members.length})`)
-  clearSkillsHintCache(dataDir)
-  return { action: 'forget', path: id, deleted: true, total: members.length, unregistered, failed, commit: committed }
-}
-
-/** 按磁盘现状重写所有技能的 skill.json.id（移动目录后调用）。 */
-export function rewriteSkillIds(dataDir) {
-  let changed = 0
-  for (const skill of listSkills(dataDir)) {
-    const metaPath = path.join(skill.dir, META_FILENAME)
-    if (!fs.existsSync(metaPath)) continue
-    const raw = readJsonFile(metaPath)
-    if (raw === null || typeof raw !== 'object') continue
-    if (raw.id === skill.id) continue
-    raw.id = skill.id
-    writeJsonFile(metaPath, stripMetaReadFlags(raw))
-    changed += 1
-  }
-  return changed
-}
-
-/** 把子技能移出套件（移到顶层）。顶层重名直接拒绝，不覆盖。 */
-export function moveSkillToTop(dataDir, nodePath) {
-  const id = assertSafeRelPath(nodePath)
-  const skill = readSkillBySlug(dataDir, id)
-  if (skill === null) throw new Error(`没有这个技能：${id}（组节点不能移出）`)
-  const parts = id.split('/')
-  if (parts.length < 2) return { action: 'detach', path: id, moved: false, to: id }
-  const leaf = parts[parts.length - 1]
-  const target = skillDirOf(dataDir, leaf)
-  if (fs.existsSync(target)) throw new Error(`顶层已有同名技能：${leaf}（先改名或移走）`)
-  fs.renameSync(skill.dir, target)
-  rewriteSkillIds(dataDir)
-  const committed = commitSkills(dataDir, `skill(${id}): detach to top`)
-  return { action: 'detach', path: id, moved: true, to: leaf, commit: committed }
-}
-
-/** 通用节点动作入口（shell 只调这一个）。 */
-export function applySkillNodeAction(dataDir, action, nodePath, options = {}) {
-  const name = String(action || '').trim().toLowerCase()
-  if (name === 'register') return registerSkillTree(dataDir, nodePath, options)
-  if (name === 'unregister') return unregisterSkillTree(dataDir, nodePath)
-  if (name === 'forget') return forgetSkillTree(dataDir, nodePath, options)
-  if (name === 'detach') return moveSkillToTop(dataDir, nodePath)
-  throw new Error(`不认识的节点动作：${action}`)
-}
-
-function copyTree(fromDir, toDir) {
-  fs.mkdirSync(toDir, { recursive: true })
-  for (const entry of fs.readdirSync(fromDir, { withFileTypes: true })) {
-    const from = path.join(fromDir, entry.name)
-    const to = path.join(toDir, entry.name)
-    if (entry.isDirectory()) copyTree(from, to)
-    else fs.copyFileSync(from, to)
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* git                                                                        */
-/* -------------------------------------------------------------------------- */
-/* -------------------------------------------------------------------------- */
-/* git                                                                        */
-/* -------------------------------------------------------------------------- */
-
-function gitRun(cwd, args) {
-  return execFileSync('git', ['-C', cwd, ...args], {
-    encoding: 'utf8',
-    stdio: 'ignore',
-    // 技能树可以上万文件：git add/commit 会超过 15s，超时被杀会留下 index.lock 并让后续提交永久失败。
-    timeout: 300000,
-    windowsHide: true,
-  })
-}
-
-function gitCapture(cwd, args) {
-  // 沙箱里 git 输出接 pipe 会 EPERM（实测），和 artifact-diff 一样落临时文件再读。
-  const tmp = path.join(os.tmpdir(), `engram-gitcap-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`)
-  let fd = null
-  try {
-    fd = fs.openSync(tmp, 'w')
-    execFileSync('git', ['-C', cwd, ...args], {
-      encoding: 'utf8',
-      stdio: ['ignore', fd, 'ignore'],
-      timeout: 300000,
-      windowsHide: true,
-    })
-    fs.closeSync(fd)
-    fd = null
-    return fs.readFileSync(tmp, 'utf8')
-  } catch {
-    return null
-  } finally {
-    if (fd !== null) {
-      try {
-        fs.closeSync(fd)
-      } catch {
-        // 已关闭
-      }
-    }
-    try {
-      fs.unlinkSync(tmp)
-    } catch {
-      // 临时文件不存在
-    }
-  }
-}
-
-export function ensureSkillsRepo(dataDir) {
-  const root = skillsRootOf(dataDir)
-  fs.mkdirSync(root, { recursive: true })
-  const attributes = path.join(root, '.gitattributes')
-  if (!fs.existsSync(attributes)) fs.writeFileSync(attributes, '* text=auto eol=lf\n', 'utf8')
-  if (!fs.existsSync(path.join(dataDir, '.git'))) {
-    gitRun(dataDir, ['init'])
-  }
-}
-
-/**
- * 写 meta 并提交：提交前先把 pendingCommit 置 false（提交快照里就是 false），失败再置 true。
- * 只置 true 不复位会让 UI 永远显示「待补提交」（技能复验发现）。
- */
-function commitMeta(dataDir, metaFile, meta, message) {
-  meta.pendingCommit = false
-  writeJsonFile(metaFile, stripMetaReadFlags(meta))
-  const committed = commitSkills(dataDir, message)
-  if (!committed) {
-    meta.pendingCommit = true
-    writeJsonFile(metaFile, stripMetaReadFlags(meta))
-  }
-  return committed
 }
 
 /** 提交 skills/ 路径；失败返回 false（写入仍然保留，调用方记 pendingCommit）。 */
@@ -1335,37 +257,6 @@ function withSkillLock(dataDir, slug, fn, options = {}) {
   } finally {
     try { fs.unlinkSync(lockFile) } catch { /* 锁已不存在也正常 */ }
   }
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
-}
-
-export function commitSkills(dataDir, message) {
-  // 上一次被超时杀掉的 git 会留下 index.lock：超过 10 分钟（> 300s git 超时）的视为残留，清掉再提交。
-  // 阈值必须大于 git 超时，否则长提交（13k 文件实测 86–132s）会被后来者误删活锁。
-  // 仓库根在 dataDir/.git（ensureSkillsRepo 在 dataDir 初始化），不是 dataDir/skills/.git。
-  try {
-    const lock = path.join(String(dataDir || ''), '.git', 'index.lock')
-    if (fs.existsSync(lock) && Date.now() - fs.statSync(lock).mtimeMs > 600000) fs.unlinkSync(lock)
-  } catch {
-    // 清锁失败不阻断：让 git 自己报错
-  }
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      ensureSkillsRepo(dataDir)
-      // 没有变更 = 已经在 git 里了（例如同一目录被上一次提交带上），不算失败。
-      const dirty = gitCapture(dataDir, ['status', '--porcelain', '--', SKILLS_DIRNAME])
-      if (dirty !== null && dirty.trim() === '') return true
-      gitRun(dataDir, ['add', '--', SKILLS_DIRNAME])
-      // 只提交 skills/ 路径：用户已 staged 的其它文件不能被顺带提交。
-      gitRun(dataDir, [...GIT_IDENTITY, 'commit', '-m', message, '--', SKILLS_DIRNAME])
-      return true
-    } catch {
-      if (attempt < 2) sleepSync(50 * (attempt + 1))
-    }
-  }
-  return false
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1652,19 +543,6 @@ export function matchSkill(skills, intent, options = {}) {
   return top
 }
 
-function headingIndex(lines, title) {
-  const pattern = new RegExp(`^##\\s+${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`)
-  return lines.findIndex((line) => pattern.test(line))
-}
-
-function sectionBounds(lines, index) {
-  let end = lines.length
-  for (let i = index + 1; i < lines.length; i += 1) {
-    if (/^##\s+/.test(lines[i])) { end = i; break }
-  }
-  return { from: index + 1, to: end }
-}
-
 function upsertBullet(lines, title, key, text) {
   let index = headingIndex(lines, title)
   if (index < 0) {
@@ -1939,19 +817,6 @@ export function sessionHashOf(sessionId) {
   const raw = String(sessionId || '')
   if (raw === '') return ''
   return createHash('sha256').update(raw, 'utf8').digest('hex').slice(0, 8)
-}
-
-/**
- * 把「切到这里为止」的码元下标收到字符边界：`end` 落在代理对中间时退一位。
- * 只在 UTF-16 码元层面切片时用（emoji 等非 BMP 字符占 2 个码元）。
- */
-function safeSliceEnd(value, end) {
-  if (end <= 0) return 0
-  if (end >= value.length) return value.length
-  const before = value.charCodeAt(end - 1)
-  if (before < 0xd800 || before > 0xdbff) return end
-  const after = value.charCodeAt(end)
-  return after >= 0xdc00 && after <= 0xdfff ? end - 1 : end
 }
 
 /**
@@ -2523,4 +1388,48 @@ export function createSkillCatalogHook(options = {}) {
   }
 
   return { listener, register, isDegraded: () => degraded, disabled: !catalogConfigOf(config).enabled }
+}
+export {
+  SKILLS_DIRNAME,
+  SCRIPTS_DIRNAME,
+  SKILL_FILENAME,
+  META_FILENAME,
+  RESOLVED_LIMIT,
+  skillsRootOf,
+  assertSafeSlug,
+  assertSafePathSegment,
+  assertSafeRelPath,
+  pathIsLink,
+  skillDirOf,
+  slugify,
+  writeFileAtomic,
+  defaultMeta,
+  readSkill,
+  readSkillBySlug,
+  runnerForScript,
+  skillRuntimeOf,
+  clipSkillBody,
+  SKILL_SCAN_SKIP_DIRS,
+  listSkills,
+  listSkillsCached,
+  clearSkillsHintCache,
+  writeSkill,
+  attachSkillFiles,
+  dshGlobalSkillsRoot,
+  globalRegistrationOf,
+  registerSkillGlobally,
+  unregisterSkillFromDsh,
+  updateSkillMeta,
+  forgetSkill,
+  buildSkillTree,
+  subtreeSkills,
+  findSkillTreeNode,
+  registerSkillTree,
+  unregisterSkillTree,
+  forgetSkillTree,
+  rewriteSkillIds,
+  moveSkillToTop,
+  applySkillNodeAction,
+  ensureSkillsRepo,
+  commitSkills,
 }

@@ -35,6 +35,13 @@
 
 ## 当前发布
 
+- **v0.45.0（内部结构优化：按域拆分，行为零变化）** — 纯重构，不改 API、工具 schema、磁盘格式与客户端产物
+  - **存储层**：`store.js` 拆出 `store-lock.js`（写盘锁/pid/心跳 + 库文件路径原语）；`shard-store.js` 拆出 `shard-paths.js`（路径/布局）、`shard-io.js`（原子 IO/分片行解码）、`shard-cold.js`（冷档扫描/追加/回滚）。门面 re-export，导入路径不变
+  - **控制台壳**：`ui/shell.js` 1773→77 行，按领域拆成 `api-core / api-family / api-skill / api-settings / api-graph`；`handleRequest` 仍是唯一入口，路由分派顺序与 43 条路由体逐字不变
+  - **工具与技能**：`tools.js` 拆出 `tool-helpers.js`（辅助函数）与 `tool-schemas.js`（9 个工具名称/描述/参数 schema 常量）；`skills.js` 拆出 `skill-paths.js` / `skill-files.js` / `skill-registry.js`
+  - **契约验证**：导出面 store 93 / shard-store 97 / shell 33 / skills 84 项前后逐项一致；工具顺序与 `{name,description,parameters}` 快照 deepEqual；`client-build` 字节契约通过；根 `npm test` **153/153**；关系图布局 1k/3k/5k = 16.69/41.84/59.68 ms（较 0.44.1 基线在 ±10% 内）
+  - 已知取舍：`tool-schemas` 的 `parameters` 为模块级共享常量（宿主未观察到就地变异）；`skills.js` 门面仍有 1435 行，可再拆一刀
+
 - **v0.44.1（稳定化与整体优化：写正确性 / 发布安全 / 测试与文档收口）** — 无新功能，不改存储格式、不改工具 schema
   - **live 写入正确性**：`/families/backfill`、`/families/manage`、`/classify` 与 `ensureDefaultTypes` 四条写路径改为 `withStoreLock` 包住「无缓存重读 → 业务判断 → 修改 → 写回」。修复前 live 下 backfill/rename/merge/assign 直接抛 `Cannot assign to read only property 'family'`（读缓存被 `deepFreeze`），且会用旧快照覆盖并发写入
   - **分类冲突契约**：`/classify` 等模型期间目标行的 `typeId` 或规范化 `context` 被改 → 返回 **409 `classify-conflict`**，不覆盖新决定；其余字段/其他记录的并发更新保留；模型调用始终在锁外
