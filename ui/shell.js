@@ -41,7 +41,7 @@ import { applySkillNodeAction, bodyHashOf, buildSkillTree, forgetSkill, register
 import { findSessionFile, probeSessions, saveTurnAsExperience } from '../kernel/chat-save.js'
 import { classifyExperienceWithSession, localClassifyExperience } from '../kernel/experience-classify.js'
 import { shadowReport } from '../kernel/tag-rank.js'
-import { normalizeContext, readStore, tagCatalog, tagRegistryView, writeStore } from '../kernel/store.js'
+import { normalizeContext, readStore, tagCatalog, tagRegistryView, withStoreLock, writeStore } from '../kernel/store.js'
 import { ensureTagOverrides, validateTagSet } from '../kernel/tag-registry.js'
 import { backfillFamilies, derivedFamilyOf, manageFamilies, readCreatedFamilies, representativesOf, syncCreatedFamilies, tagTree, visibleRowsOf } from '../kernel/family-tools.js'
 import { githubCreateRepo, githubLogin, githubRepos } from '../kernel/github.js'
@@ -1194,16 +1194,25 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (method !== 'POST') return fail(res, 405, 'method-not-allowed', '只用 POST')
       const body = await readBody(req)
       const dryRun = body === null || body.dryRun === undefined ? true : body.dryRun !== false
-      const store = storeOf(active)
-      const preview = backfillFamilies(store)
-      if (dryRun || active.mode !== 'live') return json(res, 200, { ok: true, data: { dryRun: true, ...preview } })
-      const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
-      const byId = new Map(store.experiences.map((row) => [String(row.id), row]))
-      for (const change of preview.changes) {
-        const row = byId.get(change.id)
-        if (row !== undefined) row.family = change.to
+      if (dryRun || active.mode !== 'live') {
+        // 只读路径（预览 / 示例数据）：继续用页面级热档快照，不写盘。
+        const preview = backfillFamilies(storeOf(active))
+        return json(res, 200, { ok: true, data: { dryRun: true, ...preview } })
       }
-      writeStore(dataDir, store)
+      const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
+      // 0.44.1 P0-A（A1）：写路径整段在锁内，锁内只读无缓存快照。storeOf(active) 是深冻结的读缓存，
+      // 改它会抛只读错误；即使可改，用旧快照写回也会覆盖并发写入。回执与落盘基于同一快照。
+      const preview = withStoreLock(dataDir, () => {
+        const store = readStore(dataDir)
+        const plan = backfillFamilies(store)
+        const byId = new Map((Array.isArray(store.experiences) ? store.experiences : []).map((row) => [String(row.id), row]))
+        for (const change of plan.changes) {
+          const row = byId.get(change.id)
+          if (row !== undefined) row.family = change.to
+        }
+        writeStore(dataDir, store)
+        return plan
+      })
       return json(res, 200, { ok: true, data: { dryRun: false, ...preview } })
     }
     if (route === '/families/manage') {
@@ -1212,16 +1221,25 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (body === null || typeof body !== 'object' || String(body.action || '').trim() === '') {
         return fail(res, 400, 'bad-request', '需要 action（list/create/rename/merge/assign/delete）')
       }
-      const store = storeOf(active)
       const action = String(body.action || '').trim()
-      const outcome = manageFamilies(store, action, body)
-      if (outcome.changed) {
-        if (active.mode !== 'live') return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: true } })
-        const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
-        writeStore(dataDir, store)
+      if (active.mode !== 'live') {
+        // 示例数据：只在内存里演一遍，不落盘；回执语义与旧版一致（有改动标 dryRun）。
+        const outcome = manageFamilies(storeOf(active), action, body)
+        if (outcome.changed) return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: true } })
+        const dataDir = String((readOf(active) || {}).dataDir || '').trim()
+        if (dataDir !== '') syncCreatedFamilies(dataDir, action, body, outcome.result)
+        return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: false } })
       }
-      const dataDir = String((readOf(active) || {}).dataDir || '').trim()
-      if (dataDir !== '') syncCreatedFamilies(dataDir, action, body, outcome.result)
+      const dataDir = String((readOf(active) || {}).dataDir || '').trim() || resolveEngramDataDir()
+      // 0.44.1 P0-A（A2）：写路径在锁内无缓存重读后再执行 manageFamilies；
+      // 空族登记表同步与族操作放进同一个外层锁，避免与 exp_family 对登记表交错写。
+      const outcome = withStoreLock(dataDir, () => {
+        const store = readStore(dataDir)
+        const result = manageFamilies(store, action, body)
+        if (result.changed) writeStore(dataDir, store)
+        syncCreatedFamilies(dataDir, action, body, result.result)
+        return result
+      })
       return json(res, 200, { ok: true, data: { ...outcome.result, dryRun: false } })
     }
     if (route === '/retrieval-policy') {
@@ -1415,13 +1433,18 @@ export async function handleRequest(req, res, source, deps = {}) {
       if (!active || active.mode !== 'live' || typeof active.hot !== 'function') return fail(res, 400, 'unsupported', '示例数据不支持自动分类')
       const body = await readBody(req)
       const dataDir = String(readOf(active).dataDir || '')
-      let store
-      try { store = readStore(dataDir) } catch (error) { return fail(res, 500, 'store-unreadable', String((error && error.message) || error)) }
-      const row = (store.experiences || []).find((item) => item.id === String((body && body.id) || ''))
-      if (row === undefined) return fail(res, 404, 'not-found', '经验不存在')
-      const typeNames = (store.types || []).filter((type) => type && type.system !== true).map((type) => String(type.name || '')).filter(Boolean)
-      const tagNames = tagCatalog(store, { limit: 60, dataDir }).map((item) => item.name)
-      const text = [row.intent, row.action, row.note].filter(Boolean).join('\n')
+      const targetId = String((body && body.id) || '')
+      let snapshot
+      try { snapshot = readStore(dataDir) } catch (error) { return fail(res, 500, 'store-unreadable', String((error && error.message) || error)) }
+      const snapshotRow = (snapshot.experiences || []).find((item) => item.id === targetId)
+      if (snapshotRow === undefined) return fail(res, 404, 'not-found', '经验不存在')
+      // 0.44.1 P0-A（A3）：模型调用前先记下冲突判据——目标行的 typeId 与规范化 context；
+      // 模型（可能很慢）在锁外跑，返回后进锁无缓存重读，再决定是否应用。
+      const snapshotTypeId = String(snapshotRow.typeId || '')
+      const snapshotContext = normalizeContext(snapshotRow.context)
+      const typeNames = (snapshot.types || []).filter((type) => type && type.system !== true).map((type) => String(type.name || '')).filter(Boolean)
+      const tagNames = tagCatalog(snapshot, { limit: 60, dataDir }).map((item) => item.name)
+      const text = [snapshotRow.intent, snapshotRow.action, snapshotRow.note].filter(Boolean).join('\n')
       let decided = null
       try {
         decided = await classifyExperienceWithSession({
@@ -1434,19 +1457,30 @@ export async function handleRequest(req, res, source, deps = {}) {
       } catch { decided = null }
       // 本地兜底也只能从词表里选（core + 已复用），不许自己造实例标签。
       if (decided === null) decided = localClassifyExperience({ text, typeNames, tagNames, allowedTags: tagNames })
-      const target = (store.types || []).find((type) => type && type.name === decided.category && type.system !== true)
-        || (store.types || []).find((type) => type && type.system !== true)
-      if (target === undefined) return fail(res, 400, 'no-type', '没有可用的主分类')
-      row.typeId = target.id
-      row.typeName = target.name
-      const existingTags = normalizeContext(row.context)
-      const room = Math.max(0, 8 - existingTags.length)
-      const addedTags = (Array.isArray(decided.tags) ? decided.tags : []).map(String).filter((tag) => tag !== '' && !existingTags.includes(tag)).slice(0, room)
-      row.context = normalizeContext([...existingTags, ...addedTags])
-      writeStore(dataDir, store)
-      // 自动分类只补标签，不替用户凑面：补完仍缺对象/动作就回 tagWarning（UI 黄字提示）。
-      const tagCheck = validateTagSet(row.context)
-      return json(res, 200, { ok: true, data: { id: row.id, typeName: target.name, tags: row.context, addedTags, classifier: decided.classifier, note: decided.note, model: decided.model || '', tagWarning: tagCheck.warning === '' ? undefined : tagCheck.warning } })
+      return withStoreLock(dataDir, () => {
+        const store = readStore(dataDir)
+        const row = (store.experiences || []).find((item) => item.id === targetId)
+        if (row === undefined) return fail(res, 404, 'not-found', '经验不存在')
+        const nowContext = normalizeContext(row.context)
+        if (String(row.typeId || '') !== snapshotTypeId || JSON.stringify(nowContext) !== JSON.stringify(snapshotContext)) {
+          // 等待期间这条的 type/context 已被用户或其他写者改过：409 交回调用方，不覆盖新决定。
+          return fail(res, 409, 'classify-conflict', '这条经验在自动分类期间被修改，已放弃本次分类结果（可重试）')
+        }
+        // 其余字段 / 其他记录的并发更新不判冲突：在最新库上应用，分类与标签合并都基于最新 context。
+        const target = (store.types || []).find((type) => type && type.name === decided.category && type.system !== true)
+          || (store.types || []).find((type) => type && type.system !== true)
+        if (target === undefined) return fail(res, 400, 'no-type', '没有可用的主分类')
+        row.typeId = target.id
+        row.typeName = target.name
+        const existingTags = nowContext
+        const room = Math.max(0, 8 - existingTags.length)
+        const addedTags = (Array.isArray(decided.tags) ? decided.tags : []).map(String).filter((tag) => tag !== '' && !existingTags.includes(tag)).slice(0, room)
+        row.context = normalizeContext([...existingTags, ...addedTags])
+        writeStore(dataDir, store)
+        // 自动分类只补标签，不替用户凑面：补完仍缺对象/动作就回 tagWarning（UI 黄字提示）。
+        const tagCheck = validateTagSet(row.context)
+        return json(res, 200, { ok: true, data: { id: row.id, typeName: target.name, tags: row.context, addedTags, classifier: decided.classifier, note: decided.note, model: decided.model || '', tagWarning: tagCheck.warning === '' ? undefined : tagCheck.warning } })
+      })
     }
     if (route === '/graph') {
       if (method !== 'GET') return fail(res, 405, 'method-not-allowed', '只用 GET')

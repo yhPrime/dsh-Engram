@@ -839,28 +839,33 @@ export function clearStoreReadCache(dataDir) {
  * 已有任何业务类型或经验就完全不动，避免覆盖用户自己的分类。
  */
 export function ensureDefaultTypes(dataDir) {
-  const store = readStore(dataDir)
-  // 只看有没有业务类型；已经记过经验但没建过类型时也要补默认分类，
-  // 否则首次安装时先落了经验会把默认分类永久挡掉。
-  if (store.types.some((type) => type.system !== true)) return store
-  const next = {
-    ...store,
-    types: [...PRESET_TYPES.map((type) => ({ ...type })), { ...SYSTEM_TYPE }],
-  }
-  ensureClusters(next)
-  // 0.33：空库初始化即建单层族目录，不再落 buckets/。
-  fs.mkdirSync(path.join(String(dataDir || ''), 'library'), { recursive: true })
-  fs.mkdirSync(path.join(String(dataDir || ''), 'cold'), { recursive: true })
-  fs.mkdirSync(path.join(String(dataDir || ''), 'backups'), { recursive: true })
-  // 先落一个空的 flat manifest，后续 writeStore 才会按 flat 路径写（否则空库会回落到分类型目录）。
-  if (!fs.existsSync(path.join(String(dataDir || ''), 'manifest.json'))) {
-    writeManifest(dataDir, {
-      schema: 4, version: 1, types: next.types.map((type) => ({ ...type })), clusters: [],
-      buckets: [], pending: [], recent: [], stats: null, taskIndex: [], cold: { years: [], total: 0 }, layout: FLAT_LAYOUT,
-    })
-  }
-  writeStore(dataDir, next, { layout: FLAT_LAYOUT })
-  return next
+  // 0.44.1 P0-A（A4）：读取—检查—建目录/manifest—写回整段在同一把锁内，锁内无缓存重读。
+  // 修复前是「先读快照 → 最后才由 writeStore 抢锁」：另一个写者落在两者之间时，
+  // 初始化会用旧快照把它的经验覆盖掉（第二次调用也不该覆盖首次之后新增的经验/分类）。
+  return withStoreLock(dataDir, () => {
+    const store = readStore(dataDir)
+    // 只看有没有业务类型；已经记过经验但没建过类型时也要补默认分类，
+    // 否则首次安装时先落了经验会把默认分类永久挡掉。
+    if (store.types.some((type) => type.system !== true)) return store
+    const next = {
+      ...store,
+      types: [...PRESET_TYPES.map((type) => ({ ...type })), { ...SYSTEM_TYPE }],
+    }
+    ensureClusters(next)
+    // 0.33：空库初始化即建单层族目录，不再落 buckets/。
+    fs.mkdirSync(path.join(String(dataDir || ''), 'library'), { recursive: true })
+    fs.mkdirSync(path.join(String(dataDir || ''), 'cold'), { recursive: true })
+    fs.mkdirSync(path.join(String(dataDir || ''), 'backups'), { recursive: true })
+    // 先落一个空的 flat manifest，后续 writeStore 才会按 flat 路径写（否则空库会回落到分类型目录）。
+    if (!fs.existsSync(path.join(String(dataDir || ''), 'manifest.json'))) {
+      writeManifest(dataDir, {
+        schema: 4, version: 1, types: next.types.map((type) => ({ ...type })), clusters: [],
+        buckets: [], pending: [], recent: [], stats: null, taskIndex: [], cold: { years: [], total: 0 }, layout: FLAT_LAYOUT,
+      })
+    }
+    writeStore(dataDir, next, { layout: FLAT_LAYOUT })
+    return next
+  })
 }
 
 export function readStoreCacheInfo() {

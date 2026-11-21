@@ -1,24 +1,26 @@
-# exp-ui 接口文档（v1）
+# exp-ui 接口文档（当前契约）
 
 > 外显名 **exp-ui**，是经验库的**界面外壳**，与真实经验库（`exp-lib` / `dsh-engram`）分开命名。
-> 本包不带工具、不写真实数据：默认用内置示例数据把界面跑通；真实经验库接入时只换数据源，接口与返回形状不变。
+>
+> 本文按 `ui/shell.js` 的 `handleRequest` **实际路由**逐条重核：路由、方法、错误码与读写能力都以代码为准。版本号统一写作 `<package-version>`，真实值以包根 `package.json` 为准，`/health` 与 `/state` 在运行时回显。
 
 - Base URL：`/exp-ui/api`（前缀路由，挂在 DSH 的 `webServer` 上）
 - 编码：UTF-8 JSON，`content-type: application/json; charset=utf-8`，`cache-control: no-store`
-- 版本：`0.4.0`（`package.json` 的 version，`/health` 与 `/state` 会回）
+- 请求体上限 1MB；坏 JSON 返回 400 `bad-request`
+- 成功与失败共用同一层信封（见 §2），HTTP 状态另表语义
 
-## 1. 数据源
+## 1. 数据源：mock / live
 
-| 数据源 | config | 行为 |
-|---|---|---|
-| `mock`（默认） | `source: mock` | 内置示例数据，进程内存；反馈只改这份假数据，**不落盘**、不碰真实经验库 |
-| `live` | `source: live` + `dataDir: <路径>` | 只读真实库文件 `<dataDir>/exp-lib.json`；读不到/读坏按空库显示并给 `notice`；反馈返回 `read-only` |
+| 数据源 | config | 读 | 写 |
+|---|---|---|---|
+| `live`（默认） | `source: live` + `dataDir` | 真实经验库：`manifest.json` + `library/*.jsonl`（旧单文件 `exp-lib.json` 兼容） | **可写**：记录、反馈、复核、判定回填、族管理 / 补族、技能导入 / 元数据 / 注册 / 遗忘、设置与 Git 备份 |
+| `mock` | `source: mock` | 内置示例数据（进程内存） | 记录、反馈、复核、判定回填只改这份假数据，不落盘；沉淀、类型管理、技能全局操作、自动分类、族落盘、Git 返回不支持 |
 
-两套数据源返回**完全相同的形状**，客户端不按数据源分支；只读 `data.source.readOnly` 决定反馈按钮是否可点。
+- 不传 `source` 时默认 `live`；`dataDir` 缺省依次取插件行 config、`ENGRAM_DATA_DIR`、设置的「存储位置」当前根，最后是 `$DSH_HOME/engram/data`。
+- 两套数据源返回**相同形状**。`data.source.readOnly` 是历史兼容字段，当前 mock 与 live 都是 `false`；界面按具体动作是否支持判断（400/501 `unsupported`），**不再把 live 当只读**。
+- 读失败不假装空库：热档读坏给 `storeError` / `store-unreadable`，冷档读坏给 `cold-unreadable`。
 
-`mock` 示例库：6 个类型、15 条经验（12 条可见 + 1 条退休 + 1 条被取代 + 1 条已删除），覆盖成功/部分/失败/被纠正/中止/未知、负回报、超长备注、任务步骤、有反馈/无反馈；另有 10 条示例调用日志、5 个示例固化技能（已固化 / 试用中 / 不稳定 / 待验证 / 有未解障碍各 1）。
-
-## 2. 响应外壳（envelope）
+## 2. 响应外壳与错误码
 
 成功：
 
@@ -34,203 +36,207 @@
 
 | code | HTTP | 含义 |
 |---|---|---|
-| `bad-request` | 400 | 请求参数格式不对（JSON 解析失败等） |
+| `bad-request` | 400 | 参数格式不对、JSON 解析失败、取值非法 |
 | `id-required` | 400 | 缺少 `id` |
+| `intent-required` | 400 | 缺少 `intent`（召回 / 记录 / 沉淀） |
+| `action-required` | 400 | 缺少 `action`（记录） |
+| `bad-outcome` | 400 | `outcome` 不在允许集合 |
 | `bad-result` | 400 | `result` 不是 `helped` / `hurt` / `neutral` |
+| `bad-action` | 400 | 未知动作 |
+| `bad-perf` | 400 | 关系图性能载荷不合法 |
 | `body-too-large` | 400 | 请求体 > 1MB |
-| `not-found` | 404 | 路由或经验不存在 |
+| `slug-required` | 400 | 缺少技能 `slug` |
+| `node-required` | 400 | 缺少技能节点 `path` |
+| `no-type` | 400 | 自动分类没有可用的主分类 |
+| `no-data-dir` | 400 | 没有数据目录，无法写技能 |
+| `source-required` | 400 | 导入技能时既没文件也没正文 |
+| `ids-required` | 400 | 存会话时缺少 `messageId` |
+| `repo-required` | 400 | `select` 缺少 `repoUrl` |
+| `reason-required` | 400 | `revive` 缺少 `note` 理由 |
+| `verdict-failed` | 400 | 判定回填整体失败 |
+| `skill-global-failed` | 400 | 技能全局注册 / 取消注册失败 |
+| `skill-node-failed` | 400 | 技能节点操作失败 |
+| `skill-meta-failed` | 400 | 技能元数据修改失败 |
+| `skill-forget-failed` | 400 | 技能删除失败 |
+| `turn-not-found` | 400 | 会话里找不到该消息 |
+| `picker-unavailable` | 400 | 宿主没有系统目录选择器 |
+| `not-found` | 404 | 路由、经验或技能不存在 |
 | `method-not-allowed` | 405 | 路径存在但方法不对 |
-| `read-only` | 409 | live 数据源拒绝写入（反馈） |
-| `not-feedbackable` | 409 | 这条已删除/被取代/退休，不能反馈 |
-| `internal` | 500 | 未预期异常（外壳兜底，不会把进程带崩） |
+| `read-only` | 409 | 数据源不支持写入（历史兼容码；当前 live 可写，正常不会出现） |
+| `not-feedbackable` | 409 | 该条已删除 / 被取代 / 退休，不能反馈或复核 |
+| `classify-conflict` | 409 | 自动分类期间目标行的类型或标签上下文被改过，本次结果放弃，可重试 |
+| `root-move-failed` | 409 | 切换存储位置失败（目录不可写等） |
+| `unsupported` | 400 / 501 | 示例数据或数据源不支持该动作；路由显式拒绝为 400，数据源抛出为 501 |
+| `cold-unreadable` | 500 | 冷档文件缺失或坏行（不把「丢了」显示成「没有」） |
+| `report-failed` | 500 | 影子报表生成失败 |
+| `perf-log-failed` | 500 | 性能样本写本机日志失败 |
+| `store-unreadable` | 500 / 503 | 热档读坏；`/experience` 等读接口兜底 503，`/classify` 显式返回 500 |
+| `internal` | 500 | 未预期异常（外壳兜底，不把进程带崩） |
 
-## 3. 接口
+## 3. 路由总表
 
-### `GET /health`
+`读` = 不写盘；`写` = 会改数据目录、设置或本机 Git。所有路由都挂在 `/exp-ui/api` 下。
+
+| 方法 | 路由 | 读/写 | 作用 |
+|---|---|---|---|
+| GET | `/icons` | 读 | 图标画廊 HTML（不是 JSON） |
+| GET | `/health` | 读 | 存活探针 + 版本 + 客户端回打探针 |
+| GET | `/state` | 读 | 控制台概览（轻量 manifest + 统计） |
+| GET | `/experiences` | 读 | 经验列表；带 `query` 时切召回态 |
+| GET | `/experience` | 读 | 单条详情 + 历史 + 反馈日志 |
+| GET | `/cold` | 读 | 冷档分页列表 |
+| GET | `/tag-registry` | 读 | 标签词表（按面分组） |
+| GET | `/tag-tree` | 读 | 标签树 |
+| GET | `/families` | 读 | 扁平族表 + 类型兼容视图 + 未分族 |
+| GET | `/objects` | 读 | 对象链只读视图 |
+| POST | `/families/backfill` | 读 / 写 | 补族：默认只预演，`dryRun:false` 才写 |
+| POST | `/families/manage` | 写 | 族管理：list / create / rename / merge / assign / delete |
+| GET | `/retrieval-policy` | 读 | 当前检索策略与 A/B 报表摘要 |
+| GET | `/types` | 读 | 主分类列表 |
+| GET | `/skills` | 读 | 固化技能列表 + 目录树 |
+| GET | `/usage` | 读 | `exp_*` 调用流水 |
+| GET | `/pending` | 读 | 待判定队列 |
+| POST | `/verdicts` | 写 | 批量回填判定 |
+| GET | `/usage-summary` | 读 | 调用次数与回执字符数汇总 |
+| POST | `/recall` | 读 | 跑一次召回 |
+| POST | `/record` | 写 | 写一条经验 |
+| POST | `/review` | 写 | 经验 / 技能时效复核 |
+| POST | `/consolidate` | 写 | 同族经验沉淀成技能 |
+| POST | `/skills/import` | 写 | 导入技能或技能套件 |
+| POST | `/skill-feedback` | 写 | 技能用后反馈 |
+| POST | `/skill-global` | 写 | 注册 / 取消注册到 DSH 全局技能目录 |
+| POST | `/skill-node` | 写 | 技能节点 register / unregister / forget / detach |
+| POST | `/skill-meta` | 写 | 改技能分类与便签 |
+| POST | `/skill-forget` | 写 | 删除技能目录 |
+| POST | `/type` | 写 | 主分类管理 |
+| GET | `/classify-diag` | 读 | 自动分类能力自检 |
+| POST | `/classify` | 写 | 对一条经验跑自动分类（模型调用在锁外，应用在锁内） |
+| GET | `/graph` | 读 | 关系图节点与边 |
+| GET | `/shadow-report` | 读 | 标签影子判据报表（仅 live） |
+| POST | `/graph-perf` | 写 | 关系图性能样本写本机日志 |
+| GET | `/validate` | 读 | 技能目录自检 |
+| GET | `/pick-directory` | 读 | `?probe=1` 只回答能否弹系统选目录窗口 |
+| POST | `/pick-directory` | 读 | 弹系统选目录窗口（模态） |
+| GET | `/settings` | 读 | 设置、运行环境与字段说明 |
+| POST | `/settings` | 写 | 保存存储位置 / config / ui / git |
+| GET | `/sync` | 读 | Git 备份状态 |
+| POST | `/sync` | 写 | init / push / pull / status / disconnect |
+| GET | `/chat-save-probe` | 读 | 探测会话文件可读性 |
+| POST | `/chat-save` | 写 | 把会话里的一轮存成经验 |
+| POST | `/github` | 写 | GitHub 登录、仓库列表、建仓、选仓 |
+| POST | `/feedback` | 写 | 经验用后反馈 |
+
+`POST /skill-install` 已下线；技能注册到全局改用 `/skill-global`。
+
+> 读写口径的一个细节：`POST /recall` 与带 `query` 的 `GET /experiences` 不修改经验本体，但开着 `usageLog` 时会向 `<dataDir>/usage.jsonl` 追加一行调用记录；这在「读」的语义边界内，不属于经验写入。
+
+## 4. 只读接口
+
+### GET /health
 
 ```json
-{ "ok": true, "data": { "ok": true, "app": "exp-ui", "version": "0.4.0", "source": "mock", "readOnly": false } }
+{ "ok": true, "data": { "ok": true, "app": "经验库", "version": "<package-version>", "source": "live", "readOnly": false, "client": [] } }
 ```
 
-### `GET /state`
+- `?client=1&phase=…&id=…&panels=…&errors=…&note=…` 是客户端半加载后的回打探针：只记在内存（最多保留最近 8 条），用于区分「客户端没加载」与「加载了但没注册」。
+- `app` 固定为 `经验库`（`APP_NAME`）。
 
-面板顶部用的概览。
+### GET /state
 
-字段：
+概览页用的概览读：有 manifest 统计时只取 manifest 与存储用量；没有 manifest / stats 时退回全量行现算（与旧行为一致，不静默改语义）。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `app` | string | 固定 `exp-ui` |
-| `version` | string | 包版本 |
-| `source` | object | `{ id: 'mock'\|'live', mode, label, readOnly }` |
-| `source.label` | string | `示例数据` / `真实数据`（界面据此显示徽标） |
-| `dataDir` / `file` | string | 数据目录 / 经验库文件；mock 时是 `（exp-ui 内置示例数据）` |
-| `exists` | boolean | 数据文件是否存在 |
-| `bytes` | number | 文件字节数（mock 为示例库序列化大小） |
-| `updatedAt` | string | ISO 时间；mock 为进程启动时间 |
-| `notice` | string | 需要界面显示的提示（mock 的「示例数据」说明、live 的读不到原因）；无则空串 |
+| `app` / `version` | string | 固定 `经验库` / 包版本 |
+| `source` | object | `{ id, mode, label, readOnly }` |
+| `dataDir` / `file` | string | 数据目录 / manifest 路径 |
+| `exists` / `bytes` | boolean / number | 数据文件是否存在 / 字节数 |
+| `updatedAt` | string | 当前 manifest 不写 `updated_at`，通常是空串，不要当时间戳用 |
+| `notice` | string | 需要界面显示的提示；无则空串 |
+| `storage` | object | 有分片存储时给布局信息（`layout` / `typeDirs` / `familyFiles` / `familyBytes` / `indexFiles` / `indexBytes`） |
+| `cold` | object | 冷档摘要（年档 / 条数）；读坏时带 `error` |
+| `feedbackEta` | number | 反馈 EMA 系数（0.35） |
+| `skillSummary` | object | `{ total, solid, trial, risky, new, blocked }` |
+| `usage` | object | `{ total, today, byTool, byDay, lastAt, lastTool }` |
 | `totals` | object | `{ all, visible, deleted, superseded, retired, types, skills }` |
 | `stats` | object | `{ totalInsights, deletedInsights, supersededInsights, retiredInsights, edgeCount, dbSizeBytes, byCategory, topEntities }` |
 | `types` | array | 同 `/types` 的 `types` |
-| `skillSummary` | object | `{ total, solid, trial, risky, new, blocked }`（固化技能状态分布） |
-| `usage` | object | `{ total, today, byTool, lastAt, lastTool }` |
 
-示例（mock，节选）：
+### GET /experiences
 
-```json
-{
-  "ok": true,
-  "data": {
-    "app": "exp-ui",
-    "version": "0.4.0",
-    "source": { "id": "mock", "mode": "mock", "label": "示例数据", "readOnly": false },
-    "dataDir": "（exp-ui 内置示例数据）",
-    "file": "",
-    "exists": true,
-    "bytes": 12345,
-    "updatedAt": "2026-11-09T07:58:00.000Z",
-    "notice": "当前是示例数据（exp-ui 内置）：可以放心点，反馈只改这份假数据，不会写入真实经验库。",
-    "totals": { "all": 15, "visible": 12, "deleted": 1, "superseded": 1, "retired": 1, "types": 6, "skills": 5 },
-    "skillSummary": { "total": 5, "solid": 1, "trial": 1, "risky": 1, "new": 1, "blocked": 1 },
-    "usage": { "total": 10, "today": 10, "byTool": { "exp_recall": 4 }, "lastAt": "2026-11-09T07:56:00.000Z", "lastTool": "exp_recall" }
-  }
-}
-```
-
-### `GET /experiences`
-
-查询参数（均可省略）：
+查询参数（都可省略）：
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
-| `query` | string | 非空 → 检索态（`mode: advantage \| evidence`）；空 → 列表态 |
-| `type` | string | 按 `typeId` 过滤（列表态） |
-| `outcome` | string | 按结果过滤：success / partial / failed / corrected / aborted / unknown |
+| `query` | string | 非空 → 召回态（走 `source.recall`）；空 → 列表态 |
+| `type` | string | 按 `typeId` 过滤（仅列表态） |
+| `outcome` | string | success / partial / failed / corrected / aborted / unknown |
+| `source` | string | `auto` 只看自动记录；`manual` 看手记 + external；其它不过滤 |
+| `verdict` | string | 精确匹配 `verdict`（pending / decided / skipped …） |
+| `lifecycle` | string | `active` / `stale` / `retired` / `superseded` / `visible`（默认）/ `all` |
+| `family` | string | 按族过滤；`__unfiled__` 表示未分族 |
+| `volatility` | string | `stable` / `semi` / `perishable` |
+| `due` | `1` | 只看到期 / 已 stale 的行 |
 | `sort` | string | `recent`（默认）/ `g` / `hits` / `type` |
-| `limit` | number | 列表态默认 100、上限 300；检索态默认 20、上限 50 |
+| `limit` | number | 列表态默认 100、上限 300；召回态默认 8、上限 50 |
 | `offset` | number | 列表态分页偏移，默认 0 |
 
-返回公共字段：`source`（同 `/state`）、`notice`、`mode`、`total`、`rows`、`counts`（仅列表态）、`note`（检索态说明）、`warning`（检索态，可能为 `null`）、`advantageSpread`、`neighborCount`。
+返回公共字段：`source`、`notice`、`storeError`（读坏时 `{ code, message, file }`）、`mode`、`total`、`rows`、`counts`（仅列表态，按 `typeId` 统计 active/stale）、`note`、`warning`、`brief`、`route`、`advantageSpread`、`neighborCount`（召回态）。带 `query` 时顶层另回显 `query`。
 
-列表态 `rows[]` 的行字段：
+列表行 `rows[]` 的关键字段：
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | string | 经验 id |
-| `intent` / `action` | string | 意图 / 做法 |
-| `typeId` / `typeName` | string | 类型 |
-| `outcome` | string | 结果 |
-| `G` / `GOutcome` / `GSource` | number / number / string | 当前回报 / 基准回报 / `feedback` 或 `outcome` |
-| `hits` | number | 用过次数 |
-| `note` | string | 备注 |
-| `origin` | string | manual / auto / external |
-| `kind` / `taskId` / `stepIndex` / `stepTotal` | string / string / number\|null / number\|null | 任务与步骤 |
-| `createdAt` / `lastSeenAt` | string | ISO 时间 |
-| `feedback` | object\|null | `{ helped, hurt, neutral, window, lastAt, lastResult }` |
-| `lifecycle` | object | `{ supersededBy, retiredAt, retiredReason, deletedAt }` |
+| 字段 | 说明 |
+|---|---|
+| `id` / `intent` / `action` / `note` | 经验本体 |
+| `typeId` / `typeName` / `family` | 主分类与族 |
+| `outcome` / `G` / `GOutcome` / `GSource` | 结果与回报（`feedback` 或 `outcome`） |
+| `hits` / `retrievals` | 用过次数 / 主动检索次数 |
+| `origin` / `kind` / `taskId` / `stepIndex` / `stepTotal` | 来源与任务步骤 |
+| `context` / `dimensions` / `expectedG` / `verdict` | 标签、能力维度、预期回报、判定 |
+| `stepRewards` / `artifacts` / `sessionId` / `turn` / `cwd` | 分步回报、产物、会话绑定 |
+| `createdAt` / `lastSeenAt` | ISO 时间 |
+| `feedback` | `{ helped, hurt, neutral, window, lastAt, lastResult }` 或 `null` |
+| `lifecycle` | `{ state, supersededBy, retiredAt, retiredReason, deletedAt }` |
+| `freshness` / `volatility` / `lastVerifiedAt` / `reviewAfter` / `reviewDue` / `staleAt` / `staleReason` / `reviewNote` / `applicability` / `appliesTo` | 时效与适用范围 |
 
-检索态 `rows[]` 是「候选做法」分组：
+召回态 `rows[]` 是「候选做法」分组：`action`、`typeName`、`advantage` / `advantageNorm`、`confidence`、`rankScore`、`support`、`meanSimilarity`、`evidenceStrength`、`evidence[]`（`{ id, intent, action, outcome, G, similarity, typeName, note, feedback, lifecycle }`）。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `action` | string | 候选做法 |
-| `typeName` | string | 类型 |
-| `advantage` / `advantageNorm` | number | Â / 归一化 Â |
-| `confidence` | number | 置信度 |
-| `rankScore` | number | 排序分 |
-| `support` | number | 证据条数 |
-| `meanSimilarity` | number | 平均相似度 |
-| `evidenceStrength` | number | `evidence` 模式下作为排序分 |
-| `evidence[]` | array | `{ id, intent, action, outcome, G, similarity, typeName, note, feedback, lifecycle }` |
+### GET /experience?id=<经验 id>
 
-示例（检索态，节选）：
-
-```json
-{
-  "ok": true,
-  "data": {
-    "source": { "id": "mock", "mode": "mock", "label": "示例数据", "readOnly": false },
-    "mode": "evidence",
-    "query": "把 PPT 转成 PDF",
-    "total": 2,
-    "note": "无成败对照（advantage 极差 0），Â 不具区分度；按「相似度 × 支持度 × 证据质量」排序。",
-    "warning": null,
-    "advantageSpread": 0,
-    "neighborCount": 3,
-    "rows": [
-      {
-        "action": "用 soffice 转 PDF 后逐页看字体与分页",
-        "typeName": "PPT / 课件",
-        "advantage": 0,
-        "confidence": 0.3333,
-        "rankScore": 0.09,
-        "support": 1,
-        "meanSimilarity": 0.31,
-        "evidenceStrength": 0.09,
-        "evidence": [
-          { "id": "ex_mock_01", "intent": "把 PPT 导出成 PDF，检查字体和分页", "outcome": "success", "G": 1, "similarity": 0.31 }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### `GET /experience?id=<经验 id>`
-
-返回 `{ row, history, feedbackLog }`：`row` 同列表行字段；`history` 是最多 20 条生命周期事件；`feedbackLog` 是最多 20 条反馈事件。
+返回 `{ row, history, feedbackLog }`：`row` 同列表行字段；`history` 最多 20 条生命周期事件；`feedbackLog` 最多 20 条反馈事件。
 
 - 缺 `id` → 400 `id-required`
 - 找不到 → 404 `not-found`
+- 热档读坏 → 503 `store-unreadable`
 
-### `POST /feedback`
+### GET /cold
 
-请求体：
-
-```json
-{ "id": "ex_mock_01", "result": "helped" }
-```
-
-`result` 只能是 `helped` / `hurt` / `neutral`。成功返回回执：
+查询参数：`offset`（默认 0）、`limit`（默认 50，上限 500）、`query`（大小写不敏感，匹配 intent/action/id/typeName）、`year`（UTC 年）。
 
 ```json
 {
   "ok": true,
   "data": {
-    "id": "ex_mock_01",
-    "result": "helped",
-    "G_before": 0.8,
-    "G_after": 0.93,
-    "changed": true,
-    "outcome": "success",
-    "typeName": "PPT / 课件",
-    "feedback": { "helped": 3, "hurt": 0, "neutral": 0, "lastAt": "2026-11-09T08:00:00.000Z", "lastResult": "helped" },
-    "source": "feedback"
+    "source": { "id": "live", "mode": "live", "label": "真实数据", "readOnly": false },
+    "notice": "",
+    "exists": true,
+    "total": 2,
+    "offset": 0,
+    "limit": 50,
+    "years": [{ "year": 2026, "count": 2, "bytes": 4096 }],
+    "rows": [{ "id": "ex_...", "intent": "...", "action": "...", "typeName": "PPT / 课件", "G": -0.6, "outcome": "failed", "lastSeenAt": "2026-01-08T09:30:00.000Z" }],
+    "error": null
   }
 }
 ```
 
-语义：EMA（η=0.35）从 `GOutcome` 重放反馈日志后得到新 `G`；不动 `hits`、不改 `outcome`。
+- `exists` = manifest 里登记了冷档年档（`years.length > 0`）。
+- 冷档文件缺失 / 坏行 → 500 `cold-unreadable`。
+- 冷档只读：没有反馈 / 编辑 / 删除接口。
 
-| 情况 | 返回 |
-|---|---|
-| mock 数据源 | 200，改内存里的假数据 |
-| live 数据源 | 409 `read-only` |
-| 该条已删除/被取代/退休 | 409 `not-feedbackable` |
-| `result` 非法 | 400 `bad-result` |
-| `id` 不存在 | 404 `not-found` |
+### GET /tag-registry
 
-### `GET /types`
-
-```json
-{ "ok": true, "data": { "types": [ { "id": "ty_ppt", "name": "PPT / 课件", "description": "…", "system": false, "count": 4 } ] } }
-```
-
-> 口径（0.21.3，见《计划书-标签分类与召回治理》v1.2 §0.1 / §14）：**类型仍参与召回候选池收窄**（`routing` 默认 `on`），排序不直接吃类型分；主分类由模型在 `exp_record` 时给，没给就落「未分类」并在回执里给 `typeWarning` 提示补；只有自动记录走 `autoRouteMinScore`（默认 0.08）归族。`0.20.0` 曾写「类型不参与召回排序」，那句说的是排序、不是收窄，容易被误读成「类型彻底退出召回」，现按此更正；P2（0.21.4）按影子判据决定是否让类型彻底退出路由。
-
-### `GET /tag-registry`
-
-标签词表（0.20.0 P0）：core 种子词 + 已复用（≥2 条经验）+ 用户登记，按「面」分组。标签选择器直接照这份渲染。
+标签词表：core 种子词 + 已复用（≥2 条经验）+ 用户登记，按面分组；标签选择器直接照这份渲染。
 
 ```json
 {
@@ -242,8 +248,8 @@
     "required": [],
     "emptyFacets": [],
     "groups": {
-      "action": [ { "name": "提交", "facet": "action", "core": true, "count": 0, "description": "git commit、表单提交…", "status": "active", "source": "core" } ],
-      "direction": [ { "name": "契约断言", "facet": "direction", "family": "写断言", "core": false, "count": 3, "description": "按宿主契约写断言", "status": "active", "source": "user" } ],
+      "action": [{ "name": "提交", "facet": "action", "core": true, "count": 0, "description": "git commit、表单提交…", "status": "active", "source": "core" }],
+      "direction": [{ "name": "契约断言", "facet": "direction", "family": "写断言", "core": false, "count": 3, "description": "按宿主契约写断言", "status": "active", "source": "user" }],
       "topic": [], "quality": [], "other": []
     },
     "total": 47,
@@ -252,14 +258,38 @@
 }
 ```
 
-- `core: true`：0 次使用也返回（种子词例外，计划书 §5.2）；用户标签使用 <2 次不返回。
-- `other`：词表里没有面的历史一次性标签（旧数据兼容，读得到但不算「对象/动作」）。
-- 别名归一在服务端完成：`DSH-Engram` 读成 `DSH插件`，`EigenFlux` 读成 `智能体平台`（都只作隐藏别名，不再作为规范标签出现在词表里）。
-- **0.38 direction 面**：族内场景方向（如 `写断言` 下的 `契约断言/回归断言/探针先行`），条目带 `family` 归属位；方向只能由数据按族登记（`exp_type label` facet=direction + family），没有内建 core。`required` 为 `[]`——动作由族承担，标签不再强制任何面。
+- `core: true` 的种子词 0 次使用也返回；用户标签使用 <2 次不返回。
+- `other` 是词表里没有面的历史一次性标签（读得到，但不参与「对象 / 动作」判断）。
+- 别名归一在服务端完成（如 `DSH-Engram` 读成 `DSH插件`）。
+- `direction` 是族内场景方向（如 `写断言` 下的 `契约断言`），条目带 `family` 归属；方向只能按族登记，没有内建 core。
 
-### `GET /objects`
+### GET /tag-tree
 
-对象链只读视图（0.35）：`<dataDir>/objects.jsonl` 里的每一行 = 一件具体工作的实际过程。写入口只有工具 `exp_object`，控制台不做第二套写路径。
+返回标签树（按当前可见经验统计）。示例数据走内建词表；live 读取数据目录的词表覆盖文件。
+
+### GET /families
+
+`families` 是扁平事实族表（含「未分族」这个真实族）；`types` 保留一版兼容视图。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "types": [{ "typeId": "ty_ppt", "name": "PPT / 课件", "count": 4, "families": [{ "family": "改 PPT 页面", "count": 3, "representative": { "id": "ex_...", "intent": "...", "G": 0.8, "hits": 4, "lastSeenAt": "..." } }] }],
+    "families": [{ "family": "改 PPT 页面", "count": 3, "representative": { "id": "ex_..." } }],
+    "unfiled": 0,
+    "unfiledRows": []
+  }
+}
+```
+
+- `families` 按条数降序；显式创建但还没有行的空族也会出现（`count: 0`）。
+- `unfiled` 只统计「推导不出族」的行（通常为 0），不是「未分族」的条数；`unfiledRows` 是这类行的前 50 条。
+- 族代表取该（类型, 族）内 G 最高者，G 相同取最近使用。
+
+### GET /objects
+
+对象链只读视图：`<dataDir>/objects.jsonl` 的每一行 = 一件具体工作的实际过程。写入口只有工具 `exp_object`，控制台不做第二套写路径。
 
 ```json
 {
@@ -278,248 +308,91 @@
             "note": "可选",
             "steps": [
               { "family": "改标签页", "direction": "契约断言", "note": "可选" },
-              {
-                "family": "跑 npm 测试",
-                "outcome": "failed",
-                "branches": [
-                  {
-                    "when": "Node 版本不对，报 ERR_UNKNOWN_FILE_EXTENSION",
-                    "steps": [ { "family": "安装依赖" }, { "family": "跑 npm 测试" } ]
-                  }
-                ]
-              }
+              { "family": "跑 npm 测试", "outcome": "failed", "branches": [{ "when": "Node 版本不对，报 ERR_UNKNOWN_FILE_EXTENSION", "steps": [{ "family": "安装依赖" }, { "family": "跑 npm 测试" }] }] }
             ]
           }
         ],
-        "hints": [
-          { "reason": "steps", "when": "Node 版本不对", "steps": ["fm_ab12cd34"], "count": 3, "window": 5,
-            "places": [ { "chainIndex": 1, "stepPath": [2] } ] }
-        ]
+        "hints": [{ "reason": "steps", "when": "Node 版本不对", "steps": ["fm_ab12cd34"], "count": 3, "window": 5, "places": [{ "chainIndex": 1, "stepPath": [2] }] }]
       }
     ]
   }
 }
 ```
 
-字段口径：
+- `available=false` 分两种：mock / 未配置数据目录时**不带 `error`**；`objects.jsonl` 读坏时带 `error`（含原因），此时 `total=0`、`objects=[]`。
+- `chains` 1..n 条；`steps` 1..n 步；`steps[].outcome` 只写 `failed` / `skipped`（缺省 = ok）；`branches` 只挂 failed 步，可嵌套（深度上限 3）。
+- `hints[].steps` 是**族 id 列表**，渲染时按族注册表解析成当前族名。
+- 不参与召回与排序；文件不存在时不建文件。
 
-| 字段 | 含义 |
-|---|---|
-| `available` | live 且数据目录可读为 `true`；mock / 未配置 / 读失败为 `false`（附 `error`），此时 `total=0`、`objects=[]` |
-| `chains` | 1..n 条链（同一对象的多件工作）；每条链 `steps` 1..n 步，按发生顺序 |
-| `steps[].family` | 当前族名；该族被合并时另带 `aliasOf`（旧族 id），族已删且无别名时 `family="(族已删除)"` 并带 `familyId` |
-| `steps[].direction` | 0.38：该步的方向标签（族内场景，如 `契约断言`）；可选，缺省不写。受控——必须是该族已登记方向 |
-| `steps[].outcome` | 只有 `failed` / `skipped` 会写；缺省＝`ok` |
-| `steps[].branches` | 只挂在 `failed` 步上；0..n 条，可嵌套（深度上限 3）；`when` 为当时撞上的具体意外 |
-| `steps[].branches[].result` | 只有 `aborted` 会写（放弃收工）；缺省＝`recovered`（接回主干） |
-| `hints` | 常用分支提示：「最近 5 条链里同一分支出现 ≥3 次，建议并进主干」。**只提示、不改历史** |
-| `hints[].steps` | **族 id 列表**（不是名字）；渲染时按 `familyId → 当前名` 解析，与 `steps[].family` 同一套 |
-
-不参与召回与排序；文件不存在时 `available=false` 或 `total=0`，不建文件。
-
-### `GET /skills`
-
-固化技能列表。来源是 exp-lib 的 `exp_consolidate` 写出的 `.exp/skills/<slug>/`（`SKILL.md` + `skill.json`）；mock 模式给 5 条示例技能。
-
-- `mock`：内置 5 条，覆盖已固化 / 试用中 / 不稳定 / 待验证 / 有未解障碍
-- `live`：递归扫 `<dataDir>/skills/`；任何含 `SKILL.md` 的目录都是技能，中间目录是组节点。`id` 是相对路径（`套件/子技能`），顶层技能 id 与目录名相同；`skill.json` 读坏仍按 `SKILL.md` 出一条。
-- 返回新增 `tree`：`[{ id, path, name, kind: 'skill'|'group', depth, rootName, parentPath, skillCount, registeredCount, childCount, children: [...] }]`。`skills` 行同时补 `path/depth/parentPath/rootName/childCount`。
+### GET /retrieval-policy
 
 ```json
-{
-  "ok": true,
-  "data": {
-    "source": { "id": "mock", "mode": "mock", "label": "示例数据", "readOnly": false },
-    "notice": "",
-    "total": 5,
-    "summary": { "total": 5, "solid": 1, "trial": 1, "risky": 1, "new": 1, "blocked": 1 },
-    "skills": [
-      {
-        "id": "ppt-export-pdf",
-        "name": "PPT 导出 PDF 前先查字体",
-        "description": "导出前确认字体可用，导出后逐页看分页与图片跨页。",
-        "body": "## 适用…\n## 做法…",
-        "typeName": "PPT / 课件",
-        "context": ["Windows / Office 2019", "课件交付"],
-        "triggers": ["导出 PDF", "字体缺失"],
-        "uses": 6,
-        "helped": 5,
-        "hurt": 1,
-        "attempts": 6,
-        "ratio": 0.8333,
-        "confident": true,
-        "status": "solid",
-        "revisions": 2,
-        "obstacleCount": 1,
-        "openObstacleCount": 0,
-        "resolvedCount": 3,
-        "derivedFrom": ["ex_mock_01", "ex_mock_02", "ex_mock_12"],
-        "pendingCommit": false,
-        "lastUsedAt": "2026-11-09T08:25:00.000Z",
-        "updatedAt": "2026-11-08T10:20:00.000Z",
-        "path": "（示例）skills/ppt-export-pdf"
-      }
-    ]
-  }
-}
+{ "ok": true, "data": { "tagRank": "shadow", "routing": "on", "visible": 120, "families": 18, "unfiled": 0, "ab": null } }
 ```
 
-技能行字段：
+`ab` 读 `<dataDir>/.cache/ab-report.json`；没有就是 `null`。`families` 是（类型 × 族）代表键数，不是去重后的族名数。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` / `path` | string | 技能 slug（目录名）/ 技能目录 |
-| `name` / `description` | string | `SKILL.md` frontmatter 的 name / description |
-| `body` | string | `SKILL.md` 正文 |
-| `typeName` | string | 所属类型 |
-| `context` / `triggers` | string[] | 情境标签 / 触发词 |
-| `uses` | number | 真实调用次数 |
-| `helped` / `hurt` | number | 用后反馈计数 |
-| `attempts` | number | `helped + hurt`（自信度分母） |
-| `ratio` | number | 有帮助占比（0–1） |
-| `confident` | boolean | 与 exp-lib `highConfidence` 同规则：`attempts ≥ 3 && ratio ≥ 0.8 && 无未解障碍` |
-| `status` | string | `solid` 已固化 / `trial` 试用中 / `risky` 不稳定 / `new` 待验证 / `blocked` 有未解障碍 |
-| `revisions` | number | 技能被覆盖修订的次数 |
-| `obstacleCount` / `openObstacleCount` | number | 障碍签名数 / 连续 3 次复发的未解障碍数 |
-| `resolvedCount` | number | 已内化条目数 |
-| `derivedFrom` | string[] | 来源经验 id |
-| `pendingCommit` | boolean | 上次 git 提交失败、待补提交 |
-| `lastUsedAt` / `updatedAt` | string | ISO 时间（最近使用 / `SKILL.md` 修改时间） |
-
-### `GET /usage?limit=<1..500>`
-
-`rows[]`（新→旧）：
+### GET /types
 
 ```json
-{
-  "at": "2026-11-09T07:56:00.000Z",
-  "tool": "exp_recall",
-  "ok": true,
-  "op": "",
-  "intent": "把 PPT 导出成 PDF",
-  "action": "",
-  "feedback": null,
-  "id": "",
-  "error": "",
-  "limit": 4,
-  "routeScore": 0.21,
-  "ids": ["ex_mock_01", "ex_mock_02"]
-}
+{ "ok": true, "data": { "types": [{ "id": "ty_ppt", "name": "PPT / 课件", "description": "…", "system": false, "count": 4 }] } }
 ```
 
-## 4. 接入真实经验库（后续步骤）
+空业务类型时会先补默认主分类再返回。
 
-1. 确认真实库文件：`<dataDir>/exp-lib.json`（`{ version, types[], experiences[] }`，与 `dsh-engram` 同结构）。
-2. 把插件行 config 改为：
+### GET /skills
 
-```yaml
-    - id: exp-ui
-      name: dsh-exp-ui
-      config:
-        source: live
-        dataDir: C:/Users/<用户>/WorkDeepSeek/.exp
+固化技能列表 + 状态分布 + 目录树。来源是 `<dataDir>/skills/`（`SKILL.md` + `skill.json`）；mock 给内置示例技能。
+
+返回 `{ source, notice, total, summary, skills, tree }`：
+
+- `summary`：`{ total, solid, trial, risky, new, blocked }`
+- `skills[]`：`id / path / name / description / body / typeName / context / triggers / uses / helped / hurt / attempts / ratio / confident / status / revisions / obstacleCount / openObstacleCount / resolvedCount / derivedFrom / pendingCommit / lastUsedAt / updatedAt / depth / parentPath / rootName / childCount / runtime / bodyHash` 以及生命周期字段（`lifecycle` / `freshness` / `volatility` / `lastVerifiedAt` / `reviewAfter` / `reviewDue` / `appliesTo` / `staleAt` / `staleReason` / `reviewNote` / `retiredAt` / `retiredReason`）。
+- `status` 只会是 `solid` / `trial` / `risky` / `new` / `blocked`。
+- `runtime` 是召回时交给模型的运行时清单（`dir` / `skillFile` / `scripts[].run` / `references` / `usage`），控制台截到 12 条附件；mock 没有真实目录时为 `null`。
+- `tree[]`：`{ id, path, name, kind: 'skill'|'group', depth, rootName, parentPath, skillCount, registeredCount, childCount, children }`。
+
+### GET /usage?limit=<1..500>
+
+按新→旧返回 `rows[]`：`at / tool / ok / op / intent / action / feedback / id / error / limit / routeScore / ids / chars / skill / reused / bodyHash`。`limit` 默认 100、上限 500。
+
+### GET /pending
+
+待判定队列，最多 5 条：`{ id, intent, action, verdict, registeredAt, brief, origin, kind, stepRewards }`。
+
+### GET /usage-summary
+
+调用次数与回执字符数汇总：`{ calls, chars, avgChars, byTool }`（部分数据源另给 `withChars`）。
+
+### GET /graph
+
+节点 `kind`：`root` / `family` / `experience` / `skill` / `suite`。边 `kind`：`root` / `family` / `label` / `suite` / `derived`。
+
+返回 `{ notice, storeError, nodes, edges, total, truncated, byKind, summary, updatedAt }`：
+
+- `family` 节点带 `family`（名）、`count`、`system`（「未分族」为 true）；id 统一 `family:` 前缀，名字里的 `%` / `:` / `/` 分别转义为 `%25` / `%3A` / `%2F`。
+- `summary` = `{ families, experiences, skills, suites }`。
+- 每个节点带 `degree`（本次 edges 里出现次数，按边计数）。
+- 查询参数：`scope=summary` 只裁经验节点；`limit` 只在 summary 下生效（默认 300、夹在 1..1200），不带 `scope` 时全量、忽略 `limit`。
+- `total` 是截断前可见经验数；`truncated` 表示经验节点是否被裁；被裁掉的 experience 不留下残边。读坏时 200 + `storeError`，节点/边为空但不 500。
+
+### GET /validate
+
+```json
+{ "ok": true, "data": { "problems": [{ "slug": "ppt-export-pdf", "problems": ["SKILL.md 缺 frontmatter"] }] } }
 ```
 
-3. 重启 DSH，面板徽标会变成「真实数据」，标题旁出现「只读」。
-4. 写入/反馈仍由正式经验库引擎负责；等引擎提供写接口后，再给 `live` 数据源补 `feedback()` 实现（接口形状已固定：`feedback(id, result) → 回执`，见 `/feedback` 一节）。
+### GET /settings
 
-## 5. 兼容承诺
+`{ source, dataDir, file, exists, bytes, updatedAt, storage?, currentRoot, version, config, ui, git, runtime, spec }`。
 
-- 字段**只增不删**；新增字段允许客户端忽略。
-- 错误 `code` 只增不删；客户端遇到未知 `code` 按普通失败处理并显示。
-- `/experiences` 的 `mode` 只会是 `list` / `advantage` / `evidence`。
-- `/skills` 的 `status` 只会是 `solid` / `trial` / `risky` / `new` / `blocked`。
+- `config` / `ui` / `git`：已保存的覆盖值（没存过的键不出现，界面显示默认）。
+- `runtime`：`{ currentModel, currentTool, currentEnvironment, models, tools, environment }`，用于解释 `appliesTo`。
+- `spec`：三组设置项字段说明 `{ config[], ui[], git[] }`，每项 `{ key, label, type, values?, labels?, hint?, tip?, default?, group? }`。
 
-## 6. 示例数据与真实数据的分界
+### GET /sync
 
-- mock：`data.source.mode === 'mock'`，`notice` 以「当前是示例数据」开头；反馈写内存，进程重启即恢复。
-- live：`data.source.mode === 'live'`，`readOnly === true`；读不到文件时 `exists === false` 且 `notice` 说明原因，界面显示空态而不是报错。
-- 固化技能同样分界：mock 是内置 5 条；live 递归读 `<dataDir>/skills/`（含套件子目录），没有技能时返回空数组（界面空态）。
-
-
-## 数据源默认值（0.6.0）
-
-不传 `source` 时默认 `live`：读 `dataDir`（插件配置 / ENGRAM_DATA_DIR / settings.currentRoot / 默认 `$DSH_HOME/engram/data`）。只有显式 `source: "mock"` 才用内置示例数据（仅测试）。
-
-`GET /experiences?query=...` 在 live 下走 `engine.recall`（返回 candidates/evidence），不再用界面里的简化排序。
-
-## 控制台动作（0.5.0）
-
-### `POST /recall`
-body: `{ intent, context?: string[], limit?: 1..50 }`
-→ `{ mode, candidates, skill?, pendingSkills?, note? }`（live 走 engine.recall；mock 是简化召回）
-
-### `POST /record`
-body: exp_record 的字段（intent/action/outcome/type/context/note/taskId/kind/stepIndex/stepTotal/expectedG/skillId/blockedBy/blockedByList）
-→ `{ action, id, G, skill? }`；mock 只写内存示例库，live 走 engine.record
-
-### `POST /consolidate`
-body: `{ intent, context? }` → `{ action, slug?, derivedFromCount? }`；mock 返回 501 unsupported
-
-### `POST /skill-feedback`
-body: `{ slug, result: helped|hurt|neutral }` → `{ id, result, G_before?, G_after? }`
-
-### `POST /skills/import`
-body: `{ path?, content?, contents?: (string | { text, suiteRoot?, relPath? })[], suiteRoot?, relPath?, categories?: string[], notes?: string[] }` → `{ suite, rootName?, count, items: [{ slug, id, path, name, category, tags, order, classifier, note, package? }] }`
-
-- `path` 指向文件夹时：根上只有 SKILL.md、没有子技能 → 单条；根上有总入口 + 子目录技能，或子目录各带 SKILL.md → 按**技能套件**整棵导入（`suite:true`）。整棵目录只复制一次到 `<dataDir>/skills/<根名>/`，子技能保留相对路径，**不再摊平**。
-- `contents` 是浏览器通道：字符串按单条导入；`{text, suiteRoot, relPath}` 按 `suiteRoot/relPath` 还原目录层级。也接受顶层 `suiteRoot` + `relPath` + 单条 `content`。
-- 根名默认取来源文件夹名；`skills`、`skill` 这类泛名取上一级，客户端可传改后的套件名。
-- `categories` / `notes` 会写到每条导入技能的 `skill.json`（一个技能可挂多个分类、多条便签）。
-- 套件导入时每个技能各走一次分类调用；`classifier` 如实标 `session` 或 `local`。
-- 每条都会走一次分类（临时模型会话或本地关键词），套件是 N 次分类调用。
-
-### `POST /skill-global`
-body: `{ slug, action: register|unregister }` → `{ slug, targetDir, mode, registered }`
-
-`slug` 也接受套件子技能的相对路径（`套件/子技能`）。`register`：把技能目录**链接**（优先 junction，建不了才复制）到 `$DSH_HOME/skills/<叶子名>/`，之后按普通 DSH 技能加载。
-注册后**经验库不再排序/召回这个技能**（`listSkills({onlyLocal:true})` 会过滤掉它），避免两个引擎同时抢着用；`unregister` 删掉这条链接并清掉记录，技能回到经验库排序池。
-目标已被别人占用时返回 400 `skill-global-failed`，绝不覆盖。错误码：`slug-required` / `bad-action` / `unsupported`。
-
-### `POST /skill-node`
-body: `{ path, action: register|unregister|forget|detach, expect? }` → `{ action, path, total, ok, failed: [{ path, message }], results, deleted? }`
-
-- `path` 是相对 skillsRoot 的节点路径（组节点或技能节点都行，如 `ai-base-tools`、`动画/gestures`）。
-- `register` / `unregister`：对**子树内所有技能**逐个执行，单项失败不中断，失败项进 `failed`；注册目标仍是 `$DSH_HOME/skills/<叶子名>`，被占用时该条失败、不覆盖。
-- `forget`：必须带 `expect` = 子树技能数；不匹配返回 400（列表过期，刷新再试）。先逐个取消注册，再删节点目录；节点是链接时拒绝删除。
-- `detach`：仅子技能；移到顶层同名目录，重名返回 400，不覆盖。
-- 错误码：`node-required` / `bad-action` / `unsupported` / `skill-node-failed`。
-
-### `POST /skill-meta`
-body: `{ slug, typeNames?: string[], notes?: string[] }` → `{ slug, typeName, typeNames, notes }`：改技能的分类（可多个）与便签（可多条）。错误码：`slug-required` / `skill-meta-failed`。
-
-### `POST /skill-forget`
-body: `{ slug }` → `{ slug, deleted, unregistered }`：删除技能目录（注册着的会先取消注册）。`slug` 也接受套件子技能的相对路径；删整个套件请用 `/skill-node` 的 `forget`（带 `expect`）。错误码：`slug-required` / `skill-forget-failed`。
-
-### `POST /type`
-body: `{ action: create|rename|merge|delete|assign, ... }` → 类型管理结果；mock 返回 501 unsupported
-
-### `GET /validate`
-→ `{ problems: [{ slug, problems: string[] }] }`
-
-### `GET /settings`
-→ `{ source, dataDir, file, exists, bytes, updatedAt, currentRoot, version, config, ui, git, spec }`
-
-- `config` / `ui` / `git`：已保存的覆盖值（没存过的键不出现，界面显示「默认」）。
-- `spec`：三组设置项的字段说明 `{ config[], ui[], git[] }`，每项 `{ key, label, type, values?, labels?, hint?, tip? }`；
-  `tip` 是给鼠标悬停提示框用的长说明（有歧义的项才有）。
-- 设置项保存：`POST /settings` body 可带 `currentRoot` / `config` / `ui` / `git` 任意组合；传 `null` 或空串等于「恢复默认」（删键）。
-
-### `POST /chat-save`
-body: `{ messageId, sessionId?, outcome?, type?, note? }` → `{ id, intent, action, outcome }`
-
-把会话里的一轮对话存成经验：按 `messageId` 读 `$DSH_HOME/sessions/**/session-<id>/session.v4.jsonl.zstd`（只读），取该条助手回复的正文作为「做法」、往前最近的用户输入作为「意图」，落一条 `outcome=unknown` 的经验（之后用 `exp_feedback` 回填）。只给 `messageId` 时会按最近修改的前 8 个会话反查。错误码：`ids-required`（缺 messageId）、`turn-not-found`（会话里找不到该消息 id）。
-
-### 技能不写进 DSH skills 目录（边界）
-
-`<dataDir>/skills/<路径>/` 只归经验库自己管（顶层技能是 `<slug>/`，套件子技能是 `<套件>/<子技能>/`）：**不**复制到 `$DSH_HOME/skills/`，也不交给宿主的技能管理插件当「已安装技能」。
-召回时由 `exp_recall` 按需把技能正文作为结果返回——用到它的时候它才是技能，平时它只是经验库里的一份资产。
-因此没有 `POST /skill-install`（已下线），工具的 `exp_consolidate` / `exp_skill_attach` 也不再有 `install` 参数。缺 slug 的报错码 `slug-required` 现在只由 `/skill-feedback` 使用。
-
-> 技能可以带脚本：`<skill>/scripts/` 下的附件会登记在 `skill.json` 的 `files`，并在 `SKILL.md` 里维护「## 脚本」清单；用 `exp_consolidate` 的 `body`/`files` 或 `exp_skill_attach` 补齐。
-
-### `GET /sync`
-→ Git 备份状态：
+Git 备份状态：
 
 ```json
 {
@@ -540,140 +413,66 @@ body: `{ messageId, sessionId?, outcome?, type?, note? }` → `{ id, intent, act
 }
 ```
 
-### `POST /sync`
-body: `{ action: "init" | "push" | "pull" | "status", message? }`
+### GET /classify-diag
 
-- `init`：在数据目录里 `git init` 并设置 `origin`（已存在则只更新 origin）。
-- `push`：`git add -A -- .` → 有改动就 commit → `git push -u origin <branch>`。
-- `pull`：`fetch` + `merge --ff-only`；有分叉不自动合并，返回原因。
-- 返回 `{ ok, action, committed?, pushed?, commit?, reason? }`；失败不抛 500，用 `ok:false + reason` 表达。
-- 错误码：`bad-action`（未知动作）。
+自动分类能力自检：`{ mode, hasLlm, hasStream, hasRoute, provider, model }`。
 
-### `POST /github`
-body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "device-poll" | "device-cancel", token?, name?, private?, repoUrl?, message? }`
+### GET /shadow-report
 
-- `device-start` → `{ userCode, verificationUri, expiresIn, interval }`：GitHub OAuth 设备码登录（免 token），用户去 `verificationUri` 输入 `userCode` 授权。
-- `device-poll` → `{ status: "pending" | "slow-down" | "authorized" | "expired" | "denied", interval?, user? }`；`authorized` 时 token 已写入设置，无需再传。
-- `device-cancel` → 清掉服务端临时会话。
-- `login` → `{ ok, login, name, avatarUrl }`（验证已保存/临时传入的 token）。
-- `repos` → `{ ok, total, repos: [{ fullName, name, private, defaultBranch, cloneUrl, sshUrl, htmlUrl, updatedAt, description }] }`（owner + collaborator，按最近推送排序，最多 100）。
-- `create` → `{ ok, action:"create", repo, init, sync }`：在 GitHub 建空仓库（`auto_init:false`），把 `repoUrl` 存进设置，然后 `git init` + 提交推送。
-- `select` → `{ ok, action:"select", repoUrl, init, sync }`：选中已有仓库，保存地址后初始化并推送。
+标签影子判据只读报表（数据来自 `usage.shadow`）。仅 live；mock 返回 400 `unsupported`；失败 500 `report-failed`。
 
-`token` 可以随请求临时传入（第一次登录时），传了就顺手写进设置的 `git.token`，之后不用再贴。
-错误码：`bad-action`（未知动作）、`repo-required`（select 缺 repoUrl）、`github`（GitHub 返回的错误 / 没 token / 仓库名校验）。
+### GET /chat-save-probe
 
-> Git 备份配置在 `~/.dsh/engram/settings.json` 的 `git` 键：`repoUrl` / `branch` / `token` / `authorName` / `authorEmail` / `autoBackupMinutes`。
-> `token` 只用于 https 的 `http.extraHeader`，不会写进仓库、也不会出现在错误信息里（已打码）。
+只读探测会话文件：`?mid=<messageId>`，返回可读性信息。不写盘。
 
-### GET /graph
-→ { nodes, edges, total, truncated, byKind, summary, notice, storeError, updatedAt }。节点 kind：root/type/experience/skill/suite；边 kind：root/type/derived/suite。套件：总技能是 `skill:*` 节点（带 childCount），无根技能的套件是 `suite:*` 组节点（带 count）；`suite` 边表示「父技能/组 → 子技能」，关系图按这条边把子技能摆在父节点周围。`summary.suites` 是套件树根数。每个节点带 `degree`（按边计数的度）。查询参数（都可选）：`scope=summary`（只裁经验节点）、`limit`（只在 summary 下生效，默认 300、上限 1200）。不带 `scope` 时默认全量，旧 client 行为不变。详见 0.19.0 增量。供「关系图」页渲染。
+### GET /pick-directory?probe=1
 
-## 0.15.0 增量（UI P0 契约对齐）
+只回答「这个宿主能不能弹系统选目录窗口」，不弹：`{ available, kind, message }`。
 
-> 相对上面 v1 文档的增量；字段只增不删。
+### GET /icons
 
-### GET /state
-- `usage.byDay`：最近 7 天（含今天）、本地日期升序、零填充；每项 `{ date: 'YYYY-MM-DD', count, chars }`。
-- `usage.today` 仍是原有的 UTC 截断口径（未改，兼容）。
+返回图标画廊 HTML（`text/html`），不是 JSON 信封；只用 GET。
 
-### GET /experiences
-- 行新增：`context: string[]`、`dimensions: string[]`、`expectedG: number|null`、`verdict: string`、`retrievals: number`。
-- 顶层新增：`storeError: null | { code: 'store-unreadable', message, file }`（读分片失败时给；行仍为空数组，页面显示横幅）。
+## 5. 写入与动作接口
 
-### GET /experience
-- 热档读失败时返回 HTTP 503、`error.code = 'store-unreadable'`；缺 `id` 仍 400。
+### POST /feedback
 
-### GET /graph
-- 顶层新增：`storeError`（同 `/experiences`），读失败时 `nodes/edges` 为空但不 500。
+请求体：`{ "id": "ex_mock_01", "result": "helped" }`。`result` 只能是 `helped` / `hurt` / `neutral`。
 
-### GET /usage
-- 每行新增：`chars: number`（该次回执字符数；0.13 前的历史行可能为 0）。
-
-### GET /cold
-查询参数：`offset`（默认 0）、`limit`（默认 50，上限 500）、`query`（大小写不敏感，匹配 intent/action/id/typeName）、`year`（UTC 年，与 manifest.cold 分年一致）。
+语义：EMA（η=0.35）从 `GOutcome` 重放反馈日志得到新 `G`；不动 `hits`、不改 `outcome`。成功返回回执：
 
 ```json
-{
-  "ok": true,
-  "data": {
-    "source": { "id": "live", "mode": "live", "label": "真实数据", "readOnly": false },
-    "notice": "",
-    "exists": true,
-    "total": 2,
-    "offset": 0,
-    "limit": 50,
-    "years": [{ "year": 2026, "count": 2, "bytes": 4096 }],
-    "rows": [{ "id": "ex_...", "intent": "...", "action": "...", "typeName": "PPT / 课件", "G": -0.6, "outcome": "failed", "lastSeenAt": "2026-01-08T09:30:00.000Z" }],
-    "error": null
-  }
-}
+{ "ok": true, "data": { "id": "ex_mock_01", "result": "helped", "G_before": 0.8, "G_after": 0.93, "changed": true, "outcome": "success", "typeName": "PPT / 课件", "feedback": { "helped": 3, "hurt": 0, "neutral": 0, "lastAt": "2026-11-09T08:00:00.000Z", "lastResult": "helped" }, "source": "feedback" } }
 ```
 
-- `exists` = manifest 里登记了冷档年档（`years.length > 0`）；空库为 `false`。
-- 冷档文件缺失/坏行：HTTP 500 `cold-unreadable`，不把「丢了」显示成「没有」。
-- 冷档只读：没有反馈/编辑/删除接口。
+| 情况 | 返回 |
+|---|---|
+| 成功（live 写真实库，mock 写内存） | 200 |
+| 该条已删除 / 被取代 / 退休 | 409 `not-feedbackable` |
+| `result` 非法 | 400 `bad-result` |
+| `id` 不存在 | 404 `not-found` |
 
 ### POST /recall
-- 新增透传：`all`、`cold`、`cluster`、`detail`、`mark`、`verdicts`（`undefined` 不传，保持内核默认值）。
-- 冷档查询：`{ intent, cold: true }`，回执带 `cold: true`；冷档模式只读、不写盘。
 
-## 0.19.0 增量（graph summary / limit / degree）
+请求体：`{ intent, context?, limit? }`；`limit` 夹在 1..50，默认 8。透传高级参数：`all`、`cold`、`cluster`、`detail`、`mark`、`verdicts`、`includeMismatched`、`currentEnv`（未传的不覆盖内核默认值）。
 
-### GET /graph
-查询参数（都可选；缺省＝旧行为，全量）：
+返回 `{ mode, candidates, skill?, pendingSkills?, note? }`；live 走 `engine.recall`，mock 是简化召回。缺 `intent` → 400 `intent-required`。冷档查询用 `{ intent, cold: true }`，只读、不写盘。
 
-- `scope=summary`：保留全部 root/type/skill/suite 节点，只把 experience 节点按 `weight` 降序截取（同权重时 `recent` 优先，再按 `lastSeenAt` 降序）；其他值按全量处理。
-- `limit`：summary 模式下最多返回的 experience 节点数，默认 300，夹在 1..1200（`0`/负数→1，非数字或空→300，`99999`→1200）。不带 `scope=summary` 时忽略（仍全量）。
+### POST /record
 
-返回新增字段：
+请求体字段：`intent`（必填）、`action`（必填）、`outcome`、`typeName`、`typeDescription`、`family`、`force`、`context` / `labels`、`note`、`taskId`、`kind`、`stepIndex`、`stepTotal`、`failedStep`、`stepRewards`、`expectedOutcome` / `expectedG`、`skillId`、`blockedBy` / `blockedByList`、`origin`、`artifacts`、`dimensions`、`verdicts`、`cwd`、`volatility`、`appliesTo`、`reviewAfter`、`reviewNote`。
 
-- `total: number`：截断前可见经验总数（不是节点总数，也不是 summary 下已返回的经验数）。
-- `truncated: boolean`：experience 节点是否被截断（`total > 返回的 experience 节点数`）；全量模式恒为 `false`。
-- `byKind: object`：本次返回节点按 kind 计数，如 `{ "root": 1, "type": 6, "experience": 300, "skill": 9, "suite": 2 }`。
-- 每个 node 新增 `degree: number`：该节点在本次 `edges` 中出现的次数（按边计数，一次遍历边表累加，O(N+E)）。
+> 注意：分类参数叫 `typeName`（不叫 `type`——`type` 是 JSON Schema 关键字，宿主严格校验会误读）。
 
-截断时 `edges` 同步收敛：被裁掉的 experience 不会留下 type→exp 或 exp→skill 残边，`summary.experiences` 仍是全量可见经验数。
-
-兼容性：字段只增不删；不带 `scope` 时仍返回全量节点与边，旧 client 无需改动。storeError/坏桶行为不变：HTTP 200 + `storeError`（`code: "store-unreadable"`），`total` 为 0、`truncated` 为 `false`，不 500。
-
-## 0.20.0 增量（经验/技能时效治理 P0）
-
-> 只增字段：旧字段、旧路由语义不变；`retired_at` / `superseded_by` 仍是最高优先级状态。
-
-### GET /experiences（筛选参数 + 行字段）
-
-查询参数新增（都不传＝旧行为：只给未退休、未被取代的可见行）：
-
-- `lifecycle`：`active` / `stale` / `retired` / `superseded` / `visible`（默认）/ `all`（含历史，仍不含已删除墓碑）。
-- `volatility`：`stable` / `semi` / `perishable`。
-- `due=1`：只看到期或已标 stale 的行。
-
-行新增字段：
-
-```json
-{
-  "lifecycle": { "state": "stale", "supersededBy": "", "retiredAt": "", "retiredReason": "", "deletedAt": "" },
-  "freshness": 0.42,
-  "volatility": "semi",
-  "lastVerifiedAt": "2026-06-01T…" ,
-  "reviewAfter": "2026-08-30T…",
-  "reviewDue": true,
-  "applicability": "unscoped",
-  "appliesTo": null,
-  "staleAt": "2026-10-01T…",
-  "staleReason": "review-due",
-  "reviewNote": ""
-}
-```
-
-- `lifecycle.state`：`active / stale / retired / superseded / deleted`（旧 `lifecycle` 对象字段全部保留，只加 `state`）。
-- `volatility` 缺省按 `semi` 解释（技能默认 `perishable`）；`lastVerifiedAt` 缺失时 `reviewAfter` 由 `lastSeenAt/ts + 半衰期` 推算（读时计算，不写回）。
-- `applicability`：`unscoped`（未声明/当前环境不可比）/ `match` / `partial` / `mismatch`。
+- `outcome` 允许 accepted / success / partial / unknown / failed / corrected / aborted。
+- `stepRewards` 必须是数字数组；越界夹到 [-1,1]，非法值 400 `bad-request`。
+- 回执由内核生成：`action` / `id` / `G` / `skill?`，另可能带 `tags` / `tagsRejected` / `tagWarning` / `signWarning`。
+- **门槛拒记**：被记录门槛拦下时仍是 HTTP 200，但 `data` 是 `{ skipped: true, reason, suggestion }`，表示**没有落库**（不产生 id / hits / verdict / typeName）。界面按提示展示，不要当写入失败。模型确认误判时传 `force: true` 重试。
+- 缺 `intent` / `action` → 400 `intent-required` / `action-required`；坏 `outcome` → 400 `bad-outcome`。
 
 ### POST /review
 
-时效复核，经验与技能同一入口：
+经验与技能同一入口：
 
 ```json
 { "action": "verify", "id": "ex_… 或 skill:<slug>", "note": "复核结论", "volatility": "semi", "reviewAfter": "2027-01-01T00:00:00.000Z", "appliesTo": { "models": [], "tools": [], "environment": "" }, "reason": "manual", "limit": 20 }
@@ -681,239 +480,162 @@ body: `{ action: "login" | "repos" | "create" | "select" | "device-start" | "dev
 
 | action | 行为 |
 |---|---|
-| `due` | 只读：列出到期/待复核的经验（`rows`）与技能（`skills`）；`limit` 默认 20（≤50） |
-| `verify` | 刷新 `lastVerifiedAt` / `reviewAfter`，清 `stale_*`；不改 G/outcome |
+| `due` | 只读：列出到期 / 待复核的经验（`rows`）与技能（`skills`）；`limit` 默认 20（≤50） |
+| `verify` | 刷新 `lastVerifiedAt` / `reviewAfter`，清 `stale_*`；不改 G / outcome |
 | `stale` | 标 `stale_at` + `stale_reason`；不删除、不退休 |
 | `retire` | 标 `retired_at`（保留正文与历史，可 `revive`） |
-| `revive` | 恢复 active，清 `stale_*` / `retired_*`；**必须带 `note` 理由**，否则 400 `reason-required` |
+| `revive` | 恢复 active，清 `stale_*` / `retired_*`；**必须带 `note`**，否则 400 `reason-required` |
 
 - 成功回执：`{ action, id, lifecycle, volatility, freshness, lastVerifiedAt, reviewAfter, reviewDue, staleAt?, retiredAt? }`（技能为 `<slug>` + 同名字段）。
-- 错误：缺 id → 400 `id-required`；未知 action → 400 `bad-action`；把已取代的经验拿来复核 → 409 `not-feedbackable`；示例数据源同样支持（只改内存）。
-- 只改时效字段：`G` / `outcome` / `GOutcome` / `feedback_log` 一律不动；冷冻档、历史记录不删。
+- 缺 id → 400 `id-required`；未知 action → 400 `bad-action`；已取代的经验 → 409 `not-feedbackable`；mock 同样支持（只改内存）。
+- 只改时效字段，`G` / `outcome` / `GOutcome` / `feedback_log` 一律不动。
 
-### GET /skills（行字段）
+### POST /verdicts
 
-技能行新增（`skill.json` meta 缺字段时按默认值解释，读路径不写回）：
+请求体：`{ "verdicts": [{ "id": "ex_…", "outcome": "success" }] }`。逐条回执 `{ id, ok, outcome? , error? }`，不整批回滚。数据源不支持时 400 `verdict-failed`。
 
-- `lifecycle`（`active / stale / retired`）、`freshness`、`volatility`（默认 `perishable`）、`lastVerifiedAt`、`reviewAfter`、`reviewDue`、`appliesTo`、`staleAt`、`staleReason`、`reviewNote`、`retiredAt`、`retiredReason`。
+### POST /consolidate
 
-### POST /recall（生命周期元数据）
+请求体：`{ intent, context? }` → `{ action, slug?, derivedFromCount? }`。缺 `intent` → 400 `intent-required`；mock → 501 `unsupported`。
 
-- 每条候选新增：`lifecycle`（字符串）、`volatility`、`freshness`、`lastVerifiedAt`、`reviewAfter`、`reviewDue`、`applicability`，stale 候选另带 `lifecycle_note`；
-- 顶层：有 stale 候选时带 `lifecycleNote`；appliesTo 明确不匹配的行默认不返回（可用请求参数 `includeMismatched: true` 带出，回执顶层给 `applicabilityFiltered` 计数）；
-- 排序仍不改 `G`/`Â`：stale 只降权（×0.55）并强制排在 active 之后；`retired` / `superseded` / `deleted` 默认不召回。
+### POST /skills/import
 
-## 0.20.1 增量（P1：运行环境 + appliesTo 门控）
+请求体：
 
-### 设置（存储位置：`settings.config`）
+```json
+{
+  "path": "C:/…/SKILL.md 或文件夹",
+  "content": "单条技能正文",
+  "contents": [{ "text": "…", "suiteRoot": "套件名", "relPath": "子技能/SKILL.md" }],
+  "suiteRoot": "…",
+  "relPath": "…",
+  "categories": ["…"],
+  "notes": ["…"]
+}
+```
 
-新增三个字符串键，全部可选，缺省＝未声明（旧配置文件不需要迁移）：
+→ `{ suite, rootName?, count, items: [{ slug, id, path, name, category, tags, order, classifier, note, package? }] }`。
 
-- `currentModel`：当前模型名，例如 `deepseek-flash`；
-- `currentTool`：当前工具版本，例如 `dsh-engram@0.20.0`（对应经验 `appliesTo.tools`）；
-- `currentEnvironment`：运行环境，例如 `Windows` / `WSL`（大小写不敏感）。
+- `path` 指向文件夹时：根上只有 `SKILL.md` → 单条；根上有总入口 + 子目录技能，或子目录各带 `SKILL.md` → 按**技能套件**整棵导入（`suite: true`），子技能保留相对路径、不摊平。
+- 根名默认取来源文件夹名；`skills` / `skill` 这类泛名取上一级，客户端可传改后的套件名。
+- 每条技能都会走一次分类（临时模型会话或本地关键词），`classifier` 如实标 `session` 或 `local`。
+- mock → 501 `unsupported`；没有数据目录 → 400 `no-data-dir`；无文件也无正文 → 400 `source-required`。
 
-只通过设置/插件 config 读取；不读取 DSH 宿主内部模型名，也不改宿主。
+### POST /skill-feedback
 
-### GET /settings
+请求体：`{ slug, result: helped|hurt|neutral }` → `{ id, result, G_before?, G_after? }`。缺 slug → 400 `slug-required`；坏 result → 400 `bad-result`。
 
-- `config` 里原样包含上面三个键（留空不落盘）；
-- 新增 `runtime` 摘要：`{ currentModel, currentTool, currentEnvironment, models: string[], tools: string[], environment }`（直接可用于解释 applicability）；
-- `spec.config` 里三个字段带 `group: "运行环境"`，设置页据此渲染分组；
-- 保存仍走 `POST /settings { config: {...} }`，保存后下一次请求即生效（无需重启）。
+### POST /skill-global
 
-### POST /recall
+请求体：`{ slug, action: register|unregister }` → `{ slug, targetDir, mode, registered, action }`。
 
-- 新增可选 `currentEnv`：`{ models?: string[]|string, tools?: string[]|string, model?: string, tool?: string, environment?: string }`；**字段级覆盖**设置里的运行环境（未给的字段沿用设置）。
-- 回执新增：
-  - `currentEnv`：本次实际使用的运行环境（三项全空时不回显）；
-  - `applicabilityFiltered`：被 appliesTo 门控隐藏的候选数；
-  - `applicabilityNote`：人话说明（隐藏了几条 / 几条 partial 被降权 / 显式 includeMismatched 后返回的是历史参考）。
-- 门控语义（`applicabilityOf`）：
-  - 经验没写 `appliesTo`，或当前环境对应维度未声明 → `unscoped`，不拦；
-  - 所有可比较维度都匹配 → `match`；
-  - 部分维度匹配 → `partial`，保留但排序降权（×0.85）；
-  - 所有可比较维度都不匹配 → `mismatch`，默认不返回；传 `includeMismatched: true` 才返回并标注。
+`slug` 也接受套件子技能的相对路径（`套件/子技能`）。`register` 把技能目录链接（优先 junction，建不了才复制）到 `$DSH_HOME/skills/<叶子名>/`，之后按普通 DSH 技能加载；注册后经验库不再排序 / 召回它。`unregister` 删链接并清记录。目标被占用时 400 `skill-global-failed`，绝不覆盖。mock → 400 `unsupported`；缺 slug → 400 `slug-required`；坏 action → 400 `bad-action`。
 
-## 0.21.0 增量（P2：技能命中三态的控制台口径）
+### POST /skill-node
 
-> 只增不删：老 `usage.jsonl` 行缺新字段时按空串返回，界面显示「—」。
+请求体：`{ path, action: register|unregister|forget|detach, expect? }` → `{ action, path, total, ok, failed: [{ path, message }], results, deleted? }`。
 
-### GET /usage（行新增三字段）
+- `path` 是相对 skillsRoot 的节点路径（组节点或技能节点都行）。
+- `register` / `unregister` 对子树内所有技能逐个执行，失败项进 `failed`，不中断。
+- `forget` 必须带 `expect` = 子树技能数；不匹配返回 400（列表过期，刷新再试）。先逐个取消注册，再删目录；节点是链接时拒绝删除。
+- `detach` 仅子技能；移到顶层同名目录，重名 400，不覆盖。
+- mock → 400 `unsupported`；缺 path → 400 `node-required`；坏 action → 400 `bad-action`；执行失败 → 400 `skill-node-failed`。
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `skill` | string | 本次命中的技能 slug / id（原样，不带 `engram:` 前缀——前缀只在会话技能目录的条目名上）；非技能命中为 `""` |
-| `reused` | string | 命中三态：`first` 首给全文 / `reuse` 复用短回执 / `regive` 压缩后重给全文；老记录为 `""` |
-| `bodyHash` | string | 本次命中技能正文的 sha256 前 16 位；正文改过 hash 就变，用来判断「上次给的是不是同一版」 |
+### POST /skill-meta
 
-- 内核写的 `usage.jsonl` 行里还可能有 `session`（8 位短哈希，不落原始 sessionId）与 `reuseReason`；这两个**不**经 `/usage` 外露，控制台不显示。
-- 三态语义见计划书 §3.4：首给＝本会话没给过 / `bodyHash` 变了 / 上次给过但已被遮罩；复用＝给过且那条结果仍在可见面；重给＝给过但已被压缩遮罩。
+请求体：`{ slug, typeNames?: string[], notes?: string[] }` → `{ slug, typeName, typeNames, notes }`。mock → 400 `unsupported`；缺 slug → 400 `slug-required`；失败 → 400 `skill-meta-failed`。
 
-### 设置（`settings.config`）新增四个键
+### POST /skill-forget
 
-| 键 | 类型 | 默认 | 设置页 | 作用 |
-|---|---|---|---|---|
-| `skillCatalog` | boolean | `true` | **暴露** | 会话技能目录总开关；`false` 完全退回 0.20.9 行为（只给全文、不发目录、不补发） |
-| `catalogMaxSkills` | number | `5` | 不暴露 | 单会话目录条数上限 |
-| `catalogDescriptionChars` | number | `300` | 不暴露 | 目录里每条描述的截断长度 |
-| `reuseReceipt` | boolean | `true` | **暴露** | 复用命中是否给短回执；`false` 则每次全文（排障用） |
+请求体：`{ slug }` → `{ slug, deleted, unregistered }`。注册中的会先取消注册；删整个套件用 `/skill-node` 的 `forget`（带 `expect`）。mock → 400 `unsupported`；缺 slug → 400 `slug-required`；失败 → 400 `skill-forget-failed`。
 
-- 设置页（`spec.config`）只声明 `skillCatalog` 与 `reuseReceipt` 两个开关，另两个键**支持但不暴露**：手改 `~/.dsh/engram/settings.json` 的 `config` 或插件 config 生效。
-- 保存内核参数不会误删这两个隐藏键：`POST /settings` 只写 `spec.config` 里声明过的键，`writeEngineConfig` 按 patch 合并，未声明的键原样保留。
+### POST /type
 
-### 控制台（client.js）
+请求体：`{ action: create|rename|merge|delete|assign, … }` → 类型管理回执。mock → 501 `unsupported`。
 
-- 使用记录页 KPI 新增「复用命中」「重给全文」两格；口径是**本页最近 200 条** usage 行里 `reused=reuse` / `reused=regive` 的条数（不是全日志口径，格子上有 `title` 说明）。
-- 列表新增「命中」列：`first`→首给、`reuse`→复用、`regive`→重给、缺字段→「—」；未知值原样显示（不静默吞掉，便于排障）。
-- 展开行补 `skill=… · bodyHash=…`。
-- 技能详情页补一句「注册到全局与经验库召回二选一」：注册到全局后经验库不再排序 / 召回 / 发复用回执。
+### POST /families/backfill
 
+请求体：`{ "dryRun": true | false }`。
 
+- **默认预演**：`dryRun` 缺省、`null` 或任何不等于 `false` 的值都按 `true` 处理；mock 也按预演处理。预演只基于当前页面级热档快照计算，**不写盘**。
+- 只有显式传 `"dryRun": false` 且数据源是 live 时才写：整段在存储锁内执行，锁内用**无缓存**快照重读，按计划改完再一次性落盘（避免拿旧快照覆盖并发写入）。
+- 回执：`{ dryRun, scanned, filled, changes: [{ id, from, to }], skipped }`。`dryRun: true` 时 `changes` 只是预览；`dryRun: false` 时回执与落盘基于同一快照。
 
+### POST /families/manage
 
+请求体：`{ action, … }`，`action` 必填：`list` / `create` / `rename` / `merge` / `assign` / `delete`。
 
-## 0.21.1 增量（P0：自动记录可见 + stepRewards + 来源/判定筛选）
+- `list`：可带 `query`（按族名 + 族内方向标签模糊搜，返回 top-5）；不带则全量列 `{ families: [{ family, count }], total? , query? }`。
+- `create`：`{ family }` → `{ family, created, materialized, note }`；已存在返回 `created: false`，不新建。
+- `rename`：`{ family, newName }` → `{ action, target, sources, changed, merged }`；新旧规范化后相同是空操作。
+- `merge`：`{ names: [], newName? }` → 同上；撞名自动合并并标 `merged: true`。
+- `assign`：`{ family, ids? / sourceId? }` → `{ action, target, changed, droppedDirections }`；指派到新族时不属于该族的方向标签会被摘掉。
+- `delete`：`{ family }` → `{ family, deleted, note }`；只能删空族，族里还有经验时失败。
+- 缺 action → 400 `bad-request`。live 写路径在锁内无缓存重读后执行，空族登记与族操作同一把锁；mock 只在内存演一遍，回执带 `dryRun` 标记。
+- 已知粗糙面：族名 / 动作校验失败时内核抛的是**普通 Error**（没有业务 `code`），外壳兜底按 500 `internal` 返回，具体原因在 `error.message`；这一条按当前实现记录，不是 400。
 
-> 只增不删：老经验没有 `origin` / `step_rewards` / `artifacts` 时按空值解释，界面显示「手动 / 未绑定会话 / 无」。
+### POST /classify
 
-### GET /experiences（新查询参数 + 行字段）
+请求体：`{ "id": "ex_…" }`。仅 live；mock → 400 `unsupported`。
 
-| 参数 | 取值 | 说明 |
-|---|---|---|
-| `source` | `auto` \| `manual` \| 空 | `auto` 只返回自动记录；`manual` 返回手记 + external（非 auto）；空 = 不过滤 |
-| `verdict` | `pending` \| `decided` \| `skipped` \| 空 | 精确匹配 `verdict` |
+1. 先读一次快照，记下目标行的 `typeId` 与规范化 `context` 作为冲突判据。
+2. 模型分类（可能很慢）在**锁外**执行；宿主没有模型时退回本地关键词分类。
+3. 返回后进存储锁，**无缓存重读**最新库：
+   - 目标行不存在 → 404 `not-found`；
+   - `typeId` 或规范化 `context` 与判据不同 → **409 `classify-conflict`**，放弃本次分类结果，不覆盖别人的新决定，可重试；
+   - 其余字段 / 其他记录的并发更新不算冲突，在最新库上应用。
+4. 没有可用主分类 → 400 `no-type`；首次快照读失败 → 500 `store-unreadable`。
 
-行新增字段（`rowOf`）：
+成功回执：`{ id, typeName, tags, addedTags, classifier, note, model, tagWarning? }`。分类只补标签，不替用户凑面；补完仍缺对象 / 动作时给 `tagWarning`。
 
-| 字段 | 类型 | 来源 |
-|---|---|---|
-| `origin` | string | `auto` / `manual` / `external`（缺省 manual） |
-| `stepRewards` | number[] | 内核 `step_rewards`，非数字过滤 |
-| `artifacts` | string[] | 产物路径，最多 5 条 |
-| `sessionId` | string | 记录时绑定的会话 id |
-| `turn` | number \| null | 回合号 |
-| `cwd` | string | 记录时的工作目录 |
+### POST /settings
 
-### GET /pending（行新增字段）
+请求体可带 `currentRoot` / `config` / `ui` / `git` 任意组合：
 
-- `origin`：同 `/experiences`。
-- `kind`：`task` / `step`。
-- `stepRewards`：数字数组（缺省 `[]`）。
+- `currentRoot`：切换存储位置并迁移数据；失败 → 409 `root-move-failed`。
+- `config` / `ui` / `git`：按 `spec` 声明过的键写入；`null` 或空串等于「恢复默认」（删键），未声明的键不落盘、不误删。
+- 保存后下一次请求即生效（无需重启）；成功返回 `{ action: "saved" }`。
 
-### 记录来源（`origin`）
+### POST /sync
 
-- 内核 `record` 入参接受 `origin`：`auto`（回合收尾钩子）/ `manual`（模型或控制台）/ `external`；不传落 `manual`。
-- 自动记录钩子（`kernel/auto-record.js`）写 `origin: 'auto'`；`kernel/tools.js` 把 `args.origin` 透传给 store。
-- 控制台：经验列表行与详情显示「自动 / 手动 / 外部」；经验页可按来源与判定筛选；三处待判定列表（概览 / 检索回执 / 使用记录）可勾选批量回填，批量要二次确认，失败逐条回显。
+请求体：`{ action: "init" | "push" | "pull" | "status" | "disconnect", message?, force?, branch? }`。
 
-### POST /record（回执）
+- `init`：在数据目录 `git init` 并设置 `origin`（已存在则只更新 origin）。
+- `push`：`git add -A -- .` → 有改动就 commit → `git push -u origin <branch>`；`force: true` 按设置的推送策略强推（覆盖前把旧远端 HEAD 存进 `refs/engram/overwritten/*`）。
+- `pull`：`fetch` + `merge --ff-only`；分叉不自动合并，返回原因。
+- `disconnect`：只清 `repoUrl`，本地提交历史与 GitHub 登录令牌保留。
+- 失败不抛 500，用 `ok:false + reason` 表达；未知 action → 400 `bad-action`。
 
-- `signWarning`：outcome 与分步回报反号时返回（G 取最弱一步）；控制台记录页会显示，并在提交了分步回报时显示「分步最低 X」。
+### POST /github
 
-## 0.21.2 增量（P1：召回可见性 + 技能运行时与固化进度）
+请求体：`{ action, token?, name?, private?, repoUrl?, message?, noOpen? }`。
 
-> 只增不删：没有 `runtime` / `tagShadow` 时界面显示「未登记 / 未开启」，不伪造。
+- `device-start` → `{ userCode, verificationUri, expiresIn, interval, opened, copied }`：GitHub OAuth 设备码登录；`noOpen: true` 时不抢浏览器与剪贴板。
+- `device-poll` → `{ status: pending | slow-down | authorized | expired | denied, interval?, user? }`；`authorized` 时 token 已写入设置，无需再传。节奏由宿主掌握，轮询过快只会得到 `pending` + `waitMs`。
+- `device-cancel` → `{ status: "cancelled" }`。
+- `login` → `{ ok, login, name, avatarUrl }`；`repos` → `{ ok, total, repos: [...] }`（owner + collaborator，最多 100）。
+- `create` → 建空仓库（`auto_init: false`）、存地址、`git init` + 推送；`select` → 选中已有仓库，存地址后初始化并推送。
+- `token` 可随请求临时传入，传了就写进设置的 `git.token`；之后无需再贴。
+- 错误码：`bad-action`、`repo-required`（select 缺 repoUrl）、`github`（GitHub 返回错误 / 没 token / 仓库名校验）。
 
-### GET /skills（行新增两字段）
+### POST /chat-save
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `runtime` | object \| null | 召回时交给模型的运行时清单：`{ dir, skillFile, scripts: [{ path, abs, bytes, run }], references: [{ path, abs, bytes }], usage }`。控制台展示绝对路径与可执行命令；mock/示例数据没有真实目录时为 `null` |
-| `bodyHash` | string | 正文 sha256 前 16 位（`bodyHashOf`）；复用回执据此判断「上次给的是不是同一版」。空正文也给出稳定值 |
+请求体：`{ messageId, sessionId?, outcome?, type?, note?, debug? }` → `{ id, intent, action, outcome }`。
 
-### 设置（`settings.config`）新增键
+按 `messageId` 读 `$DSH_HOME/sessions/**/session-<id>/session.v4.jsonl.zstd`（只读），取该条助手回复作为「做法」、往前最近的用户输入作为「意图」，落一条 `outcome=unknown` 的经验。缺 `messageId` → 400 `ids-required`；会话里找不到 → 400 `turn-not-found`（`debug: true` 时回执附排查路径）。
 
-| 键 | 类型 | 默认 | 设置页 | 作用 |
-|---|---|---|---|---|
-| `tagShadow` | boolean | `false` | **暴露** | 召回时总开关：打开后每次召回都计算标签影子；控制台检索页「高级」里也可单次勾选 |
+### POST /graph-perf
 
-- 影子只计算、不改候选顺序与数量；结果放在 `/recall` 的 `tagShadow`。
+请求体：性能样本（`nodes` / `edges` / `fps` / `p50` / `p95` / `frame` / `tier` / `size` / `phases` / `counts`）。只写本机 `~/.dsh/engram/graph-perf.jsonl`，不进经验库仓、不暴露到 UI；单文件 >256KB 时只保留最后 500 条。载荷不合法 → 400 `bad-perf`；写失败 → 500 `perf-log-failed`。
 
-### POST /recall（回执字段，后端早已返回，这次在控制台展示）
+### POST /pick-directory
 
-- `lifecycleNote`：候选里有 stale 历史经验时的提醒（slim/detail 都透传）。
-- `applicabilityNote` / `applicabilityFiltered`：`appliesTo` 门控隐藏/降权说明。
-- 候选行 `applicability`：`partial` / `mismatch`（传 `includeMismatched` 时返回并标注）。
-- 技能回执：`skill.match = { matchedTerms, selfCheck }`、`skill.runtime`。
-- `tagShadow`：`{ queryTags, tagTop, typeRoutingTop, overlapAt5, note }`。
+弹系统目录选择窗口（模态，等用户选完）。返回 `{ canceled, path, note }`：`canceled: true` 时 `path: null`；选中父目录时自动使用其中的 `.exp` 并给 `note`。宿主没有原生选择器 → 400 `picker-unavailable`。
 
-### 控制台（client.js）
+## 6. 兼容承诺
 
-- 检索页：`lifecycleNote` / `applicabilityNote` 顶部 Banner；「标签影子对照」折叠块（`overlap@5`、查询标签按面分组、标签 top5）；技能卡显示运行时目录与命中词/自查；候选卡加「环境不匹配 / 部分匹配」角标。
-- 技能详情：运行时卡（技能目录、`scripts[].run` 可复制、附件清单）、召回状态（正文 hash、会话目录资格与上限）、固化进度（uses/helped/hurt、「还差 N 次 helped」/「已固化」/「有 N 个未解障碍」）。
-
-## 0.20.2–0.21.0 补记（接口层）
-
-- **0.20.7**：`/review`、`/record` 的校验与业务错误按文档返回 400/404/409，坏 JSON → 400；`/recall` 顶层透传 `lifecycleNote`（slim/detail 都有）；列表/详情/关系图标签统一归一，未登记自由标签保留；坏 manifest 且无分片/无 legacy → `store-unreadable`；空库 `/types` 行带数字 `count`。
-- **0.20.9**：`exp_recall` 技能回执新增 `runtime`（`{ dir, skillFile, scripts: [{ path, abs, bytes, run }], references, usage }`）；技能正文默认全文（安全上限 30000 字符，超了保留开头 + 末尾 Resources/脚本节）；`skillBodyMode: 'clip'` 回到 6000 字裁剪档；`helped` 会写 `lastVerifiedAt` 并按易腐层重排 `reviewAfter`（`hurt` 不冒充验证）。
-- **0.20.9**：`exp_record` 接受 `origin`（`auto` / `manual` / `external`，缺省 `manual`；自动记录钩子写 `auto`）与 `stepRewards`（数字数组，越界夹到 [-1,1]，非法值 400）；设置 `autoRecord` 控制回合收尾自动记录（**0.24.1 起默认关**，要记需显式打开）。
-- **0.21.0**：技能命中三态 `first/reuse/regive` 只在内核 usage 行与回执 `give` 里体现；`/usage` 只外露 `skill/reused/bodyHash`，**不**外露 `session` / `reuseReason` / `catalog` / `catalogSize`；会话技能目录是 `agent/pre-step` 的宿主消息（`source.kind='engram-skill-catalog'`、条目名 `engram:<slug>`），**不进 HTTP API**；设置 `skillCatalog` / `catalogMaxSkills` / `catalogDescriptionChars` / `reuseReceipt`（后两个支持但不暴露在设置页）。
-
-## 0.22.0 增量（P2：到期复核 / 自动记录提示 / skillBodyMode）
-
-### GET /experiences
-
-- `due=1`：只返回到期待复核的行（`reviewAfter` 已过期，或生命周期已是 `stale`）。控制台「经验」页顶部「到期复核 N」入口用这个参数。
-- 技能页的到期项不新增接口：由 `/skills` 行的 `reviewDue` / `stale` 推导。
-
-### POST /review
-
-- 没有批量参数：控制台对勾选项**逐条**调用（`verify` / `stale`），失败逐条回显，不整批回滚；技能的 id 用 `skill:<slug>`。
-
-### 设置（`settings.config`）
-
-| 键 | 类型 | 默认 | 设置页 | 作用 |
-|---|---|---|---|---|
-| `skillBodyMode` | enum | `full` | **暴露** | 技能正文给多少：`full`（默认，30000 字安全上限）/ `clip`（6000 字裁剪，排障用） |
-
-### 控制台
-
-- 到期复核面板（经验/技能页共用 `ReviewDuePanel`）：勾选批量或单条「确认仍有效 / 标待复核」；不新增导航项。
-- 概览在 `autoRecord=false` 时显示「自动记录已关闭」提示，避免误以为钩子失效（该开关 0.24.1 起默认关）。
-
-
-## 0.33 布局与族接口
-
-- `GET /families`：新增扁平 `families: [{family,count,representative}]`；`types` 保留一版兼容。
-- `GET /state.storage`：单层族布局为 `layout: 'family-flat'`，`typeDirs: 0`；族文件直接在 `library/*.jsonl`，索引为 `library/_index.json`。
-- 族由模型显式创建（`exp_record.family`）；未给族落「未分族」；族管理走 `exp_family`。
-
-## 0.34 增量（记录门槛 + 具体族名）
-
-> 兼容承诺：既有回执字段与控制台约定不变；但「记录可能被门槛拦下」是 0.34 的**行为变化**——被拦时**不落库**，`data` 换成下面的拒记回执。入参新增 `family` / `force`。
-
-### `POST /record`（门槛拒记回执）
-
-门槛拦下时仍是 HTTP 200 + `{ ok: true }`，但 `data` 不是经验行，而是拒记回执：
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `skipped` | `true` | 出现即表示**没有落库**（不产生 id / hits / verdict / typeName，也不改既有行） |
-| `reason` | string | 拒记原因：`通用单步操作，模型本来就会，重学成本低` / `没有可执行动作信息` / `族名太泛，不能单独成为动作族` |
-| `suggestion` | string | 给模型/用户的改法，例如 `只记失败、非显然、多步或用户口径；确需记录可传 force:true`（族名问题会给「动词+对象」示例） |
-
-- 控制台应把 `reason` / `suggestion` 当成**提示**展示（`ok:true`），不要当写入失败弹错。
-- 入参新增 `force: true`：模型确认「这条重学成本高、门槛误判」时覆盖门槛重试。
-- 放行口径不变：失败 / 纠正 / 部分失败 / 中止（或 note 含失败报错）、多步（action 拆分 ≥3 步）、用户口径（intent/note 写明约定或纠正）；同族同做法重复写入仍走既有 upsert，只加 `hits`、不新增行。
-
-### `POST /record` 的 `family` 与具体族名规则
-
-- 入参新增 `family`（具体动作族）；不传由内核落「未分族」。
-- 命名：`<动词><对象/工具>` 或 `<工具><动作>`，最长 12 字，例如 `git 推送`、`跑 npm 测试`、`改 React 页面`、`定位 asar 报错`。
-- 归一：NFKC、trim、折叠空白、拉丁字母小写；`Git Push` 与 `git  push` 视为**同一个族键**，不允许两个活跃族只差大小写/空格。
-- 拒绝：裸泛词（执行 / 操作 / 处理 / 其它动作 / 校验 / 验收 …）、对象面标签（代码 / PPT / DSH插件 …）、路径与版本号形态、保留名「未分族」。
-- 唯一性由 `exp_family` 收口：`create` 遇已存在族键返回 `created:false`（不新建）；`rename` 撞名自动合并并在回执标 `merged:true`；语义相近（如 `git 推送` 与 `推送发布`）只给候选，最终由模型 `exp_family merge` 拍板。
-
-### 迁移后 `GET /families` 的口径
-
-- 宽族拆分是离线工具（`node tools/refine-families.mjs --data-dir <dir> [--dry-run|--apply]`），不是 HTTP 接口；`--apply` 前整库备份，只删「完全无动作信息」的行，其余按 action 重拆成具体族。
-- 迁移完成后 `GET /families` 的 `families[].family` 只会出现具体族与「未分族」，不再出现 `执行` / `其它动作`。
-
-## 0.36.0 增量（关系图换族 / 对象页 / 口径修正）
-
-- **`GET /graph`**：节点 `kind` 取值改为 `root / family / experience / skill / suite`，**不再有 `type`**；边 `kind` 取值 `root / family / label / suite / derived`，其中 `family` 是 `族 → 经验`，原 `type` 边退役。`family` 节点带 `family`（名）、`count`（族内条数）、`system`（「未分族」为 true）；`family` id 统一 `family:` 前缀，名字里的 `%`/`:`/`/` 分别转义为 `%25`/`%3A`/`%2F`。`summary` 改为 `{ families, experiences, skills, suites }`。
-- **`GET /families`**：`families` 是扁平事实族表（含「未分族」这个真实族，当前 166 条）；`unfiled` 只统计「推导不出族」的行（0.33 起为 0），`unfiledRows` 是该类行前 50 条。不要把 `unfiled` 当成「未分族条数」。
-- **`GET /objects`**：`available=false` 分两种——mock / 未配置数据目录时**不带 `error`**（客户端走空态文案）；`objects.jsonl` 读坏时带 `error`（含行号）。`hints[].steps` 是**族 id 数组**，渲染名字要走族注册表解析。
-- **`GET /state`**：`storage` 增加分族布局字段 `layout / typeDirs / familyFiles / familyBytes / indexFiles / indexBytes`（`layout` 为 `family-flat` 时概览按新布局渲染）；`updatedAt` 在 D1 之后恒为 `''`（manifest 不写 `updated_at`），消费方不要当时间戳用。
-- **`GET /graph` 边去重**：技能树根边（`root → skill`，kind `root`）与 `derived` 根边同向重复的问题已修；`degree` 不再重复计数。
+- 字段**只增不删**；新增字段允许客户端忽略。
+- 错误 `code` 只增不删；客户端遇到未知 `code` 按普通失败处理并显示。
+- `/experiences` 的 `mode` 只会是 `list` / `advantage` / `evidence`。
+- `/skills` 的 `status` 只会是 `solid` / `trial` / `risky` / `new` / `blocked`。
+- 读写能力以本条路由的实际实现为准：同一个 `/exp-ui/api` 下既有只读查询，也有写真实库的动作；不再用 `readOnly` 统一代表 live。

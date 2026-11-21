@@ -35,6 +35,14 @@
 
 ## 当前发布
 
+- **v0.44.1（稳定化与整体优化：写正确性 / 发布安全 / 测试与文档收口）** — 无新功能，不改存储格式、不改工具 schema
+  - **live 写入正确性**：`/families/backfill`、`/families/manage`、`/classify` 与 `ensureDefaultTypes` 四条写路径改为 `withStoreLock` 包住「无缓存重读 → 业务判断 → 修改 → 写回」。修复前 live 下 backfill/rename/merge/assign 直接抛 `Cannot assign to read only property 'family'`（读缓存被 `deepFreeze`），且会用旧快照覆盖并发写入
+  - **分类冲突契约**：`/classify` 等模型期间目标行的 `typeId` 或规范化 `context` 被改 → 返回 **409 `classify-conflict`**，不覆盖新决定；其余字段/其他记录的并发更新保留；模型调用始终在锁外
+  - **发布构建安全**：`tools/build-release.mjs` 默认 dry-run（`--apply` 才写）、新增目标仓身份守卫（拒绝文件系统根 / 主目录 / 开发仓及其父目录 / package name 不符 / 非工作树根）、改为 `.release-manifest.json` 产物清单管理（只覆盖清单内文件、只删上份清单的过期项、保留 `.git`/`RELEASES.md`/`*.tgz`/未知文件、链接与 junction 不跟进）
+  - **测试收口**：`npm test` 改走 `tools/run-tests.mjs`；current 153 / legacy 210 / excluded 0（合计 363），`--check` 可校验无重复无未分类；新增 `test:legacy` / `test:release` / `test:check`；本版回归在修复前失败、修复后通过
+  - **文档与版本真相**：`ui/API.md` 按 43 条真实路由重写（含 409 与 backfill dryRun 语义）、README 徽章与安装示例对齐版本、新增文档契约测试
+  - 已知未验：**真实宿主视觉与交互矩阵（8 项）未验**；升级本包需重启 DSH 生效
+
 - **v0.44.0（UI 外壳 2.0：导航 12→6 / 统一控件 / 首页工作台）** — 纯前端，内核与 `/exp-ui/api` 零改动
   - **导航收敛（12→6）**：一级只剩「概览 / 关系图 / 经验 / 技能 / 设置」，加上按需出现的「冷档」。族、对象、冷档降级成经验页内的视图（列表 / 族 / 对象 / 冷档），标签分级收进 设置→分类与标签；**所有旧路由一条没删**，`#families` / `#objects` / `#cold` / `#tags` / `#types` 由 `normalizeHash()` 单点折叠成新位置，旧深链不会失效
   - **统一切换控件**：`eng-chip` / `eng-tab` / `eng-subnav-item` / `eng-graph-filters` 四种外观收成一个 `Segmented`（chip/tab 两档密度，tabs/nav/filter 三种语义）。切换走「点击或 Enter 才生效」（方向键只移焦点）——因为切换会改 hash、部分还会发请求；选中态不只靠颜色（WCAG 1.4.1），tab 档的 2px 下划线用伪元素画，并补 `forced-colors` 兜底；手写 roving tabindex，不依赖尚未 Baseline 的 `focusgroup`
