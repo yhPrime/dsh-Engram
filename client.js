@@ -486,7 +486,8 @@ window.__ModuleLoader__.load({
      * 标签面（0.20.0 P0）：与 kernel/tag-registry.js 的 TAG_FACET_LABELS 对齐。
      * UI 只负责「按面分组展示 + 缺面提示」，面的真相在服务端词表（GET /tag-registry）。
      */
-    const TAG_FACET_ORDER = ['action', 'direction', 'topic', 'quality', 'other']
+    // 0.40：action 面已收敛（族即动作），UI 只展示三面；action 面留作 kernel 内部识别用。
+    const TAG_FACET_ORDER = ['direction', 'topic', 'quality', 'other']
     // 0.37：object 面已在 kernel 物理删除，UI 常量同步去掉，否则详情页会提示「缺对象」。
     const TAG_FACET_LABELS = { action: '动作/任务', direction: '方向/场景', topic: '主题/场景', quality: '质量/异常', other: '其他已用标签' }
     const TAG_FACET_HINTS = {
