@@ -2573,13 +2573,81 @@ export function resolveVerdicts(store, list = [], options = {}) {
 /**
  * 按意图召回并排序。
  *
- * 两种模式，输出的 `mode` 字段会说明用的是哪一种：
- *  - `advantage`：邻居里有成败对照（Â 极差 ≥ DEGENERATE_ADV_SPREAD）→ 按 JitRL 的 Â × 置信度；
+ * 排序档位（0.46.0 A1 / D2）：
+ *  - `auto`（默认）：退化判据成立 → evidence；否则能混排时 blend，情境优先时按 advantage 分；
+ *  - `advantage`：按 JitRL 的 Â × 置信度；
  *  - `evidence`：样本回报几乎相同（实测全是 success/accepted 时 Â 恒为 0）→ Â 不具区分度，
- *    改按「相似度 × 支持度 × 证据质量」排序，并在 `note` 里明说。
+ *    改按「相似度 × 支持度 × 证据质量」排序；
+ *  - `blend`：0.6×相似度 + 0.4×Â×置信度，再乘时效与 lifecycle。
  *
- * 不这么降级的话，模型会看到一排 `rank_score: 0` 却以为那是排序结果。
+ * 回执 `mode` = 实际生效档位（advantage/evidence/blend），`rankMode` = 请求档位（含 auto）。
+ * 旧版本把混排一律报成 advantage，日志无法据此判断公式是否参与排序（D4 修的就是这个）。
  */
+export const RETRIEVAL_MODES = Object.freeze(['auto', 'advantage', 'evidence', 'blend'])
+
+/**
+ * 归一 retrievalMode：只认四个显式值，其余（未配置/拼错/旧配置）一律 auto。
+ * 不抛错：召回不能因为一个设置拼错就整个失败。
+ */
+export function resolveRetrievalMode(value) {
+  const mode = String(value === undefined || value === null ? '' : value).trim().toLowerCase()
+  return RETRIEVAL_MODES.includes(mode) ? mode : 'auto'
+}
+
+function compareAction(left, right) {
+  return left.action < right.action ? -1 : left.action > right.action ? 1 : 0
+}
+
+/** 纯 Â 排序：rank_score = Â × confidence（kernel.js:430）；时效只做同分前的次序。 */
+function sortByAdvantage(candidates) {
+  candidates.sort((left, right) => (
+    (Number(right.rank_score) || 0) * lifecycleWeightOf(right) - (Number(left.rank_score) || 0) * lifecycleWeightOf(left)
+    || right.support - left.support
+    || right.mean_similarity - left.mean_similarity
+    || compareAction(left, right)
+  ))
+}
+
+/** 证据排序：无成败对照时按「相似度 × 支持度 × 证据质量」；rank_score 改写成证据强度，回执不撒谎。 */
+function sortByEvidence(candidates) {
+  candidates.sort((left, right) => (
+    right.evidence_strength * lifecycleWeightOf(right) - left.evidence_strength * lifecycleWeightOf(left)
+    || right.support - left.support
+    || right.mean_similarity - left.mean_similarity
+    || compareAction(left, right)
+  ))
+  for (const item of candidates) item.rank_score = item.evidence_strength
+}
+
+/** 混排：0.6×相似度 + 0.4×rank_score，再乘时效、lifecycle（tagBonusOnly 另加标签分）。 */
+function blendScoreOf(item, tagBonusOnly) {
+  return (0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0))
+    * (FRESHNESS_RANK_FLOOR + FRESHNESS_RANK_SPAN * (Number.isFinite(Number(item.freshness)) ? Number(item.freshness) : 1))
+    * lifecycleWeightOf(item)
+    * (tagBonusOnly ? (1 + 0.5 * (Number(item.tagScore) || 0)) : 1)
+}
+
+function sortByBlend(candidates, tagBonusOnly) {
+  candidates.sort((left, right) => (
+    blendScoreOf(right, tagBonusOnly) - blendScoreOf(left, tagBonusOnly)
+    || right.support - left.support
+    || right.mean_similarity - left.mean_similarity
+    || compareAction(left, right)
+  ))
+}
+
+/** 情境线索优先（0.13.0）：contextMatch 第一键，权重第二键。 */
+function applyContextPriority(candidates) {
+  const weighted = (item) => (Number(item.rank_score) || 0) * lifecycleWeightOf(item) * (1 + 0.5 * (Number(item.contextMatch) || 0))
+  candidates.sort((left, right) => (
+    (Number(right.contextMatch) || 0) - (Number(left.contextMatch) || 0)
+    || weighted(right) - weighted(left)
+    || right.support - left.support
+    || right.mean_similarity - left.mean_similarity
+    || compareAction(left, right)
+  ))
+}
+
 export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 待判定超时转为 skipped 的条不再参与召回：它们从未被判过，拿它们当候选会误导。
   const experiences = visibleExperiences(store, options).filter((item) => item.verdict !== 'skipped')
@@ -2630,7 +2698,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
   // 上限 16：同一条查询在 limit=8 与 limit=40 下必须得到同一套排名（行为复核发现曾漂移）。
   const computeK = Math.min(16, Math.max(effectiveK, 8))
   const neighbors = retrieveV2(pool, intent, { k: computeK, minSimilarity: options.minSimilarity })
-  const result = estimateAdvantages(pool, intent, { k: computeK, neighbors })
+  const result = estimateAdvantages(pool, intent, { k: computeK, neighbors, unknownMode: options.criticUnknownMode })
   const byId = new Map(pool.map((item) => [item.id, item]))
   let candidates = result.candidates.map((candidate) => {
     const row = byId.get((candidate.evidence[0] || {}).id) || null
@@ -2643,6 +2711,7 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       confidence: candidate.confidence,
       rank_score: candidate.rank_score,
       support: candidate.support,
+      ...(candidate.attempted === true ? { attempted: true } : {}),
       mean_similarity: candidate.mean_similarity,
       freshness: meta === null ? 1 : meta.freshness,
       ...(meta === null ? {} : {
@@ -2769,44 +2838,23 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
       item.contextMatch = round4(best)
     }
   }
-  if (degenerate) {
-    candidates.sort((left, right) => (
-      right.evidence_strength * lifecycleWeightOf(right) - left.evidence_strength * lifecycleWeightOf(left)
-      || right.support - left.support
-      || right.mean_similarity - left.mean_similarity
-      || (left.action < right.action ? -1 : left.action > right.action ? 1 : 0)
-    ))
-    for (const item of candidates) item.rank_score = item.evidence_strength
-  }
-  // 编码特异性：查询给了情境线索时，情境命中的候选优先（不改 Â，只做线索优先）。
-  // 标签软优先（tagBonusOnly）不抢排序第一键：只在下面的混排里加分（0.26.0 §13）。
-  if (queryContext.length > 0 && !tagBonusOnly) {
-    const weighted = (item) => (degenerate ? item.evidence_strength : item.rank_score) * lifecycleWeightOf(item) * (1 + 0.5 * (Number(item.contextMatch) || 0))
-    candidates.sort((left, right) => (
-      (Number(right.contextMatch) || 0) - (Number(left.contextMatch) || 0)
-      || weighted(right) - weighted(left)
-      || right.support - left.support
-      || (left.action < right.action ? -1 : left.action > right.action ? 1 : 0)
-    ))
-  }
+  // 0.46.0 A1（D2/D4）：档位显式化。
+  // auto 必须与 0.45.0 完全同序：退化 → evidence；否则能混排时 blend，情境优先时按 advantage 分。
+  // 显式档位强制该档排序，不再被退化判据改写——测公式时要测的是「它自己排成什么样」。
+  const requestedRankMode = resolveRetrievalMode(options.retrievalMode)
+  const blendAllowed = options.rankBlend !== false
+  const effectiveMode = requestedRankMode === 'auto'
+    ? (degenerate ? 'evidence' : (blendAllowed && (queryContext.length === 0 || tagBonusOnly) ? 'blend' : 'advantage'))
+    : requestedRankMode
 
-  // 相关性与优势混排（0.13.0，行为模拟发现）：只按 Â 排会被成熟条占满，新记的条永远排不上来；
-  // 改为 `0.6×相似度 + 0.4×rank_score`，让「像不像当前任务」成为主序，Â 做次序。必须排在截断之前。
-  // 给了情境线索时不混排：情境优先是另一条独立的排序（见上），混排会把它的优先权盖掉。
-  if (options.rankBlend !== false && !degenerate && (queryContext.length === 0 || tagBonusOnly)) {
-    // 时效权重：rank = base × (0.70 + 0.30 × freshness) × lifecycleWeight（stale ×0.55 / partial ×0.85）。
-    // tagBonusOnly：再乘 (1 + 0.5 × tagScore)，tagScore 已按 IDF 加权（稀有标签分高），只影响加分不筛池。
-    const blend = (item) => (0.6 * (Number(item.mean_similarity) || 0) + 0.4 * (Number(item.rank_score) || 0))
-      * (FRESHNESS_RANK_FLOOR + FRESHNESS_RANK_SPAN * (Number.isFinite(Number(item.freshness)) ? Number(item.freshness) : 1))
-      * lifecycleWeightOf(item)
-      * (tagBonusOnly ? (1 + 0.5 * (Number(item.tagScore) || 0)) : 1)
-    candidates.sort((left, right) => (
-      blend(right) - blend(left)
-      || right.support - left.support
-      || right.mean_similarity - left.mean_similarity
-      || (left.action < right.action ? -1 : left.action > right.action ? 1 : 0)
-    ))
-  }
+  if (effectiveMode === 'evidence') sortByEvidence(candidates)
+  else if (effectiveMode === 'blend') sortByBlend(candidates, tagBonusOnly)
+  else sortByAdvantage(candidates)
+
+  // 编码特异性：查询给了情境线索时，情境命中的候选优先（不改 Â，只做线索优先）。
+  // 只在 auto 档做：显式档位按自己的排序走，情境优先会盖掉它。
+  // 标签软优先（tagBonusOnly）不抢排序第一键：只在混排里加分（0.26.0 §13）。
+  if (requestedRankMode === 'auto' && queryContext.length > 0 && !tagBonusOnly) applyContextPriority(candidates)
   // stale 强制排在 active 之后（计划书 §5.4/§5.6）：旧经验默认不占前排；只降权，不隐藏。
   candidates = [...candidates.filter((item) => item.lifecycle !== 'stale'), ...candidates.filter((item) => item.lifecycle === 'stale')]
 
@@ -2860,10 +2908,14 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     note = `没有相似度 ≥ ${RECALL_MIN_SIMILARITY} 的历史经验；先按常规做法做，做完用 exp_record 记一条（失败/被纠正也要记，负样本才让排序有信息量）。`
   } else if (weak) {
     note = `没有足够相关的历史经验（最高相似度 ${round4(shownSimilarity)}）；先按常规做，做完记一条，别硬套下面的候选。`
-  } else if (degenerate) {
-    note = `无成败对照（advantage 极差 ${spread}），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。`
-  } else {
+  } else if (effectiveMode === 'evidence') {
+    note = degenerate
+      ? `无成败对照（advantage 极差 ${spread}），Â 不具区分度；已按「相似度 × 支持度 × 证据质量」排序，参考证据而非排名。`
+      : `retrievalMode=evidence：按「相似度 × 支持度 × 证据质量」排序（advantage 极差 ${spread} 未参与排序）。`
+  } else if (effectiveMode === 'blend') {
     note = `按「相似度×0.6 + Â×0.4」排序（Â=Q̂−V̂，乘置信度；advantage 极差 ${spread}）。`
+  } else {
+    note = `按 Â×置信度排序（Â=Q̂−V̂，乘置信度${requestedRankMode === 'auto' ? '，情境线索优先' : ''}；advantage 极差 ${spread}）。`
   }
   // 0.40–0.50 是「沾边但换主题」的地带：不判 weak（候选仍可用），但必须明说相关度一般，别照抄。
   if (!weak && shownSimilarity >= 0.4 && shownSimilarity < 0.5) {
@@ -2912,7 +2964,8 @@ export function rankExperiences(store, intent, limit = 8, options = {}) {
     intent,
     V: result.V,
     neighbor_count: result.neighbor_count,
-    mode: degenerate ? 'evidence' : 'advantage',
+    mode: effectiveMode,
+    rankMode: requestedRankMode,
     degenerate,
     advantage_spread: spread,
     note,
@@ -3290,7 +3343,7 @@ export function renderHintFull(config = {}, maxCharacters = 900) {
   const clusters = Array.isArray(store.clusters) ? store.clusters : []
   const nonEmptyClusters = clusters.filter((cluster) => (Number(cluster.stats && cluster.stats.count) || 0) > 0).length
   const lines = [
-    "【经验库】记不记由你判断，不必每轮都记：只记以后能复用、能落成做法的（踩坑、纠正、验证过的流程），琐事与流水账不记。接同类任务先用 exp_recall(intent)：mode=advantage 按 Â 排序；mode=evidence 表示没有成败对照，排的是证据强度。记时用 exp_record（同一意图换做法复用同一 intent）；用过某条用 exp_feedback 报 helped/hurt。类型用 exp_type 管。沉淀技能能带脚本：exp_consolidate(…, files:[…], install:true) 或对已有技能用 exp_skill_attach。",
+    "【经验库】记不记由你判断，不必每轮都记：只记以后能复用、能落成做法的（踩坑、纠正、验证过的流程），琐事与流水账不记。接同类任务先用 exp_recall(intent)：默认相似度主序、Â 次序；mode=evidence 表示没有成败对照，排的是证据强度。记时用 exp_record（同一意图换做法复用同一 intent）；用过某条用 exp_feedback 报 helped/hurt。类型用 exp_type 管。沉淀技能能带脚本：exp_consolidate(…, files:[…], install:true) 或对已有技能用 exp_skill_attach。",
     `共 ${active} 条（类型 ${userTypes.length}/${maxTypes}，簇 ${nonEmptyClusters}/${clusters.length}）；召回先按簇路由，无同族回退全库。`,
     "类型/簇（描述越具体，写入与召回越准）：",
   ]

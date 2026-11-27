@@ -120,6 +120,8 @@ function slimCandidate(candidate, index) {
     support: Number(candidate.support) || 0,
   }
   if (candidate.typeName) out.typeName = candidate.typeName
+  // 0.46.0 A2：只看过 unknown 结果的动作标 attempted，回执要能让模型分辨「没试过」与「试过没判定」。
+  if (candidate.attempted === true) out.attempted = true
   if (candidate.mean_similarity !== undefined) out.mean_similarity = round(candidate.mean_similarity)
   if (candidate.contextMatch !== undefined) out.contextMatch = candidate.contextMatch
   // 时效元数据（0.20 P0）：只带判断要用的几个；stale 的提示语必须留着，否则模型会把旧经验当命令。
@@ -164,6 +166,7 @@ export function slimRecall(payload, options = {}) {
   const out = {}
   if (payload.intent) out.intent = cut(payload.intent, CUT_TEXT)
   out.mode = payload.mode
+  if (payload.rankMode !== undefined) out.rankMode = payload.rankMode
   if (payload.degenerate === true) out.degenerate = true
   if (payload.weak === true) {
     out.weak = true

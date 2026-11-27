@@ -35,6 +35,16 @@
 
 ## 当前发布
 
+- **v0.46.0（召回公式定位校准：相似度主序、Â 次序；记录只记环境特有）** — 不改磁盘格式与检索底座，把「Â 到底在排序里占多少」说清并用度量定档
+  - **检索档位显式**：新增 `retrievalMode` = auto / advantage / evidence / blend。auto 解析为 blend（`0.6×平均相似度 + 0.4×(Â×置信度)`，再 × 时效），advantage 才完全按 Â×置信度，evidence 按相似度×证据强度；不再靠候选集退化隐式切换。usage 与瘦身回执同时记 `mode` 与 `rankMode`
+  - **critic 过滤未判定条**：`criticUnknownMode` 默认 `filter`，`outcome=unknown` 不再以 G=0 拉低 V̂、也不虚增 support；只有 unknown 的动作按「未验证」乐观排序并带 `attempted:true`，legacy 档可回退。只影响排序 critic，不改返回的候选集
+  - **度量工具可跑**：重写 `tools/eval-policy.mjs`——可测的 `runCli`、纯函数查询集/评估、只允许写入 `<repo>/_tmp/<child>`、报告带 manifest sha256、四档一次跑完；新增 eval-policy / retrieval-mode / critic-filter / record-prompt 四个测试
+  - **基线判定**：200 条同词查询、四档各跑两轮（三比率完全一致）。Hit@5 = auto 0.9000 / advantage 0.8200 / evidence 0.8850 / blend 0.9050；blend 仅 +0.5pp，未达预登记 +3pp 门槛，**默认保持 auto**，开关保留。报告见开发仓 `docs/过程/0.46.0-召回基线.md`
+  - **记录提示词**：`exp_record` 描述改为「环境特有」判据——只记这套环境能成/会挂/特有约束，写清命令、参数、路径、版本、报错原文；通用步骤不记。判据只有一条：下次在这台机器上遇到同类任务，能否少踩一次坑
+  - **文档与测试**：README、kernel/README、系统提示段、`tool-schemas.js` 统一为「相似度主序、Â 次序」；关系图文案同步；`npm test` **157/157**（current 157 / legacy 210），沙箱禁子进程管道时相关用例显式跳过而非假绿；`build-release` 的 git 工作树探测改走临时文件、并补 Windows junction 兜底
+  - 已知取舍：同词金标不测跨措辞，无关率因 `sharesSignal` 偏宽恒为 0；`unknown` 过滤会让「只试过但未判定」的动作比 0.45.0 排得更靠前，这是刻意行为，需要时切 `criticUnknownMode=legacy`
+  - 反馈闭环（阶段 C）只出提案，不改代码：`docs/过程/0.46.0-反馈闭环提案.md`，0.47 再评估是否只加两句提示词
+
 - **v0.45.0（内部结构优化：按域拆分，行为零变化）** — 纯重构，不改 API、工具 schema、磁盘格式与客户端产物
   - **存储层**：`store.js` 拆出 `store-lock.js`（写盘锁/pid/心跳 + 库文件路径原语）；`shard-store.js` 拆出 `shard-paths.js`（路径/布局）、`shard-io.js`（原子 IO/分片行解码）、`shard-cold.js`（冷档扫描/追加/回滚）。门面 re-export，导入路径不变
   - **控制台壳**：`ui/shell.js` 1773→77 行，按领域拆成 `api-core / api-family / api-skill / api-settings / api-graph`；`handleRequest` 仍是唯一入口，路由分派顺序与 43 条路由体逐字不变

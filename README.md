@@ -5,13 +5,15 @@
 <h3 align="center">Engram（记忆痕迹）· 经验与技能引擎 + 经验库控制台，一个标准 DSH 插件</h3>
 
 <p align="center">
-  <img alt="version" src="https://img.shields.io/badge/version-0.45.0-6f5bd6">
+  <img alt="version" src="https://img.shields.io/badge/version-0.46.0-6f5bd6">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-3fa46a">
   <img alt="node" src="https://img.shields.io/badge/node-%3E%3D22-339933">
   <img alt="platform" src="https://img.shields.io/badge/DSH-plugin-4f7fc4">
 </p>
 
 > 让 agent 记住「这件事上次是怎么做成的」，下次遇到同类任务直接端出来 —— 而不是每轮从零开始。
+
+> **定位**：本插件为基于 JitRL 论文《Just-In-Time Reinforcement Learning: Continual Learning in LLM Agents Without Gradient Updates》（[arXiv:2601.18510](https://arxiv.org/abs/2601.18510)）设想的「无梯度更新的持续学习」在 DSH 上的工程实现——召回以「像不像当前任务」为主序、以用后回报（Â = Q̂ − V̂）为次序；有成败对照时 Â 参与排序，没有对照时退回相似度 × 证据强度。**目前仍在探索阶段**，机制、接口与磁盘格式都可能调整。
 
 一条经验 = **做法 + 结果 + 适用范围 + 标签**。它不像聊天记录那样随会话消失，也不是把文档堆进一个文件夹：写进库里之后，它会被检索、被打分、被复核，攒够了还会长成技能。
 
@@ -92,7 +94,7 @@
 
    相似度低于 `0.12` 的直接不参与估计。
 
-3. **排序**：按回报 G（JitRL 的 Â 优势）排，不按「谁用得多」。某条没有成败对照时 Â 区分不出好坏，就退回按相似度 × 证据强度排。时效也进排序：`rank = base × (0.70 + 0.30 × freshness)`。
+3. **排序**：先按「像不像当前任务」算平均相似度，有成败对照时再算 JitRL 的 Â = Q̂ − V̂ 与置信度；最终 `base = 0.6 × 相似度 + 0.4 × (Â × 置信度)`，不按「谁用得多」。同类样本回报几乎相同（Â 极差过小）时 Â 区分不出好坏，整段改用「相似度 × 证据强度」。时效也进排序：`rank = base × (0.70 + 0.30 × freshness)`。
 4. **输出**：返回 `brief`（简报）+ `route`（路由结果）+ `candidates`（候选做法）。默认瘦身档，`detail: true` 才给全字段。
 
 还有两条防踩坑的设计：
@@ -194,7 +196,7 @@
 
 ```bash
 npm pack
-dsh plugin --profile <profile> add ./dsh-engram-0.45.0.tgz
+dsh plugin --profile <profile> add ./dsh-engram-0.46.0.tgz
 ```
 
 重启 DSH 后只会出现**一个**插件行「dsh-engram」：左侧栏多出「经验库」，工具面 `exp_*` 与控制台 API `/exp-ui/api` 同包同入口。

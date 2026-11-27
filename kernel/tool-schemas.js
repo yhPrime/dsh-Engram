@@ -7,7 +7,7 @@ import { TAG_FACET_LABELS, TAG_VISIBLE_FACETS } from './tag-registry.js'
 
 export const RECORD_TOOL = {
   name: 'exp_record',
-  description: '记录一条可复用的工作经验（做法 + 结果）。族=可复用动作（如 跑测试/写断言/git 推送），用 family 指定；方向标签=族内场景（如 写断言下的 契约断言/回归断言/探针先行），放 context/labels。同一做法就地更新 hits，近似替换写新条并标记旧条被取代。裸命令/裸工具名/单文件无技法编辑会被拒记——那是具体任务流水，改用 exp_object 记。标签只写类型不写实例名（仓库名等会被丢弃并记 tagsRejected）。',
+  description: '记录一条可复用的工作经验（做法 + 结果）。只记这套环境特有的东西：① 在这里能成、换个环境未必成的做法；② 在这里会挂的做法（报错原文 + 触发条件 + 绕过）；③ 这里特有的约束与口径。判断标准只有一条：下次在这台机器上遇到同类任务，这条能不能让我少踩一次坑。写清命令/参数/路径/版本/报错原文，通用步骤不记。族=可复用动作（如 跑测试/写断言/git 推送），用 family 指定；方向标签=族内场景（如 写断言下的 契约断言/回归断言/探针先行），放 context/labels。同一做法就地更新 hits，近似替换写新条并标记旧条被取代。裸命令/裸工具名/单文件无技法编辑会被拒记——那是具体任务流水，改用 exp_object 记。标签只写类型不写实例名（仓库名等会被丢弃并记 tagsRejected）。',
   parameters: {
     intent: { type: 'string', required: true, description: '要做的任务/意图。' },
     action: { type: 'string', required: true, description: '采取的做法或方案名。' },
@@ -45,7 +45,7 @@ export const RECORD_TOOL = {
 
 export const RECALL_TOOL = {
   name: 'exp_recall',
-  description: '按任务意图召回历史经验。【怎么搜】intent 写「对象+任务+关键约束」（如「给研学课 PPT 插页（深蓝）」），别写「再来一页」这类省略句；已知族就用 family=<族名> 只读该族分片；技能用 skill=<slug> 取正文、group=<组名> 只列组内名字；不知道族名先 exp_family list query=<关键词/任务描述> 模糊搜族，或直接给 intent 让引擎路由。【怎么读结果】routes[].family 是本次命中的族名（≤3），candidates[].evidence[].family 是每条所属族，brief 是记忆简报；搜不到就把 intent 写具体些或换关键词再搜，不要凭空造族名。默认先做簇路由（确定性簇内检索，无同族回退全库）。mode=advantage：按 JitRL 优势排序；mode=evidence：无成败对照，Â 不具区分度，改按相似度×证据强度排序。',
+  description: '按任务意图召回历史经验。【怎么搜】intent 写「对象+任务+关键约束」（如「给研学课 PPT 插页（深蓝）」），别写「再来一页」这类省略句；已知族就用 family=<族名> 只读该族分片；技能用 skill=<slug> 取正文、group=<组名> 只列组内名字；不知道族名先 exp_family list query=<关键词/任务描述> 模糊搜族，或直接给 intent 让引擎路由。【怎么读结果】routes[].family 是本次命中的族名（≤3），candidates[].evidence[].family 是每条所属族，brief 是记忆简报；搜不到就把 intent 写具体些或换关键词再搜，不要凭空造族名。默认先做簇路由（确定性簇内检索，无同族回退全库）。mode=advantage：有成败对照，Â 参与排序（默认 rankMode=auto/blend，相似度主序、Â 次序；rankMode=advantage 才完全按 Â×置信度）；mode=evidence：无成败对照，Â 不具区分度，改按相似度×证据强度排序。',
   parameters: {
     intent: { type: 'string', description: '当前任务意图。写「对象+任务+关键约束」（如「给研学课 PPT 插一页（深蓝色调）」）；只写「再来一页」这种省略句会因相似度不足召回不到。用 skill 直接取技能时可省略。' },
     skill: { type: 'string', description: '可选：直接取这个技能（slug 或 id；可带 skill: 前缀，也可原样用目录条目名 engram:<slug>，两种前缀都剥）。给了就跳过检索，按本会话三态决定给全文还是复用回执；找不到返回 no-such-skill，不退回普通召回。' },

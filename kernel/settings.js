@@ -136,6 +136,11 @@ export const ENGINE_CONFIG_DEFAULTS = Object.freeze({
   // - on：把自动抽出的标签并进 context，走 contextMatch 加分；
   // - off：完全不抽（退回 0.24.x 行为）。
   tagRank: 'shadow',
+  // 0.46.0 A1（D2）：召回排序档位。auto = 0.45.0 行为（退化判据分发，非退化时混排）；
+  // advantage/evidence/blend 为显式档位，供度量与排障强制生效；未知值由 resolveRetrievalMode 归一到 auto。
+  retrievalMode: 'auto',
+  // 0.46.0 A2/D3：unknown 结果不进 critic（filter）；legacy 保留 0.45.0 行为，供回退与对拍。
+  criticUnknownMode: 'filter',
 })
 
 /** 磁盘上真实保存的内核参数（不含默认值）。插件行配置的覆盖判断走这里，避免默认值压掉插件行。 */

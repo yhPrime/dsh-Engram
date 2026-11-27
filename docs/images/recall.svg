@@ -36,7 +36,7 @@
 
     <rect x="622" y="184" width="232" height="128" rx="16" fill="#141c33" stroke="#4a3a7a"/>
     <text x="644" y="222" font-size="18" font-weight="700" fill="#e6ecff">排序</text>
-    <text x="644" y="252" font-size="14" fill="#a9b6d8">按 Â 优势排，不按热度</text>
+    <text x="644" y="252" font-size="14" fill="#a9b6d8">相似度主序，Â 次序</text>
     <text x="644" y="278" font-size="13" fill="#7c8aab">没有成败对照时按证据</text>
     <text x="644" y="300" font-size="13" fill="#7c8aab">默认 3 条，上限 8 条</text>
 

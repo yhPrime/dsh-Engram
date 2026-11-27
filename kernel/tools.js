@@ -1043,7 +1043,7 @@ export function buildTools(defineTool, config = {}) {
         }
         if (tagRankMode === 'shadow') tagRankShadow = { mode: 'shadow', queryTags: autoTags, action: queryFacets.action.length, explicit: explicitTags.length, merged: mergedTags.length }
       }
-      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: rankContext, tagBonusOnly: tagRankAppliedNow && tagQuery !== null, tagQuery, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
+      const rankOptions = { routing, clusterId, consolidation: config.consolidation, consolidationMinSamples: config.consolidationMinSamples, context: rankContext, tagBonusOnly: tagRankAppliedNow && tagQuery !== null, tagQuery, explicitLimit: Number(args.limit) > 0, rankBlend: config.rankBlend !== false, retrievalMode: config.retrievalMode, criticUnknownMode: config.criticUnknownMode, recent: recentRequested, recentAllSessions, sessionId: coldMode ? '' : sessionIdText, includeMismatched: args.includeMismatched === true, current: currentEnv }
       if (Array.isArray(recentRows)) rankOptions.recentRows = recentRows
       const result = rankExperiences(store, String(args.intent || ''), recallLimit, rankOptions)
       // 类型路由影子（P1）：只在显式 tagShadow / config.tagShadow 时计算；只读、不碰 candidates。
@@ -1189,6 +1189,7 @@ export function buildTools(defineTool, config = {}) {
         neighbors: result.neighbor_count,
         hit: result.candidates.length > 0,
         mode: result.mode,
+        rankMode: result.rankMode,
         cold: coldMode,
         route: result.route && result.route.fallback === false ? result.route.name : '(fallback)',
         route_score: result.route ? result.route.score : null,

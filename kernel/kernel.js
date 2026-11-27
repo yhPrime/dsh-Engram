@@ -240,6 +240,26 @@ export function computeReturn(rewards, gamma = DEFAULT_GAMMA) {
 /* -------------------------------------------------------------------------- */
 
 /** The action key one experience aggregates under (trimmed action). */
+/**
+ * 0.46.0 A2/D3：unknown 结果（G=0）不是「做得一般」，是「还没判定」。
+ * 让它进 critic 会同时拉低 V̂、抬 high support，把未验证动作伪装成已验证。
+ */
+export function isUnknownVerdict(experience) {
+  return String(experience && experience.outcome ? experience.outcome : '') === 'unknown'
+}
+
+/** 归一 unknown 过滤档：只认 legacy，其余（未配置/拼错）一律 filter。 */
+export function normalizeUnknownMode(value) {
+  return String(value === undefined || value === null ? '' : value).trim().toLowerCase() === 'legacy' ? 'legacy' : 'filter'
+}
+
+/** critic 只吃有判定的邻居；legacy 档保留 0.45.0 行为（unknown 也当 G=0 计入）。 */
+function scoredNeighbors(neighbors, options = {}) {
+  const list = Array.isArray(neighbors) ? neighbors : []
+  if (normalizeUnknownMode(options.unknownMode) === 'legacy') return list
+  return list.filter((entry) => !isUnknownVerdict(entry && entry.experience))
+}
+
 export function actionKey(experience) {
   return String((experience && experience.action) || '').trim()
 }
@@ -290,11 +310,12 @@ export function retrieve(experiences, intent, options = {}) {
  * @param {Array<{experience: object, similarity: number}>} neighbors - Retrieved neighbours.
  * @returns {number} V̂.
  */
-export function estimateStateValue(neighbors) {
-  if (!neighbors || neighbors.length === 0) return 0
+export function estimateStateValue(neighbors, options = {}) {
+  const scored = scoredNeighbors(neighbors, options)
+  if (scored.length === 0) return 0
   let total = 0
-  for (const { experience } of neighbors) total += Number(experience.G) || 0
-  return total / neighbors.length
+  for (const { experience } of scored) total += Number(experience.G) || 0
+  return total / scored.length
 }
 
 /**
@@ -311,9 +332,12 @@ export function estimateStateValue(neighbors) {
  * @param {number} [alpha] - Optimism strength.
  * @returns {{q: number, unverified: boolean, support: number, meanSimilarity: number}} Q̂.
  */
-export function estimateActionValue(action, neighbors, alpha = DEFAULT_ALPHA) {
+export function estimateActionValue(action, neighbors, alpha = DEFAULT_ALPHA, options = {}) {
   const key = String(action || '').trim()
-  const same = (neighbors || []).filter((entry) => actionKey(entry.experience) === key)
+  const mode = normalizeUnknownMode(options.unknownMode)
+  const scored = scoredNeighbors(neighbors, { unknownMode: mode })
+  const sameAll = (neighbors || []).filter((entry) => actionKey(entry.experience) === key)
+  const same = scored.filter((entry) => actionKey(entry.experience) === key)
   if (same.length > 0) {
     let weightSum = 0
     for (const entry of same) weightSum += entry.similarity
@@ -321,17 +345,21 @@ export function estimateActionValue(action, neighbors, alpha = DEFAULT_ALPHA) {
       ? same.reduce((sum, entry) => sum + (Number(entry.experience.G) || 0) * entry.similarity, 0) / weightSum
       : same.reduce((sum, entry) => sum + (Number(entry.experience.G) || 0), 0) / same.length
     const meanSimilarity = same.reduce((sum, entry) => sum + entry.similarity, 0) / same.length
-    return { q, unverified: false, support: same.length, meanSimilarity }
+    return { q, unverified: false, support: same.length, meanSimilarity, attempted: false }
   }
 
-  const value = estimateStateValue(neighbors)
-  const denominator = Math.max((neighbors || []).length, 1)
+  // 未验证动作的 V̂ 按当前档位算：legacy 与 0.45.0 一样把 unknown 计入（G=0），
+  // filter 档则由 estimateStateValue 内部滤掉 unknown；不能一律写死 filter，否则 legacy 回退不等价。
+  const value = estimateStateValue(neighbors, { unknownMode: mode })
+  const denominator = Math.max(scored.length, 1)
   const bonus = alpha / denominator
+  // filter 模式：动作有邻居但全是 unknown——当作「从未试过」走乐观分支，但标 attempted 供回执区分。
+  const attempted = mode !== 'legacy' && sameAll.length > 0
 
   const verifiedAdvantages = []
-  const actions = new Set((neighbors || []).map((entry) => actionKey(entry.experience)))
+  const actions = new Set(scored.map((entry) => actionKey(entry.experience)))
   for (const candidate of actions) {
-    const sameAction = (neighbors || []).filter((entry) => actionKey(entry.experience) === candidate)
+    const sameAction = scored.filter((entry) => actionKey(entry.experience) === candidate)
     if (sameAction.length === 0) continue
     let weightSum = 0
     for (const entry of sameAction) weightSum += entry.similarity
@@ -348,6 +376,7 @@ export function estimateActionValue(action, neighbors, alpha = DEFAULT_ALPHA) {
     unverified: true,
     support: 0,
     meanSimilarity: 0,
+    attempted,
   }
 }
 
@@ -375,10 +404,11 @@ export function estimateActionValue(action, neighbors, alpha = DEFAULT_ALPHA) {
 export function estimateAdvantages(experiences, intent, options = {}) {
   const k = Math.max(1, Math.trunc(Number(options.k) || DEFAULT_K))
   const alpha = Number.isFinite(Number(options.alpha)) ? Number(options.alpha) : DEFAULT_ALPHA
+  const unknownMode = normalizeUnknownMode(options.unknownMode)
   const neighbors = Array.isArray(options.neighbors)
     ? options.neighbors.slice(0, Math.max(k, options.neighbors.length))
     : retrieve(experiences, intent, { k, actionHint: options.actionHint || '' })
-  const vHat = estimateStateValue(neighbors)
+  const vHat = estimateStateValue(neighbors, { unknownMode })
 
   const candidates = []
   for (const raw of options.candidateActions || []) {
@@ -392,7 +422,7 @@ export function estimateAdvantages(experiences, intent, options = {}) {
 
   const results = []
   for (const action of candidates) {
-    const estimate = estimateActionValue(action, neighbors, alpha)
+    const estimate = estimateActionValue(action, neighbors, alpha, { unknownMode })
     const advantage = estimate.q - vHat
     const evidence = neighbors
       .filter((entry) => actionKey(entry.experience) === action)
@@ -413,6 +443,8 @@ export function estimateAdvantages(experiences, intent, options = {}) {
       unverified: estimate.unverified,
       support: estimate.support,
       mean_similarity: round4(estimate.meanSimilarity),
+      // 0.46.0 D3a：只有 unknown 证据的动作按「从未验证」乐观排序，但要能区分「真没试过」。
+      attempted: estimate.attempted === true,
       evidence,
     })
   }
